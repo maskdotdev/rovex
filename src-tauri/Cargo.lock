@@ -4361,8 +4361,11 @@ name = "rovex"
 version = "0.1.0"
 dependencies = [
  "argus_search",
+ "async-trait",
+ "base64 0.22.1",
  "dotenvy",
  "libsql",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tauri",

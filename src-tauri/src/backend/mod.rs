@@ -2,10 +2,12 @@ mod code_intel;
 pub mod commands;
 mod db;
 mod models;
+mod providers;
 
 pub use models::{
-    AddThreadMessageInput, BackendHealth, CodeIntelSyncInput, CodeIntelSyncResult,
-    CreateThreadInput, Message, MessageRole, Thread,
+    AddThreadMessageInput, BackendHealth, CloneRepositoryInput, CloneRepositoryResult,
+    CodeIntelSyncInput, CodeIntelSyncResult, ConnectProviderInput, CreateThreadInput, Message,
+    MessageRole, ProviderConnection, ProviderKind, Thread,
 };
 
 use libsql::{Connection, Database};

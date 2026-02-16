@@ -13,6 +13,7 @@ The backend lives in `src-tauri/src/backend` and is exposed through Tauri comman
    - `TURSO_DATABASE_URL` (for example `libsql://<db-name>-<org>.turso.io`)
    - `TURSO_AUTH_TOKEN` (from `turso db tokens create <db-name>`)
    - Optional: `ROVEX_LOCAL_DATABASE_URL` (default fallback: `file:rovex-dev.db`)
+   - Optional: `ROVEX_REPOSITORIES_DIR` (default clone destination: `~/rovex/repos`)
 
 The app reads `.env` at startup and initializes tables automatically.
 If Turso env vars are missing, the app falls back to a local libsql database instead of crashing.
@@ -24,8 +25,24 @@ If Turso env vars are missing, the app falls back to a local libsql database ins
 - `list_threads(limit?)`
 - `add_thread_message({ threadId, role, content })`
 - `list_thread_messages(threadId, limit?)`
+- `connect_provider({ provider, accessToken })`
+- `get_provider_connection(provider)`
+- `list_provider_connections()`
+- `disconnect_provider(provider)`
+- `clone_repository({ provider, repository, destinationRoot?, directoryName?, shallow? })`
 
 `role` accepts `system`, `user`, or `assistant`.
+`provider` currently accepts `github`.
+
+## Provider Pattern
+
+Provider implementations live under `src-tauri/src/backend/providers`.
+
+- `ProviderClient` defines provider capabilities (token validation, repository parsing, clone URL, auth header).
+- `provider_client(kind)` acts as a registry/dispatcher.
+- Database stores connections in a provider-agnostic table (`provider_connections`) so new providers can reuse the same command surface.
+
+To add GitLab later, create `providers/gitlab.rs`, implement `ProviderClient`, add a `ProviderKind` variant, and register it in `provider_client`.
 
 ## Run
 

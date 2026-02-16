@@ -1,4 +1,4 @@
-import { For } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal } from "solid-js";
 import { Button } from "@/components/button";
 import {
   Sidebar,
@@ -11,11 +11,24 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarProvider,
   SidebarSeparator,
   SidebarTrigger,
 } from "@/components/sidebar";
 import { TextField, TextFieldInput } from "@/components/text-field";
+import {
+  cloneRepository,
+  connectProvider,
+  createThread,
+  disconnectProvider,
+  getProviderConnection,
+  listThreads,
+  type ProviderConnection,
+  type Thread,
+} from "@/lib/backend";
 import "./App.css";
 
 type PrimaryAction = {
@@ -23,11 +36,16 @@ type PrimaryAction = {
   hint: string;
 };
 
-type ThreadItem = {
+type RepoReview = {
+  id: number;
+  repoName: string;
   title: string;
   age: string;
-  diff?: string;
-  active?: boolean;
+};
+
+type RepoGroup = {
+  repoName: string;
+  reviews: RepoReview[];
 };
 
 type TimelineEntry =
@@ -39,22 +57,6 @@ const primaryActions: PrimaryAction[] = [
   { label: "Automations", hint: "A" },
   { label: "Skills", hint: "S" },
 ];
-
-const workspaceThreads: ThreadItem[] = [
-  { title: "Plan splitting code...", age: "2d" },
-  { title: "Restrict content to ...", age: "3m", active: true },
-  { title: "Implement ISSUE-...", age: "1h" },
-  { title: "Optimize code-gr...", age: "24m" },
-  { title: "Add graph view lik...", age: "1h" },
-  { title: "Prefetch GitLab on...", age: "1h" },
-  { title: "Add db wip...", age: "2h", diff: "+98 -0" },
-  { title: "Investig...", age: "2h", diff: "+1,376 -0" },
-  { title: "Investig...", age: "2h", diff: "+354 -249" },
-  { title: "Organize log...", age: "2h", diff: "+2 -0" },
-  { title: "Plan next...", age: "5h", diff: "+168 -22" },
-];
-
-const projectList = ["argus", "thrones", "stellar", "vector-embeddi..."];
 
 const timelineEntries: TimelineEntry[] = [
   {
@@ -92,6 +94,56 @@ const timelineEntries: TimelineEntry[] = [
   },
   { kind: "line", tone: "muted", text: "Thinking" },
 ];
+
+const UNKNOWN_REPO = "unknown-repo";
+
+function repoNameFromWorkspace(workspace: string | null): string {
+  const value = workspace?.trim();
+  if (!value) return UNKNOWN_REPO;
+
+  const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
+  const lastSegment = normalized.split("/").pop()?.trim();
+  return lastSegment && lastSegment.length > 0 ? lastSegment : value;
+}
+
+function formatRelativeAge(createdAt: string): string {
+  const normalized = createdAt.includes("T") ? createdAt : createdAt.replace(" ", "T");
+  const parsed = new Date(`${normalized}Z`);
+  const timestamp = Number.isNaN(parsed.getTime()) ? new Date(normalized).getTime() : parsed.getTime();
+
+  if (Number.isNaN(timestamp)) return "now";
+
+  const elapsedMs = Math.max(0, Date.now() - timestamp);
+  const minutes = Math.floor(elapsedMs / 60000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+
+  const weeks = Math.floor(days / 7);
+  return `${weeks}w`;
+}
+
+function groupThreadsByRepo(threads: Thread[]): RepoGroup[] {
+  const groups = new Map<string, RepoReview[]>();
+
+  for (const thread of threads) {
+    const repoName = repoNameFromWorkspace(thread.workspace);
+    const nextReview: RepoReview = {
+      id: thread.id,
+      title: thread.title,
+      repoName,
+      age: formatRelativeAge(thread.createdAt),
+    };
+    groups.set(repoName, [...(groups.get(repoName) ?? []), nextReview]);
+  }
+
+  return [...groups.entries()].map(([repoName, reviews]) => ({ repoName, reviews }));
+}
 
 function TimelineRow(props: { entry: TimelineEntry }) {
   if (props.entry.kind === "edit") {
@@ -134,6 +186,135 @@ function SidebarRow(props: { label: string; right?: string; active?: boolean }) 
 }
 
 function App() {
+  const [threads, { refetch: refetchThreads }] = createResource(() => listThreads(200));
+  const [githubConnection, { refetch: refetchGithubConnection }] = createResource<
+    ProviderConnection | null
+  >(() => getProviderConnection("github"));
+  const repoGroups = createMemo(() => groupThreadsByRepo(threads() ?? []));
+  const [selectedThreadId, setSelectedThreadId] = createSignal<number | null>(null);
+  const [providerToken, setProviderToken] = createSignal("");
+  const [repositoryInput, setRepositoryInput] = createSignal("");
+  const [destinationRoot, setDestinationRoot] = createSignal("");
+  const [providerBusy, setProviderBusy] = createSignal(false);
+  const [providerError, setProviderError] = createSignal<string | null>(null);
+  const [providerStatus, setProviderStatus] = createSignal<string | null>(null);
+
+  createEffect(() => {
+    const groups = repoGroups();
+    if (groups.length === 0) {
+      setSelectedThreadId(null);
+      return;
+    }
+
+    const selected = selectedThreadId();
+    const hasSelected = groups.some((group) =>
+      group.reviews.some((review) => review.id === selected)
+    );
+    if (hasSelected) return;
+
+    setSelectedThreadId(groups[0].reviews[0]?.id ?? null);
+  });
+
+  const selectedReview = createMemo<RepoReview | undefined>(() => {
+    const selected = selectedThreadId();
+    if (selected == null) return undefined;
+
+    for (const group of repoGroups()) {
+      const review = group.reviews.find((candidate) => candidate.id === selected);
+      if (review) return review;
+    }
+
+    return undefined;
+  });
+
+  const loadError = createMemo(() => {
+    const error = threads.error;
+    if (!error) return null;
+    return error instanceof Error ? error.message : String(error);
+  });
+
+  const providerConnectionError = createMemo(() => {
+    const error = githubConnection.error;
+    if (!error) return null;
+    return error instanceof Error ? error.message : String(error);
+  });
+
+  const clearProviderNotice = () => {
+    setProviderError(null);
+    setProviderStatus(null);
+  };
+
+  const handleConnectProvider = async (event: Event) => {
+    event.preventDefault();
+    clearProviderNotice();
+
+    const token = providerToken().trim();
+    if (!token) {
+      setProviderError("Enter a GitHub personal access token.");
+      return;
+    }
+
+    setProviderBusy(true);
+    try {
+      const connection = await connectProvider({ provider: "github", accessToken: token });
+      setProviderToken("");
+      await refetchGithubConnection();
+      setProviderStatus(`Connected GitHub as ${connection.accountLogin}.`);
+    } catch (error) {
+      setProviderError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setProviderBusy(false);
+    }
+  };
+
+  const handleDisconnectProvider = async () => {
+    clearProviderNotice();
+    setProviderBusy(true);
+    try {
+      await disconnectProvider("github");
+      await refetchGithubConnection();
+      setProviderStatus("Disconnected GitHub.");
+    } catch (error) {
+      setProviderError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setProviderBusy(false);
+    }
+  };
+
+  const handleCloneRepository = async (event: Event) => {
+    event.preventDefault();
+    clearProviderNotice();
+
+    const repository = repositoryInput().trim();
+    if (!repository) {
+      setProviderError("Enter a repository (owner/repo or GitHub URL).");
+      return;
+    }
+
+    setProviderBusy(true);
+    try {
+      const cloneResult = await cloneRepository({
+        provider: "github",
+        repository,
+        destinationRoot: destinationRoot().trim() || null,
+        shallow: true,
+      });
+      await createThread({
+        title: `Review ${cloneResult.repository}`,
+        workspace: cloneResult.workspace,
+      });
+      await refetchThreads();
+      setRepositoryInput("");
+      setProviderStatus(
+        `Cloned ${cloneResult.repository} to ${cloneResult.workspace} and created a review thread.`
+      );
+    } catch (error) {
+      setProviderError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setProviderBusy(false);
+    }
+  };
+
   return (
     <SidebarProvider
       defaultOpen
@@ -148,13 +329,8 @@ function App() {
         class="border-r border-sidebar-border/60 bg-[linear-gradient(165deg,rgba(4,8,20,0.92)_0%,rgba(2,5,14,0.98)_70%,rgba(2,8,28,0.92)_100%)]"
       >
         <SidebarHeader class="px-5 pt-4 pb-3">
-          <div class="mb-4 flex items-center justify-between">
-            <div class="flex gap-2.5">
-              <span class="h-5 w-5 rounded-full bg-[#ff5f56]" />
-              <span class="h-5 w-5 rounded-full bg-[#ffbd2e]" />
-              <span class="h-5 w-5 rounded-full bg-[#27c93f]" />
-            </div>
-            <SidebarTrigger class="h-8 w-8 rounded-md border border-slate-300/35 text-slate-300 hover:bg-slate-700/30" />
+          <div class="mb-4 flex items-center justify-end">
+            <SidebarTrigger class="h-9 w-9 rounded-md border border-slate-300/35 text-slate-300 hover:bg-slate-700/30" />
           </div>
         </SidebarHeader>
 
@@ -169,32 +345,68 @@ function App() {
 
           <SidebarGroup class="p-0 pt-2">
             <SidebarGroupLabel class="px-4 pb-1 text-xs tracking-[0.12em] text-slate-500">
-              Threads
+              Repositories
             </SidebarGroupLabel>
-            <SidebarMenu>
-              <For each={workspaceThreads}>
-                {(thread) => (
-                  <SidebarRow
-                    label={thread.title}
-                    right={thread.diff ? `${thread.diff} ${thread.age}` : thread.age}
-                    active={thread.active}
-                  />
-                )}
-              </For>
-            </SidebarMenu>
-            <button
-              type="button"
-              class="ml-4 mt-2 inline-flex w-fit text-sm text-slate-400 hover:text-slate-200"
+            <Show
+              when={!threads.loading}
+              fallback={<p class="px-4 py-2 text-sm text-slate-500">Loading reviews...</p>}
             >
-              Show more
-            </button>
+              <Show
+                when={repoGroups().length > 0}
+                fallback={<p class="px-4 py-2 text-sm text-slate-500">No reviews yet.</p>}
+              >
+                <SidebarMenu>
+                  <For each={repoGroups()}>
+                    {(repo) => (
+                      <SidebarMenuItem>
+                        <SidebarMenuButton
+                          class="h-11 rounded-2xl px-4 text-[14px] font-semibold uppercase tracking-[0.08em] text-slate-300 hover:bg-white/8"
+                          tooltip={repo.repoName}
+                        >
+                          <div class="flex w-full items-center justify-between gap-3">
+                            <span class="truncate">{repo.repoName}</span>
+                            <span class="rounded-full border border-slate-600/70 px-2 py-0.5 text-[11px] normal-case tracking-normal text-slate-400">
+                              {repo.reviews.length}
+                            </span>
+                          </div>
+                        </SidebarMenuButton>
+                        <SidebarMenuSub class="mt-1 border-slate-700/50">
+                          <For each={repo.reviews}>
+                            {(review) => (
+                              <SidebarMenuSubItem>
+                                <SidebarMenuSubButton
+                                  as="button"
+                                  type="button"
+                                  isActive={selectedThreadId() === review.id}
+                                  class="h-8 w-full justify-between rounded-lg text-[13px] text-slate-300 data-[active=true]:bg-white/10 data-[active=true]:text-slate-100"
+                                  onClick={() => setSelectedThreadId(review.id)}
+                                >
+                                  <span class="truncate">{review.title}</span>
+                                  <span class="shrink-0 text-[11px] text-slate-500">
+                                    {review.age}
+                                  </span>
+                                </SidebarMenuSubButton>
+                              </SidebarMenuSubItem>
+                            )}
+                          </For>
+                        </SidebarMenuSub>
+                      </SidebarMenuItem>
+                    )}
+                  </For>
+                </SidebarMenu>
+              </Show>
+            </Show>
+            <Show when={loadError()}>
+              {(message) => (
+                <p class="px-4 pt-2 text-xs text-rose-300" title={message()}>
+                  Unable to load reviews.
+                </p>
+              )}
+            </Show>
           </SidebarGroup>
         </SidebarContent>
 
         <SidebarFooter class="px-3 pb-4">
-          <SidebarMenu>
-            <For each={projectList}>{(project) => <SidebarRow label={project} />}</For>
-          </SidebarMenu>
           <SidebarSeparator class="my-2 bg-slate-700/50" />
           <SidebarMenu>
             <SidebarRow label="Settings" />
@@ -209,9 +421,9 @@ function App() {
               <SidebarTrigger class="mt-0.5 h-9 w-9 rounded-lg border border-slate-500/40 text-slate-200 hover:bg-slate-700/30" />
               <div>
                 <h1 class="app-title text-[clamp(1.15rem,1.5vw,1.65rem)] font-semibold">
-                  Restrict content to logged users
+                  {selectedReview()?.title ?? "Select a review"}
                 </h1>
-                <p class="mt-1 text-sm text-slate-400">argus-app</p>
+                <p class="mt-1 text-sm text-slate-400">{selectedReview()?.repoName ?? "—"}</p>
               </div>
             </div>
             <div class="flex gap-2">
@@ -223,6 +435,122 @@ function App() {
               </Button>
             </div>
           </header>
+
+          <section class="border-b border-slate-700/40 px-6 py-4">
+            <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+              Provider Connections
+            </p>
+            <div class="mt-3 grid gap-4 lg:grid-cols-2">
+              <div class="rounded-2xl border border-slate-600/40 bg-black/25 p-4">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <p class="text-sm font-semibold text-slate-100">GitHub</p>
+                    <Show
+                      when={githubConnection()}
+                      fallback={<p class="mt-1 text-xs text-slate-400">Not connected</p>}
+                    >
+                      {(connection) => (
+                        <p class="mt-1 text-xs text-slate-300">
+                          Connected as{" "}
+                          <span class="font-semibold text-sky-300">
+                            {connection().accountLogin}
+                          </span>
+                        </p>
+                      )}
+                    </Show>
+                  </div>
+                  <Show when={githubConnection()}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      class="border-slate-600/70 text-slate-100"
+                      disabled={providerBusy()}
+                      onClick={() => void handleDisconnectProvider()}
+                    >
+                      Disconnect
+                    </Button>
+                  </Show>
+                </div>
+                <Show when={!githubConnection()}>
+                  <form class="mt-4" onSubmit={(event) => void handleConnectProvider(event)}>
+                    <TextField>
+                      <TextFieldInput
+                        type="password"
+                        placeholder="GitHub token"
+                        value={providerToken()}
+                        onInput={(event) => setProviderToken(event.currentTarget.value)}
+                        class="h-11 rounded-xl border-slate-700/60 bg-black/35 text-sm text-slate-100 placeholder:text-slate-500"
+                      />
+                    </TextField>
+                    <Button
+                      type="submit"
+                      size="sm"
+                      class="mt-3 w-full"
+                      disabled={providerBusy() || providerToken().trim().length === 0}
+                    >
+                      {providerBusy() ? "Connecting..." : "Connect GitHub"}
+                    </Button>
+                  </form>
+                </Show>
+              </div>
+
+              <form
+                class="rounded-2xl border border-slate-600/40 bg-black/25 p-4"
+                onSubmit={(event) => void handleCloneRepository(event)}
+              >
+                <p class="text-sm font-semibold text-slate-100">Clone Repository</p>
+                <p class="mt-1 text-xs text-slate-400">
+                  Supports owner/repo or a GitHub URL. Creates a review thread after clone.
+                </p>
+                <TextField class="mt-3">
+                  <TextFieldInput
+                    placeholder="owner/repository"
+                    value={repositoryInput()}
+                    onInput={(event) => setRepositoryInput(event.currentTarget.value)}
+                    class="h-11 rounded-xl border-slate-700/60 bg-black/35 text-sm text-slate-100 placeholder:text-slate-500"
+                  />
+                </TextField>
+                <TextField class="mt-3">
+                  <TextFieldInput
+                    placeholder="Destination root (optional)"
+                    value={destinationRoot()}
+                    onInput={(event) => setDestinationRoot(event.currentTarget.value)}
+                    class="h-11 rounded-xl border-slate-700/60 bg-black/35 text-sm text-slate-100 placeholder:text-slate-500"
+                  />
+                </TextField>
+                <Button
+                  type="submit"
+                  size="sm"
+                  class="mt-3 w-full"
+                  disabled={providerBusy() || !githubConnection() || repositoryInput().trim().length === 0}
+                >
+                  {providerBusy() ? "Working..." : "Clone for Review"}
+                </Button>
+              </form>
+            </div>
+
+            <Show when={providerConnectionError()}>
+              {(message) => (
+                <p class="mt-3 text-xs text-rose-300" title={message()}>
+                  Unable to load provider connection.
+                </p>
+              )}
+            </Show>
+            <Show when={providerError()}>
+              {(message) => (
+                <p class="mt-2 text-xs text-rose-300" title={message()}>
+                  {message()}
+                </p>
+              )}
+            </Show>
+            <Show when={providerStatus()}>
+              {(message) => (
+                <p class="mt-2 text-xs text-emerald-300" title={message()}>
+                  {message()}
+                </p>
+              )}
+            </Show>
+          </section>
 
           <div class="flex-1 overflow-y-auto px-6 py-5">
             <For each={timelineEntries}>

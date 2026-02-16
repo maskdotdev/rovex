@@ -1,12 +1,30 @@
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
+
 use tauri::State;
 
 use super::{
-    AddThreadMessageInput, AppState, BackendHealth, CodeIntelSyncInput, CodeIntelSyncResult,
-    CreateThreadInput, Message, MessageRole, Thread,
+    providers::provider_client, AddThreadMessageInput, AppState, BackendHealth,
+    CloneRepositoryInput, CloneRepositoryResult, CodeIntelSyncInput, CodeIntelSyncResult,
+    ConnectProviderInput, CreateThreadInput, Message, MessageRole, ProviderConnection,
+    ProviderKind, Thread,
 };
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 200;
+const DEFAULT_REPOSITORIES_DIR: &str = "rovex/repos";
+
+struct ProviderConnectionRow {
+    provider: ProviderKind,
+    account_login: String,
+    avatar_url: Option<String>,
+    access_token: String,
+    created_at: String,
+    updated_at: String,
+}
 
 fn parse_limit(limit: Option<u32>) -> i64 {
     limit
@@ -22,6 +40,122 @@ fn parse_message_role(value: String) -> Result<MessageRole, String> {
         "assistant" => Ok(MessageRole::Assistant),
         _ => Err(format!("Unexpected message role in database: {value}")),
     }
+}
+
+fn parse_provider_kind(value: String) -> Result<ProviderKind, String> {
+    ProviderKind::from_str(&value)
+        .ok_or_else(|| format!("Unexpected provider value in database: {value}"))
+}
+
+fn parse_clone_directory_name(
+    explicit_name: Option<&str>,
+    repository_name: &str,
+) -> Result<String, String> {
+    let raw_value = explicit_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(repository_name)
+        .trim();
+    if raw_value.is_empty() {
+        return Err("Clone directory name must not be empty.".to_string());
+    }
+
+    let is_safe = raw_value.chars().all(|character| {
+        character.is_ascii_alphanumeric()
+            || character == '-'
+            || character == '_'
+            || character == '.'
+    });
+    if !is_safe || raw_value.starts_with('.') || raw_value.contains("..") {
+        return Err(
+            "Clone directory name can only contain letters, numbers, '-', '_' and '.'.".to_string(),
+        );
+    }
+
+    Ok(raw_value.to_string())
+}
+
+fn resolve_repository_root(explicit_root: Option<&str>) -> Result<PathBuf, String> {
+    if let Some(root) = explicit_root
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(PathBuf::from(root));
+    }
+
+    if let Ok(custom_root) = env::var("ROVEX_REPOSITORIES_DIR") {
+        let trimmed = custom_root.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed));
+        }
+    }
+
+    let home = env::var("HOME")
+        .or_else(|_| env::var("USERPROFILE"))
+        .map_err(|_| {
+            "Unable to determine a home directory. Provide destinationRoot.".to_string()
+        })?;
+    Ok(PathBuf::from(home).join(DEFAULT_REPOSITORIES_DIR))
+}
+
+fn format_path(path: &Path) -> String {
+    path.to_string_lossy().to_string()
+}
+
+fn to_provider_connection(connection: &ProviderConnectionRow) -> ProviderConnection {
+    ProviderConnection {
+        provider: connection.provider,
+        account_login: connection.account_login.clone(),
+        avatar_url: connection.avatar_url.clone(),
+        created_at: connection.created_at.clone(),
+        updated_at: connection.updated_at.clone(),
+    }
+}
+
+async fn load_provider_connection_row(
+    state: &AppState,
+    provider: ProviderKind,
+) -> Result<Option<ProviderConnectionRow>, String> {
+    let conn = state.connection()?;
+    let mut rows = conn
+        .query(
+            "SELECT provider, account_login, avatar_url, access_token, created_at, updated_at FROM provider_connections WHERE provider = ?1 LIMIT 1",
+            [provider.as_str()],
+        )
+        .await
+        .map_err(|error| format!("Failed to load provider connection: {error}"))?;
+
+    let Some(row) = rows
+        .next()
+        .await
+        .map_err(|error| format!("Failed to read provider connection row: {error}"))?
+    else {
+        return Ok(None);
+    };
+
+    let provider_value: String = row
+        .get(0)
+        .map_err(|error| format!("Failed to parse provider value: {error}"))?;
+    let provider = parse_provider_kind(provider_value)?;
+
+    Ok(Some(ProviderConnectionRow {
+        provider,
+        account_login: row
+            .get(1)
+            .map_err(|error| format!("Failed to parse provider account login: {error}"))?,
+        avatar_url: row
+            .get(2)
+            .map_err(|error| format!("Failed to parse provider avatar URL: {error}"))?,
+        access_token: row
+            .get(3)
+            .map_err(|error| format!("Failed to parse provider access token: {error}"))?,
+        created_at: row
+            .get(4)
+            .map_err(|error| format!("Failed to parse provider created_at: {error}"))?,
+        updated_at: row
+            .get(5)
+            .map_err(|error| format!("Failed to parse provider updated_at: {error}"))?,
+    }))
 }
 
 async fn load_thread_by_id(state: &AppState, thread_id: i64) -> Result<Thread, String> {
@@ -282,6 +416,182 @@ pub async fn list_thread_messages(
     }
 
     Ok(messages)
+}
+
+#[tauri::command]
+pub async fn connect_provider(
+    state: State<'_, AppState>,
+    input: ConnectProviderInput,
+) -> Result<ProviderConnection, String> {
+    let access_token = input.access_token.trim();
+    if access_token.is_empty() {
+        return Err("Provider access token must not be empty.".to_string());
+    }
+
+    let client = provider_client(input.provider);
+    let identity = client.validate_access_token(access_token).await?;
+
+    let conn = state.connection()?;
+    conn.execute(
+        "INSERT INTO provider_connections (provider, account_login, avatar_url, access_token, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         ON CONFLICT(provider)
+         DO UPDATE SET
+           account_login = excluded.account_login,
+           avatar_url = excluded.avatar_url,
+           access_token = excluded.access_token,
+           updated_at = CURRENT_TIMESTAMP",
+        (
+            input.provider.as_str(),
+            identity.account_login,
+            identity.avatar_url,
+            access_token.to_string(),
+        ),
+    )
+    .await
+    .map_err(|error| format!("Failed to store provider connection: {error}"))?;
+
+    let connection = load_provider_connection_row(&state, input.provider)
+        .await?
+        .ok_or_else(|| "Provider connection was not found after connect.".to_string())?;
+    Ok(to_provider_connection(&connection))
+}
+
+#[tauri::command]
+pub async fn get_provider_connection(
+    state: State<'_, AppState>,
+    provider: ProviderKind,
+) -> Result<Option<ProviderConnection>, String> {
+    let connection = load_provider_connection_row(&state, provider).await?;
+    Ok(connection.as_ref().map(to_provider_connection))
+}
+
+#[tauri::command]
+pub async fn list_provider_connections(
+    state: State<'_, AppState>,
+) -> Result<Vec<ProviderConnection>, String> {
+    let conn = state.connection()?;
+    let mut rows = conn
+        .query(
+            "SELECT provider, account_login, avatar_url, created_at, updated_at FROM provider_connections ORDER BY updated_at DESC",
+            (),
+        )
+        .await
+        .map_err(|error| format!("Failed to list provider connections: {error}"))?;
+
+    let mut connections = Vec::new();
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(|error| format!("Failed to read provider connection rows: {error}"))?
+    {
+        let provider_value: String = row
+            .get(0)
+            .map_err(|error| format!("Failed to parse provider value: {error}"))?;
+        let provider = parse_provider_kind(provider_value)?;
+
+        connections.push(ProviderConnection {
+            provider,
+            account_login: row
+                .get(1)
+                .map_err(|error| format!("Failed to parse provider account login: {error}"))?,
+            avatar_url: row
+                .get(2)
+                .map_err(|error| format!("Failed to parse provider avatar URL: {error}"))?,
+            created_at: row
+                .get(3)
+                .map_err(|error| format!("Failed to parse provider created_at: {error}"))?,
+            updated_at: row
+                .get(4)
+                .map_err(|error| format!("Failed to parse provider updated_at: {error}"))?,
+        });
+    }
+
+    Ok(connections)
+}
+
+#[tauri::command]
+pub async fn disconnect_provider(
+    state: State<'_, AppState>,
+    provider: ProviderKind,
+) -> Result<bool, String> {
+    let conn = state.connection()?;
+    let affected = conn
+        .execute(
+            "DELETE FROM provider_connections WHERE provider = ?1",
+            [provider.as_str()],
+        )
+        .await
+        .map_err(|error| format!("Failed to disconnect provider: {error}"))?;
+
+    Ok(affected > 0)
+}
+
+#[tauri::command]
+pub async fn clone_repository(
+    state: State<'_, AppState>,
+    input: CloneRepositoryInput,
+) -> Result<CloneRepositoryResult, String> {
+    let connection = load_provider_connection_row(&state, input.provider)
+        .await?
+        .ok_or_else(|| format!("{} is not connected.", input.provider.as_str()))?;
+    let client = provider_client(input.provider);
+    let repository = client.parse_repository(&input.repository)?;
+
+    let destination_root = resolve_repository_root(input.destination_root.as_deref())?;
+    fs::create_dir_all(&destination_root).map_err(|error| {
+        format!(
+            "Failed to create clone destination {}: {error}",
+            format_path(&destination_root)
+        )
+    })?;
+
+    let directory_name =
+        parse_clone_directory_name(input.directory_name.as_deref(), &repository.name)?;
+    let destination_path = destination_root.join(directory_name);
+    if destination_path.exists() {
+        return Err(format!(
+            "Destination already exists: {}",
+            format_path(&destination_path)
+        ));
+    }
+
+    let auth_header = client.clone_auth_header(&connection.access_token)?;
+    let clone_url = client.clone_url(&repository);
+    let mut command = Command::new("git");
+    command
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .arg("-c")
+        .arg(format!("http.extraHeader={auth_header}"))
+        .arg("clone");
+
+    if input.shallow.unwrap_or(true) {
+        command.arg("--depth").arg("1");
+    }
+
+    let output = command
+        .arg(&clone_url)
+        .arg(&destination_path)
+        .output()
+        .map_err(|error| format!("Failed to run git clone: {error}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let summary = if !stderr.is_empty() { stderr } else { stdout };
+        let detail = if summary.is_empty() {
+            "Unknown git error.".to_string()
+        } else {
+            summary
+        };
+        return Err(format!("git clone failed: {detail}"));
+    }
+
+    Ok(CloneRepositoryResult {
+        provider: input.provider,
+        repository: repository.slug(),
+        workspace: format_path(&destination_path),
+    })
 }
 
 #[tauri::command]

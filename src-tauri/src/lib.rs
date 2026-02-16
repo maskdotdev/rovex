@@ -28,6 +28,11 @@ pub fn run() {
             backend::commands::list_threads,
             backend::commands::add_thread_message,
             backend::commands::list_thread_messages,
+            backend::commands::connect_provider,
+            backend::commands::get_provider_connection,
+            backend::commands::list_provider_connections,
+            backend::commands::disconnect_provider,
+            backend::commands::clone_repository,
             backend::commands::run_code_intel_sync
         ])
         .run(tauri::generate_context!())

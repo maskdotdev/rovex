@@ -26,6 +26,16 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_thread_id_created_at
 ON messages(thread_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS provider_connections (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider TEXT NOT NULL UNIQUE,
+  account_login TEXT NOT NULL,
+  avatar_url TEXT,
+  access_token TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 "#;
 
 pub async fn open_database_from_env() -> Result<(String, Database), String> {

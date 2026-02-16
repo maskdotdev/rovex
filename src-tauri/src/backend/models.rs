@@ -82,3 +82,59 @@ pub struct CodeIntelSyncResult {
     pub files_skipped: u64,
     pub chunks_emitted: u64,
 }
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum ProviderKind {
+    Github,
+}
+
+impl ProviderKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Github => "github",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "github" => Some(Self::Github),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectProviderInput {
+    pub provider: ProviderKind,
+    pub access_token: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderConnection {
+    pub provider: ProviderKind,
+    pub account_login: String,
+    pub avatar_url: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloneRepositoryInput {
+    pub provider: ProviderKind,
+    pub repository: String,
+    pub destination_root: Option<String>,
+    pub directory_name: Option<String>,
+    pub shallow: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloneRepositoryResult {
+    pub provider: ProviderKind,
+    pub repository: String,
+    pub workspace: String,
+}
