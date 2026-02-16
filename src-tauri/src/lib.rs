@@ -1,14 +1,34 @@
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
+mod backend;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .setup(|app| {
+            let state = tauri::async_runtime::block_on(async {
+                match backend::AppState::initialize().await {
+                    Ok(state) => Ok(state),
+                    Err(error) => {
+                        eprintln!("[backend] Failed to initialize Turso from env: {error}");
+                        eprintln!(
+                            "[backend] Falling back to local database. Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN to use Turso."
+                        );
+                        backend::AppState::initialize_local_fallback().await
+                    }
+                }
+            })
+            .map_err(std::io::Error::other)?;
+            app.manage(state);
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            backend::commands::backend_health,
+            backend::commands::create_thread,
+            backend::commands::list_threads,
+            backend::commands::add_thread_message,
+            backend::commands::list_thread_messages
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
