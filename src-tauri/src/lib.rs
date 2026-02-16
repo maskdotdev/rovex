@@ -27,7 +27,8 @@ pub fn run() {
             backend::commands::create_thread,
             backend::commands::list_threads,
             backend::commands::add_thread_message,
-            backend::commands::list_thread_messages
+            backend::commands::list_thread_messages,
+            backend::commands::run_code_intel_sync
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

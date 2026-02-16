@@ -33,3 +33,29 @@ If Turso env vars are missing, the app falls back to a local libsql database ins
 bun install
 bun tauri dev
 ```
+
+## Hybrid Indexing (Backend)
+
+Code-intelligence indexing now runs in the Rust backend (`src-tauri`) as a Tauri command:
+
+- `run_code_intel_sync(input?)`
+
+Behavior:
+
+1. Graph + optional SCIP semantic graph -> KiteDB
+2. Graph node index + vectors -> Turso/libSQL
+
+### Required env for backend sync
+
+- `TURSO_DATABASE_URL`
+- `TURSO_AUTH_TOKEN` (required for remote Turso)
+- `OPENAI_API_KEY` (or `CODE_INTEL_VECTOR_API_KEY`) for OpenAI-compatible embeddings
+
+### Important ID contract
+
+The backend sync stores `graph_node_id` in Turso as the canonical key:
+
+- Syntax nodes/chunks use deterministic Tree-sitter IDs (for example `ts:function:...`).
+- Semantic nodes use SCIP symbol IDs (for example `scip:...`).
+
+This enables fast lookup in Turso and direct graph traversal in KiteDB with the same node id for impact/callees/callers.

@@ -1,7 +1,8 @@
 use tauri::State;
 
 use super::{
-    AddThreadMessageInput, AppState, BackendHealth, CreateThreadInput, Message, MessageRole, Thread,
+    AddThreadMessageInput, AppState, BackendHealth, CodeIntelSyncInput, CodeIntelSyncResult,
+    CreateThreadInput, Message, MessageRole, Thread,
 };
 
 const DEFAULT_LIMIT: i64 = 50;
@@ -281,4 +282,11 @@ pub async fn list_thread_messages(
     }
 
     Ok(messages)
+}
+
+#[tauri::command]
+pub async fn run_code_intel_sync(
+    input: Option<CodeIntelSyncInput>,
+) -> Result<CodeIntelSyncResult, String> {
+    super::code_intel::run_code_intel_sync(input).await
 }
