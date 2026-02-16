@@ -1,18 +1,17 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Sora:wght@500;600;700&display=swap");
+
 :root {
   color-scheme: dark;
 }
 
 body {
-  margin: 0;
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #0b1020;
-  color: #e5e7eb;
+  font-family: "Manrope", "Avenir Next", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at 12% -30%, rgba(98, 131, 255, 0.25), transparent 36%),
+    radial-gradient(circle at 90% -20%, rgba(66, 193, 255, 0.14), transparent 40%),
+    linear-gradient(120deg, #04060d 0%, #070b15 55%, #070c19 100%);
 }
 
-main {
-  min-height: 100vh;
-  display: grid;
-  place-content: center;
-  text-align: center;
-  gap: 0.5rem;
+.app-title {
+  font-family: "Sora", "Manrope", sans-serif;
 }
