@@ -7,10 +7,12 @@ use std::{
 use tauri::State;
 
 use super::{
-    providers::provider_client, AddThreadMessageInput, AppState, BackendHealth,
-    CloneRepositoryInput, CloneRepositoryResult, CodeIntelSyncInput, CodeIntelSyncResult,
-    ConnectProviderInput, CreateThreadInput, Message, MessageRole, ProviderConnection,
-    ProviderKind, Thread,
+    providers::{provider_client, ProviderDeviceAuthorizationPoll},
+    AddThreadMessageInput, AppState, BackendHealth, CloneRepositoryInput, CloneRepositoryResult,
+    CodeIntelSyncInput, CodeIntelSyncResult, ConnectProviderInput, CreateThreadInput, Message,
+    MessageRole, PollProviderDeviceAuthInput, PollProviderDeviceAuthResult, ProviderConnection,
+    ProviderDeviceAuthStatus, ProviderKind, StartProviderDeviceAuthInput,
+    StartProviderDeviceAuthResult, Thread,
 };
 
 const DEFAULT_LIMIT: i64 = 50;
@@ -110,6 +112,45 @@ fn to_provider_connection(connection: &ProviderConnectionRow) -> ProviderConnect
         created_at: connection.created_at.clone(),
         updated_at: connection.updated_at.clone(),
     }
+}
+
+async fn upsert_provider_connection(
+    state: &AppState,
+    provider: ProviderKind,
+    access_token: &str,
+) -> Result<ProviderConnection, String> {
+    let token = access_token.trim();
+    if token.is_empty() {
+        return Err("Provider access token must not be empty.".to_string());
+    }
+
+    let client = provider_client(provider);
+    let identity = client.validate_access_token(token).await?;
+
+    let conn = state.connection()?;
+    conn.execute(
+        "INSERT INTO provider_connections (provider, account_login, avatar_url, access_token, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         ON CONFLICT(provider)
+         DO UPDATE SET
+           account_login = excluded.account_login,
+           avatar_url = excluded.avatar_url,
+           access_token = excluded.access_token,
+           updated_at = CURRENT_TIMESTAMP",
+        (
+            provider.as_str(),
+            identity.account_login,
+            identity.avatar_url,
+            token.to_string(),
+        ),
+    )
+    .await
+    .map_err(|error| format!("Failed to store provider connection: {error}"))?;
+
+    let connection = load_provider_connection_row(state, provider)
+        .await?
+        .ok_or_else(|| "Provider connection was not found after connect.".to_string())?;
+    Ok(to_provider_connection(&connection))
 }
 
 async fn load_provider_connection_row(
@@ -423,38 +464,66 @@ pub async fn connect_provider(
     state: State<'_, AppState>,
     input: ConnectProviderInput,
 ) -> Result<ProviderConnection, String> {
-    let access_token = input.access_token.trim();
-    if access_token.is_empty() {
-        return Err("Provider access token must not be empty.".to_string());
+    upsert_provider_connection(&state, input.provider, &input.access_token).await
+}
+
+#[tauri::command]
+pub async fn start_provider_device_auth(
+    input: StartProviderDeviceAuthInput,
+) -> Result<StartProviderDeviceAuthResult, String> {
+    let client = provider_client(input.provider);
+    let flow = client.start_device_authorization().await?;
+
+    Ok(StartProviderDeviceAuthResult {
+        provider: input.provider,
+        device_code: flow.device_code,
+        user_code: flow.user_code,
+        verification_uri: flow.verification_uri,
+        verification_uri_complete: flow.verification_uri_complete,
+        expires_in: flow.expires_in,
+        interval: flow.interval,
+    })
+}
+
+#[tauri::command]
+pub async fn poll_provider_device_auth(
+    state: State<'_, AppState>,
+    input: PollProviderDeviceAuthInput,
+) -> Result<PollProviderDeviceAuthResult, String> {
+    let device_code = input.device_code.trim();
+    if device_code.is_empty() {
+        return Err("Device code must not be empty.".to_string());
     }
 
     let client = provider_client(input.provider);
-    let identity = client.validate_access_token(access_token).await?;
+    let poll_result = client.poll_device_authorization(device_code).await?;
 
-    let conn = state.connection()?;
-    conn.execute(
-        "INSERT INTO provider_connections (provider, account_login, avatar_url, access_token, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-         ON CONFLICT(provider)
-         DO UPDATE SET
-           account_login = excluded.account_login,
-           avatar_url = excluded.avatar_url,
-           access_token = excluded.access_token,
-           updated_at = CURRENT_TIMESTAMP",
-        (
-            input.provider.as_str(),
-            identity.account_login,
-            identity.avatar_url,
-            access_token.to_string(),
-        ),
-    )
-    .await
-    .map_err(|error| format!("Failed to store provider connection: {error}"))?;
-
-    let connection = load_provider_connection_row(&state, input.provider)
-        .await?
-        .ok_or_else(|| "Provider connection was not found after connect.".to_string())?;
-    Ok(to_provider_connection(&connection))
+    match poll_result {
+        ProviderDeviceAuthorizationPoll::Pending => Ok(PollProviderDeviceAuthResult {
+            status: ProviderDeviceAuthStatus::Pending,
+            connection: None,
+        }),
+        ProviderDeviceAuthorizationPoll::SlowDown => Ok(PollProviderDeviceAuthResult {
+            status: ProviderDeviceAuthStatus::SlowDown,
+            connection: None,
+        }),
+        ProviderDeviceAuthorizationPoll::Complete { access_token } => {
+            let connection =
+                upsert_provider_connection(&state, input.provider, &access_token).await?;
+            Ok(PollProviderDeviceAuthResult {
+                status: ProviderDeviceAuthStatus::Complete,
+                connection: Some(connection),
+            })
+        }
+        ProviderDeviceAuthorizationPoll::Expired => Err(format!(
+            "{} device authorization expired. Start the connection flow again.",
+            input.provider.as_str()
+        )),
+        ProviderDeviceAuthorizationPoll::Denied => Err(format!(
+            "{} device authorization was denied.",
+            input.provider.as_str()
+        )),
+    }
 }
 
 #[tauri::command]

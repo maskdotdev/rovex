@@ -12,8 +12,10 @@ The backend lives in `src-tauri/src/backend` and is exposed through Tauri comman
 2. Set:
    - `TURSO_DATABASE_URL` (for example `libsql://<db-name>-<org>.turso.io`)
    - `TURSO_AUTH_TOKEN` (from `turso db tokens create <db-name>`)
+   - `GITHUB_OAUTH_CLIENT_ID` (GitHub OAuth App client id used for device login)
    - Optional: `ROVEX_LOCAL_DATABASE_URL` (default fallback: `file:rovex-dev.db`)
    - Optional: `ROVEX_REPOSITORIES_DIR` (default clone destination: `~/rovex/repos`)
+   - Optional: `GITHUB_OAUTH_SCOPE` (default: `repo`)
 
 The app reads `.env` at startup and initializes tables automatically.
 If Turso env vars are missing, the app falls back to a local libsql database instead of crashing.
@@ -26,6 +28,8 @@ If Turso env vars are missing, the app falls back to a local libsql database ins
 - `add_thread_message({ threadId, role, content })`
 - `list_thread_messages(threadId, limit?)`
 - `connect_provider({ provider, accessToken })`
+- `start_provider_device_auth({ provider })`
+- `poll_provider_device_auth({ provider, deviceCode })`
 - `get_provider_connection(provider)`
 - `list_provider_connections()`
 - `disconnect_provider(provider)`

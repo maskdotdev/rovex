@@ -111,6 +111,39 @@ pub struct ConnectProviderInput {
     pub access_token: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartProviderDeviceAuthInput {
+    pub provider: ProviderKind,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartProviderDeviceAuthResult {
+    pub provider: ProviderKind,
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub verification_uri_complete: Option<String>,
+    pub expires_in: u64,
+    pub interval: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PollProviderDeviceAuthInput {
+    pub provider: ProviderKind,
+    pub device_code: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderDeviceAuthStatus {
+    Pending,
+    SlowDown,
+    Complete,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderConnection {
@@ -119,6 +152,13 @@ pub struct ProviderConnection {
     pub avatar_url: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PollProviderDeviceAuthResult {
+    pub status: ProviderDeviceAuthStatus,
+    pub connection: Option<ProviderConnection>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

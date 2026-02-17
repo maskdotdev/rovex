@@ -1,4 +1,14 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, type Component } from "solid-js";
+import {
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createResource,
+  createSignal,
+  onCleanup,
+  type Component,
+} from "solid-js";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Archive,
   ArrowLeft,
@@ -41,10 +51,13 @@ import {
   disconnectProvider,
   getProviderConnection,
   listThreads,
+  pollProviderDeviceAuth,
+  startProviderDeviceAuth,
+  type StartProviderDeviceAuthResult,
   type ProviderConnection,
   type Thread,
 } from "@/lib/backend";
-import "./App.css";
+import "./app.css";
 
 type AppView = "workspace" | "settings";
 
@@ -188,6 +201,10 @@ const timelineEntries: TimelineEntry[] = [
 ];
 
 const UNKNOWN_REPO = "unknown-repo";
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 function repoNameFromWorkspace(workspace: string | null): string {
   const value = workspace?.trim();
@@ -334,6 +351,10 @@ function App() {
   const [providerBusy, setProviderBusy] = createSignal(false);
   const [providerError, setProviderError] = createSignal<string | null>(null);
   const [providerStatus, setProviderStatus] = createSignal<string | null>(null);
+  const [deviceAuthInProgress, setDeviceAuthInProgress] = createSignal(false);
+  const [deviceAuthUserCode, setDeviceAuthUserCode] = createSignal<string | null>(null);
+  const [deviceAuthVerificationUrl, setDeviceAuthVerificationUrl] = createSignal<string | null>(null);
+  let deviceAuthSession = 0;
 
   createEffect(() => {
     const groups = repoGroups();
@@ -383,6 +404,104 @@ function App() {
     setProviderStatus(null);
   };
 
+  const cancelDeviceAuthFlow = () => {
+    deviceAuthSession += 1;
+    setDeviceAuthInProgress(false);
+    setDeviceAuthUserCode(null);
+    setDeviceAuthVerificationUrl(null);
+  };
+
+  onCleanup(() => {
+    cancelDeviceAuthFlow();
+  });
+
+  const openDeviceVerificationUrl = async () => {
+    const url = deviceAuthVerificationUrl();
+    if (!url) return;
+
+    try {
+      await openUrl(url);
+    } catch (error) {
+      setProviderError(
+        error instanceof Error ? error.message : "Failed to open GitHub verification URL."
+      );
+    }
+  };
+
+  const pollGitHubDeviceAuth = async (
+    sessionId: number,
+    flow: StartProviderDeviceAuthResult
+  ) => {
+    let intervalMs = Math.max(1, flow.interval) * 1000;
+    const expiresAt = Date.now() + Math.max(1, flow.expiresIn) * 1000;
+
+    while (sessionId === deviceAuthSession && Date.now() < expiresAt) {
+      await sleep(intervalMs);
+      if (sessionId !== deviceAuthSession) {
+        return;
+      }
+
+      try {
+        const result = await pollProviderDeviceAuth({
+          provider: "github",
+          deviceCode: flow.deviceCode,
+        });
+        if (sessionId !== deviceAuthSession) {
+          return;
+        }
+
+        if (result.status === "complete" && result.connection) {
+          await refetchGithubConnection();
+          cancelDeviceAuthFlow();
+          setProviderStatus(`Connected GitHub as ${result.connection.accountLogin}.`);
+          return;
+        }
+
+        if (result.status === "slow_down") {
+          intervalMs += 5000;
+        }
+      } catch (error) {
+        if (sessionId !== deviceAuthSession) {
+          return;
+        }
+        cancelDeviceAuthFlow();
+        setProviderError(error instanceof Error ? error.message : String(error));
+        return;
+      }
+    }
+
+    if (sessionId !== deviceAuthSession) {
+      return;
+    }
+    cancelDeviceAuthFlow();
+    setProviderError("GitHub sign-in timed out. Start again.");
+  };
+
+  const handleStartDeviceAuth = async () => {
+    clearProviderNotice();
+    cancelDeviceAuthFlow();
+    const sessionId = deviceAuthSession;
+
+    setProviderBusy(true);
+    try {
+      const flow = await startProviderDeviceAuth({ provider: "github" });
+      const verificationUrl = flow.verificationUriComplete ?? flow.verificationUri;
+
+      setDeviceAuthInProgress(true);
+      setDeviceAuthUserCode(flow.userCode);
+      setDeviceAuthVerificationUrl(verificationUrl);
+      setProviderStatus(`Enter code ${flow.userCode} in GitHub to finish connecting.`);
+
+      await openDeviceVerificationUrl();
+      void pollGitHubDeviceAuth(sessionId, flow);
+    } catch (error) {
+      setProviderError(error instanceof Error ? error.message : String(error));
+      cancelDeviceAuthFlow();
+    } finally {
+      setProviderBusy(false);
+    }
+  };
+
   const openSettings = (tab: SettingsTab = "connections") => {
     setActiveSettingsTab(tab);
     setActiveView("settings");
@@ -395,6 +514,7 @@ function App() {
   const handleConnectProvider = async (event: Event) => {
     event.preventDefault();
     clearProviderNotice();
+    cancelDeviceAuthFlow();
 
     const token = providerToken().trim();
     if (!token) {
@@ -417,6 +537,7 @@ function App() {
 
   const handleDisconnectProvider = async () => {
     clearProviderNotice();
+    cancelDeviceAuthFlow();
     setProviderBusy(true);
     try {
       await disconnectProvider("github");
@@ -551,7 +672,7 @@ function App() {
                             <p class="text-[15px] font-medium text-neutral-100">GitHub</p>
                           </div>
                           <p class="mt-2 text-[13.5px] leading-relaxed text-neutral-500">
-                            Connect GitHub so Rovex can clone repositories for code review.
+                            Connect GitHub with one-click device auth so Rovex can clone repositories for code review.
                           </p>
                         </div>
                         <span
@@ -566,27 +687,64 @@ function App() {
                       </div>
 
                       <div class="px-6 py-5">
-                        <Show when={githubConnection()} fallback={
-                          <form class="max-w-md" onSubmit={(event) => void handleConnectProvider(event)}>
-                            <TextField>
-                              <TextFieldInput
-                                type="password"
-                                placeholder="GitHub personal access token"
-                                value={providerToken()}
-                                onInput={(event) => setProviderToken(event.currentTarget.value)}
-                                class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
-                              />
-                            </TextField>
-                            <Button
-                              type="submit"
-                              size="sm"
-                              class="mt-3"
-                              disabled={providerBusy() || providerToken().trim().length === 0}
-                            >
-                              {providerBusy() ? "Connecting..." : "Connect GitHub"}
-                            </Button>
-                          </form>
-                        }>
+                        <Show
+                          when={githubConnection()}
+                          fallback={
+                            <div class="max-w-md space-y-3">
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={providerBusy() || deviceAuthInProgress()}
+                                onClick={() => void handleStartDeviceAuth()}
+                              >
+                                {providerBusy()
+                                  ? "Starting..."
+                                  : deviceAuthInProgress()
+                                    ? "Waiting for approval..."
+                                    : "Connect with GitHub"}
+                              </Button>
+                              <Show when={deviceAuthInProgress() && deviceAuthUserCode()}>
+                                {(userCode) => (
+                                  <div class="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-[13px] text-amber-200/90">
+                                    Enter code <span class="font-semibold tracking-[0.08em]">{userCode()}</span> on GitHub.
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      class="mt-3 border-white/[0.1] text-neutral-200 hover:border-white/[0.18]"
+                                      onClick={() => void openDeviceVerificationUrl()}
+                                    >
+                                      Open GitHub verification
+                                    </Button>
+                                  </div>
+                                )}
+                              </Show>
+                              <details class="rounded-xl border border-white/[0.06] bg-white/[0.015] px-4 py-3 text-[13px] text-neutral-400">
+                                <summary class="cursor-pointer font-medium text-neutral-300">
+                                  Use personal access token instead
+                                </summary>
+                                <form class="mt-3 space-y-3" onSubmit={(event) => void handleConnectProvider(event)}>
+                                  <TextField>
+                                    <TextFieldInput
+                                      type="password"
+                                      placeholder="GitHub personal access token"
+                                      value={providerToken()}
+                                      onInput={(event) => setProviderToken(event.currentTarget.value)}
+                                      class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
+                                    />
+                                  </TextField>
+                                  <Button
+                                    type="submit"
+                                    size="sm"
+                                    disabled={providerBusy() || providerToken().trim().length === 0}
+                                  >
+                                    {providerBusy() ? "Connecting..." : "Connect with token"}
+                                  </Button>
+                                </form>
+                              </details>
+                            </div>
+                          }
+                        >
                           {(connection) => (
                             <div class="flex flex-wrap items-center justify-between gap-3">
                               <p class="text-[14px] text-neutral-400">

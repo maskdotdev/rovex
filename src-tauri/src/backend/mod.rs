@@ -1,3 +1,4 @@
+#[path = "code-intel.rs"]
 mod code_intel;
 pub mod commands;
 mod db;
@@ -7,7 +8,9 @@ mod providers;
 pub use models::{
     AddThreadMessageInput, BackendHealth, CloneRepositoryInput, CloneRepositoryResult,
     CodeIntelSyncInput, CodeIntelSyncResult, ConnectProviderInput, CreateThreadInput, Message,
-    MessageRole, ProviderConnection, ProviderKind, Thread,
+    MessageRole, PollProviderDeviceAuthInput, PollProviderDeviceAuthResult,
+    ProviderConnection, ProviderDeviceAuthStatus, ProviderKind, StartProviderDeviceAuthInput,
+    StartProviderDeviceAuthResult, Thread,
 };
 
 use libsql::{Connection, Database};

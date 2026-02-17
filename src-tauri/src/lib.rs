@@ -29,6 +29,8 @@ pub fn run() {
             backend::commands::add_thread_message,
             backend::commands::list_thread_messages,
             backend::commands::connect_provider,
+            backend::commands::start_provider_device_auth,
+            backend::commands::poll_provider_device_auth,
             backend::commands::get_provider_connection,
             backend::commands::list_provider_connections,
             backend::commands::disconnect_provider,

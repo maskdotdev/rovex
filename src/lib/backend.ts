@@ -41,12 +41,38 @@ export type ConnectProviderInput = {
   accessToken: string;
 };
 
+export type StartProviderDeviceAuthInput = {
+  provider: ProviderKind;
+};
+
+export type StartProviderDeviceAuthResult = {
+  provider: ProviderKind;
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string | null;
+  expiresIn: number;
+  interval: number;
+};
+
+export type PollProviderDeviceAuthInput = {
+  provider: ProviderKind;
+  deviceCode: string;
+};
+
+export type ProviderDeviceAuthStatus = "pending" | "slow_down" | "complete";
+
 export type ProviderConnection = {
   provider: ProviderKind;
   accountLogin: string;
   avatarUrl: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type PollProviderDeviceAuthResult = {
+  status: ProviderDeviceAuthStatus;
+  connection: ProviderConnection | null;
 };
 
 export type CloneRepositoryInput = {
@@ -85,6 +111,14 @@ export function listThreadMessages(threadId: number, limit?: number) {
 
 export function connectProvider(input: ConnectProviderInput) {
   return invoke<ProviderConnection>("connect_provider", { input });
+}
+
+export function startProviderDeviceAuth(input: StartProviderDeviceAuthInput) {
+  return invoke<StartProviderDeviceAuthResult>("start_provider_device_auth", { input });
+}
+
+export function pollProviderDeviceAuth(input: PollProviderDeviceAuthInput) {
+  return invoke<PollProviderDeviceAuthResult>("poll_provider_device_auth", { input });
 }
 
 export function getProviderConnection(provider: ProviderKind) {
