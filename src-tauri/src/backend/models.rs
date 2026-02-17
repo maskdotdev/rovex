@@ -87,18 +87,21 @@ pub struct CodeIntelSyncResult {
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
     Github,
+    Gitlab,
 }
 
 impl ProviderKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Github => "github",
+            Self::Gitlab => "gitlab",
         }
     }
 
     pub fn from_str(value: &str) -> Option<Self> {
         match value {
             "github" => Some(Self::Github),
+            "gitlab" => Some(Self::Gitlab),
             _ => None,
         }
     }

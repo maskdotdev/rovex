@@ -25,14 +25,12 @@ import {
   Pencil,
   PlusCircle,
   PlugZap,
-  RefreshCcw,
   Search,
   Send,
   Server,
   SlidersHorizontal,
   Trash2,
   Workflow,
-  X,
 } from "lucide-solid";
 import * as Popover from "@kobalte/core/popover";
 import { Button } from "@/components/button";
@@ -77,6 +75,7 @@ import {
   type ListWorkspaceBranchesResult,
   type Message as ThreadMessage,
   type ProviderConnection,
+  type ProviderKind,
   type StartProviderDeviceAuthResult,
   type Thread,
 } from "@/lib/backend";
@@ -120,6 +119,14 @@ type DiffThemePreset = {
   label: string;
   description: string;
   theme: DiffViewerTheme;
+};
+
+type ProviderOption = {
+  id: ProviderKind;
+  label: string;
+  description: string;
+  repositoryHint: string;
+  tokenPlaceholder: string;
 };
 
 const settingsNavItems: SettingsNavItem[] = [
@@ -240,8 +247,33 @@ index 4c3f8d2..f3b58a1 100644
  
 -  return "Blocked";
 +  return fallback;
- }
+}
 `;
+
+const providerOptions: ProviderOption[] = [
+  {
+    id: "github",
+    label: "GitHub",
+    description:
+      "Connect GitHub with one-click device auth so Rovex can clone repositories for code review.",
+    repositoryHint: "Supports owner/repo or a GitHub URL. Creates a review thread automatically.",
+    tokenPlaceholder: "GitHub personal access token",
+  },
+  {
+    id: "gitlab",
+    label: "GitLab",
+    description:
+      "Connect GitLab to clone repositories for code review, including subgroup paths.",
+    repositoryHint:
+      "Supports namespace/repo (including subgroups) or a GitLab URL. Creates a review thread automatically.",
+    tokenPlaceholder: "GitLab personal access token",
+  },
+];
+
+function providerOption(provider: ProviderKind): ProviderOption {
+  const option = providerOptions.find((candidate) => candidate.id === provider);
+  return option ?? providerOptions[0];
+}
 
 function getDiffThemePreset(themeId: string | null | undefined): DiffThemePreset {
   const normalized = themeId?.trim();
@@ -368,12 +400,20 @@ function App() {
   const [githubConnection, { refetch: refetchGithubConnection }] = createResource<
     ProviderConnection | null
   >(() => getProviderConnection("github"));
+  const [gitlabConnection, { refetch: refetchGitlabConnection }] = createResource<
+    ProviderConnection | null
+  >(() => getProviderConnection("gitlab"));
 
   const [activeView, setActiveView] = createSignal<AppView>("workspace");
   const [activeSettingsTab, setActiveSettingsTab] = createSignal<SettingsTab>("connections");
   const [selectedDiffThemeId, setSelectedDiffThemeId] = createSignal(getInitialDiffThemeId());
   const [settingsError, setSettingsError] = createSignal<string | null>(null);
+  const [selectedProvider, setSelectedProvider] = createSignal<ProviderKind>("github");
   const selectedDiffTheme = createMemo(() => getDiffThemePreset(selectedDiffThemeId()));
+  const selectedProviderOption = createMemo(() => providerOption(selectedProvider()));
+  const selectedProviderConnection = createMemo(() =>
+    selectedProvider() === "github" ? githubConnection() : gitlabConnection()
+  );
 
   const repoGroups = createMemo(() => groupThreadsByRepo(threads() ?? []));
   const [collapsedRepos, setCollapsedRepos] = createSignal<Record<string, boolean>>({});
@@ -531,7 +571,7 @@ function App() {
   });
 
   const providerConnectionError = createMemo(() => {
-    const error = githubConnection.error;
+    const error = selectedProvider() === "github" ? githubConnection.error : gitlabConnection.error;
     if (!error) return null;
     return error instanceof Error ? error.message : String(error);
   });
@@ -556,6 +596,14 @@ function App() {
     setProviderStatus(null);
   };
 
+  const refetchProviderConnection = async (provider: ProviderKind) => {
+    if (provider === "github") {
+      await refetchGithubConnection();
+      return;
+    }
+    await refetchGitlabConnection();
+  };
+
   const cancelDeviceAuthFlow = () => {
     deviceAuthSession += 1;
     setDeviceAuthInProgress(false);
@@ -567,7 +615,15 @@ function App() {
     cancelDeviceAuthFlow();
   });
 
-  const openDeviceVerificationUrl = async () => {
+  createEffect(() => {
+    selectedProvider();
+    clearProviderNotice();
+    cancelDeviceAuthFlow();
+    setProviderToken("");
+    setRepositoryInput("");
+  });
+
+  const openDeviceVerificationUrl = async (providerLabel: string) => {
     const url = deviceAuthVerificationUrl();
     if (!url) return;
 
@@ -575,15 +631,19 @@ function App() {
       await openUrl(url);
     } catch (error) {
       setProviderError(
-        error instanceof Error ? error.message : "Failed to open GitHub verification URL."
+        error instanceof Error
+          ? error.message
+          : `Failed to open ${providerLabel} verification URL.`
       );
     }
   };
 
-  const pollGitHubDeviceAuth = async (
+  const pollProviderDeviceAuthFlow = async (
     sessionId: number,
+    provider: ProviderKind,
     flow: StartProviderDeviceAuthResult
   ) => {
+    const label = providerOption(provider).label;
     let intervalMs = Math.max(1, flow.interval) * 1000;
     const expiresAt = Date.now() + Math.max(1, flow.expiresIn) * 1000;
 
@@ -595,7 +655,7 @@ function App() {
 
       try {
         const result = await pollProviderDeviceAuth({
-          provider: "github",
+          provider,
           deviceCode: flow.deviceCode,
         });
         if (sessionId !== deviceAuthSession) {
@@ -603,9 +663,9 @@ function App() {
         }
 
         if (result.status === "complete" && result.connection) {
-          await refetchGithubConnection();
+          await refetchProviderConnection(provider);
           cancelDeviceAuthFlow();
-          setProviderStatus(`Connected GitHub as ${result.connection.accountLogin}.`);
+          setProviderStatus(`Connected ${label} as ${result.connection.accountLogin}.`);
           return;
         }
 
@@ -626,26 +686,29 @@ function App() {
       return;
     }
     cancelDeviceAuthFlow();
-    setProviderError("GitHub sign-in timed out. Start again.");
+    setProviderError(`${label} sign-in timed out. Start again.`);
   };
 
   const handleStartDeviceAuth = async () => {
+    const provider = selectedProvider();
+    const selected = providerOption(provider);
+
     clearProviderNotice();
     cancelDeviceAuthFlow();
     const sessionId = deviceAuthSession;
 
     setProviderBusy(true);
     try {
-      const flow = await startProviderDeviceAuth({ provider: "github" });
+      const flow = await startProviderDeviceAuth({ provider });
       const verificationUrl = flow.verificationUriComplete ?? flow.verificationUri;
 
       setDeviceAuthInProgress(true);
       setDeviceAuthUserCode(flow.userCode);
       setDeviceAuthVerificationUrl(verificationUrl);
-      setProviderStatus(`Enter code ${flow.userCode} in GitHub to finish connecting.`);
+      setProviderStatus(`Enter code ${flow.userCode} in ${selected.label} to finish connecting.`);
 
-      await openDeviceVerificationUrl();
-      void pollGitHubDeviceAuth(sessionId, flow);
+      await openDeviceVerificationUrl(selected.label);
+      void pollProviderDeviceAuthFlow(sessionId, provider, flow);
     } catch (error) {
       setProviderError(error instanceof Error ? error.message : String(error));
       cancelDeviceAuthFlow();
@@ -664,22 +727,25 @@ function App() {
   };
 
   const handleConnectProvider = async (event: Event) => {
+    const provider = selectedProvider();
+    const selected = providerOption(provider);
+
     event.preventDefault();
     clearProviderNotice();
     cancelDeviceAuthFlow();
 
     const token = providerToken().trim();
     if (!token) {
-      setProviderError("Enter a GitHub personal access token.");
+      setProviderError(`Enter a ${selected.label} personal access token.`);
       return;
     }
 
     setProviderBusy(true);
     try {
-      const connection = await connectProvider({ provider: "github", accessToken: token });
+      const connection = await connectProvider({ provider, accessToken: token });
       setProviderToken("");
-      await refetchGithubConnection();
-      setProviderStatus(`Connected GitHub as ${connection.accountLogin}.`);
+      await refetchProviderConnection(provider);
+      setProviderStatus(`Connected ${selected.label} as ${connection.accountLogin}.`);
     } catch (error) {
       setProviderError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -688,13 +754,16 @@ function App() {
   };
 
   const handleDisconnectProvider = async () => {
+    const provider = selectedProvider();
+    const selected = providerOption(provider);
+
     clearProviderNotice();
     cancelDeviceAuthFlow();
     setProviderBusy(true);
     try {
-      await disconnectProvider("github");
-      await refetchGithubConnection();
-      setProviderStatus("Disconnected GitHub.");
+      await disconnectProvider(provider);
+      await refetchProviderConnection(provider);
+      setProviderStatus(`Disconnected ${selected.label}.`);
     } catch (error) {
       setProviderError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -703,19 +772,22 @@ function App() {
   };
 
   const handleCloneRepository = async (event: Event) => {
+    const provider = selectedProvider();
+    const selected = providerOption(provider);
+
     event.preventDefault();
     clearProviderNotice();
 
     const repository = repositoryInput().trim();
     if (!repository) {
-      setProviderError("Enter a repository (owner/repo or GitHub URL).");
+      setProviderError(`Enter a ${selected.label} repository path or URL.`);
       return;
     }
 
     setProviderBusy(true);
     try {
       const cloneResult = await cloneRepository({
-        provider: "github",
+        provider,
         repository,
         destinationRoot: destinationRoot().trim() || null,
         shallow: true,
@@ -1152,7 +1224,7 @@ function App() {
                         <section class="animate-fade-up mt-10 max-w-3xl rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6" style={{ "animation-delay": "0.08s" }}>
                           <p class="text-[15px] font-medium text-neutral-200">{selectedSettingsItem().label}</p>
                           <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
-                            This section is ready for settings controls. Select Connections to manage GitHub.
+                            This section is ready for settings controls. Select Connections to manage repository providers.
                           </p>
                         </section>
                       }
@@ -1236,35 +1308,53 @@ function App() {
                   }
                 >
                   <div class="mt-10 max-w-3xl space-y-5">
-                    {/* GitHub connection card */}
+                    <section class="animate-fade-up rounded-2xl border border-white/[0.05] bg-white/[0.02] px-6 py-5" style={{ "animation-delay": "0.05s" }}>
+                      <p class="text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500">Provider</p>
+                      <div class="mt-3 inline-flex rounded-xl border border-white/[0.08] bg-white/[0.03] p-1">
+                        <For each={providerOptions}>
+                          {(option) => (
+                            <button
+                              type="button"
+                              class={`rounded-lg px-3.5 py-2 text-[13px] font-medium transition-colors ${selectedProvider() === option.id
+                                ? "bg-white/[0.1] text-neutral-100"
+                                : "text-neutral-400 hover:text-neutral-200"
+                                }`}
+                              onClick={() => setSelectedProvider(option.id)}
+                            >
+                              {option.label}
+                            </button>
+                          )}
+                        </For>
+                      </div>
+                    </section>
+
+                    {/* Provider connection card */}
                     <section class="animate-fade-up overflow-hidden rounded-2xl border border-white/[0.05] bg-white/[0.02]" style={{ "animation-delay": "0.08s" }}>
                       <div class="flex flex-wrap items-start justify-between gap-3 border-b border-white/[0.04] px-6 py-5">
                         <div>
                           <div class="flex items-center gap-2.5">
                             <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-white/[0.05]">
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" class="text-neutral-300"><title>GitHub</title>
-                                <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
-                              </svg>
+                              <PlugZap class="size-4 text-neutral-300" />
                             </div>
-                            <p class="text-[15px] font-medium text-neutral-100">GitHub</p>
+                            <p class="text-[15px] font-medium text-neutral-100">{selectedProviderOption().label}</p>
                           </div>
                           <p class="mt-2 text-[13.5px] leading-relaxed text-neutral-500">
-                            Connect GitHub with one-click device auth so Rovex can clone repositories for code review.
+                            {selectedProviderOption().description}
                           </p>
                         </div>
                         <span
-                          class={`mt-1 rounded-full border px-2.5 py-1 text-[11.5px] font-medium tracking-wide ${githubConnection()
+                          class={`mt-1 rounded-full border px-2.5 py-1 text-[11.5px] font-medium tracking-wide ${selectedProviderConnection()
                             ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400/90"
                             : "border-white/[0.06] bg-white/[0.03] text-neutral-500"
                             }`}
                         >
-                          {githubConnection() ? "Connected" : "Not connected"}
+                          {selectedProviderConnection() ? "Connected" : "Not connected"}
                         </span>
                       </div>
 
                       <div class="px-6 py-5">
                         <Show
-                          when={githubConnection()}
+                          when={selectedProviderConnection()}
                           fallback={
                             <div class="max-w-md space-y-3">
                               <Button
@@ -1277,20 +1367,20 @@ function App() {
                                   ? "Starting..."
                                   : deviceAuthInProgress()
                                     ? "Waiting for approval..."
-                                    : "Connect with GitHub"}
+                                    : `Connect with ${selectedProviderOption().label}`}
                               </Button>
                               <Show when={deviceAuthInProgress() && deviceAuthUserCode()}>
                                 {(userCode) => (
                                   <div class="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-[13px] text-amber-200/90">
-                                    Enter code <span class="font-semibold tracking-[0.08em]">{userCode()}</span> on GitHub.
+                                    Enter code <span class="font-semibold tracking-[0.08em]">{userCode()}</span> on {selectedProviderOption().label}.
                                     <Button
                                       type="button"
                                       variant="outline"
                                       size="sm"
                                       class="mt-3 border-white/[0.1] text-neutral-200 hover:border-white/[0.18]"
-                                      onClick={() => void openDeviceVerificationUrl()}
+                                      onClick={() => void openDeviceVerificationUrl(selectedProviderOption().label)}
                                     >
-                                      Open GitHub verification
+                                      Open {selectedProviderOption().label} verification
                                     </Button>
                                   </div>
                                 )}
@@ -1303,7 +1393,7 @@ function App() {
                                   <TextField>
                                     <TextFieldInput
                                       type="password"
-                                      placeholder="GitHub personal access token"
+                                      placeholder={selectedProviderOption().tokenPlaceholder}
                                       value={providerToken()}
                                       onInput={(event) => setProviderToken(event.currentTarget.value)}
                                       class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
@@ -1349,12 +1439,12 @@ function App() {
                     >
                       <p class="text-[15px] font-medium text-neutral-200">Clone repository for review</p>
                       <p class="mt-1.5 text-[13.5px] leading-relaxed text-neutral-500">
-                        Supports owner/repo or a GitHub URL. Creates a review thread automatically.
+                        {selectedProviderOption().repositoryHint}
                       </p>
 
                       <TextField class="mt-4 max-w-md">
                         <TextFieldInput
-                          placeholder="owner/repository"
+                          placeholder={selectedProvider() === "gitlab" ? "group/subgroup/repository" : "owner/repository"}
                           value={repositoryInput()}
                           onInput={(event) => setRepositoryInput(event.currentTarget.value)}
                           class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
@@ -1386,7 +1476,11 @@ function App() {
                         type="submit"
                         size="sm"
                         class="mt-4"
-                        disabled={providerBusy() || !githubConnection() || repositoryInput().trim().length === 0}
+                        disabled={
+                          providerBusy() ||
+                          !selectedProviderConnection() ||
+                          repositoryInput().trim().length === 0
+                        }
                       >
                         {providerBusy() ? "Working..." : "Clone for review"}
                       </Button>
@@ -1469,7 +1563,10 @@ function App() {
           class="border-0 bg-transparent group-data-[side=left]:border-r-0 group-data-[side=right]:border-l-0 [&_[data-sidebar=sidebar]]:bg-transparent"
         >
           <SidebarHeader class="px-4 pt-5 pb-2">
-            <div class="flex items-center">
+            <div class="flex items-center gap-2.5">
+              <div class="flex size-8 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.03]">
+                <GitBranch class="size-4 text-amber-300/90" />
+              </div>
               <h2 class="app-title text-[22px] text-neutral-200">Rovex</h2>
             </div>
             <Button
@@ -1531,7 +1628,7 @@ function App() {
                             aria-label={`Create a new review for ${repoDisplayName(repo.repoName)}`}
                             title={`Create a new review for ${repoDisplayName(repo.repoName)}`}
                             disabled={providerBusy()}
-                            onClick={(event) => {
+                            onClick={(event: MouseEvent) => {
                               event.stopPropagation();
                               void handleCreateReviewForRepo(repo);
                             }}
@@ -1557,7 +1654,7 @@ function App() {
                             <Popover.Portal>
                               <Popover.Content
                                 class="z-50 w-44 rounded-xl border border-white/[0.08] bg-[#16171b] p-1.5 shadow-[0_16px_48px_rgba(0,0,0,0.45)]"
-                                onClick={(event) => event.stopPropagation()}
+                                onClick={(event: MouseEvent) => event.stopPropagation()}
                               >
                                 <button
                                   type="button"

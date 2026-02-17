@@ -1,4 +1,5 @@
 mod github;
+mod gitlab;
 
 use async_trait::async_trait;
 
@@ -63,5 +64,6 @@ pub trait ProviderClient: Send + Sync {
 pub fn provider_client(kind: ProviderKind) -> Box<dyn ProviderClient> {
     match kind {
         ProviderKind::Github => Box::new(github::GitHubProviderClient),
+        ProviderKind::Gitlab => Box::new(gitlab::GitLabProviderClient),
     }
 }

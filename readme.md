@@ -13,9 +13,12 @@ The backend lives in `src-tauri/src/backend` and is exposed through Tauri comman
    - `TURSO_DATABASE_URL` (for example `libsql://<db-name>-<org>.turso.io`)
    - `TURSO_AUTH_TOKEN` (from `turso db tokens create <db-name>`)
    - `GITHUB_OAUTH_CLIENT_ID` (GitHub OAuth App client id used for device login)
+   - `GITLAB_OAUTH_CLIENT_ID` (GitLab OAuth app client id used for device login)
    - Optional: `ROVEX_LOCAL_DATABASE_URL` (default fallback: `file:rovex-dev.db`)
    - Optional: `ROVEX_REPOSITORIES_DIR` (default clone destination: `~/rovex/repos`)
    - Optional: `GITHUB_OAUTH_SCOPE` (default: `repo`)
+   - Optional: `GITLAB_OAUTH_SCOPE` (default: `read_user read_repository`)
+   - Optional: `GITLAB_BASE_URL` (default: `https://gitlab.com`)
    - Optional: `ROVEX_REVIEW_MODEL` (default: `gpt-4.1-mini`)
    - Optional: `ROVEX_REVIEW_BASE_URL` (default: `https://api.openai.com/v1`)
    - Optional: `ROVEX_REVIEW_MAX_DIFF_CHARS` (default: `120000`)
@@ -41,7 +44,7 @@ If Turso env vars are missing, the app falls back to a local libsql database ins
 - `generate_ai_review({ threadId, workspace, baseRef, mergeBase, head, filesChanged, insertions, deletions, diff, prompt? })`
 
 `role` accepts `system`, `user`, or `assistant`.
-`provider` currently accepts `github`.
+`provider` accepts `github` and `gitlab`.
 
 ## Provider Pattern
 
@@ -49,9 +52,7 @@ Provider implementations live under `src-tauri/src/backend/providers`.
 
 - `ProviderClient` defines provider capabilities (token validation, repository parsing, clone URL, auth header).
 - `provider_client(kind)` acts as a registry/dispatcher.
-- Database stores connections in a provider-agnostic table (`provider_connections`) so new providers can reuse the same command surface.
-
-To add GitLab later, create `providers/gitlab.rs`, implement `ProviderClient`, add a `ProviderKind` variant, and register it in `provider_client`.
+- Database stores connections in a provider-agnostic table (`provider_connections`) so providers can reuse the same command surface.
 
 ## Run
 

@@ -34,7 +34,7 @@ export type AddThreadMessageInput = {
   content: string;
 };
 
-export type ProviderKind = "github";
+export type ProviderKind = "github" | "gitlab";
 
 export type ConnectProviderInput = {
   provider: ProviderKind;
