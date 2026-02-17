@@ -9,11 +9,13 @@ import {
   type Component,
 } from "solid-js";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   Archive,
   ArrowLeft,
   ChevronRight,
   CircleDot,
+  FolderOpen,
   GitBranch,
   Monitor,
   Palette,
@@ -337,6 +339,7 @@ function App() {
   const [providerToken, setProviderToken] = createSignal("");
   const [repositoryInput, setRepositoryInput] = createSignal("");
   const [destinationRoot, setDestinationRoot] = createSignal("");
+  const [localProjectPath, setLocalProjectPath] = createSignal("");
   const [providerBusy, setProviderBusy] = createSignal(false);
   const [providerError, setProviderError] = createSignal<string | null>(null);
   const [providerStatus, setProviderStatus] = createSignal<string | null>(null);
@@ -575,6 +578,83 @@ function App() {
     }
   };
 
+  const pickDirectory = async (defaultPath?: string): Promise<string | null> => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: defaultPath?.trim() || undefined,
+      });
+      return typeof selected === "string" ? selected : null;
+    } catch (error) {
+      setProviderError(error instanceof Error ? error.message : String(error));
+      return null;
+    }
+  };
+
+  const handlePickDestinationRoot = async () => {
+    clearProviderNotice();
+    const selectedPath = await pickDirectory(destinationRoot());
+    if (!selectedPath) return;
+    setDestinationRoot(selectedPath);
+  };
+
+  const handlePickLocalProject = async () => {
+    clearProviderNotice();
+    const selectedPath = await pickDirectory(localProjectPath());
+    if (!selectedPath) return;
+    setLocalProjectPath(selectedPath);
+  };
+
+  const handleCreateLocalProjectThread = async (event: Event) => {
+    event.preventDefault();
+    clearProviderNotice();
+
+    const workspace = localProjectPath().trim();
+    if (!workspace) {
+      setProviderError("Select a local project directory.");
+      return;
+    }
+
+    setProviderBusy(true);
+    try {
+      const thread = await createThread({
+        title: `Review ${repoNameFromWorkspace(workspace)}`,
+        workspace,
+      });
+      await refetchThreads();
+      setSelectedThreadId(thread.id);
+      setLocalProjectPath("");
+      setProviderStatus(`Added local project ${workspace} and created a review thread.`);
+      setActiveView("workspace");
+    } catch (error) {
+      setProviderError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setProviderBusy(false);
+    }
+  };
+
+  const handleAddLocalRepoFromSidebar = async () => {
+    clearProviderNotice();
+    const selectedPath = await pickDirectory();
+    if (!selectedPath) return;
+
+    setProviderBusy(true);
+    try {
+      const thread = await createThread({
+        title: `Review ${repoNameFromWorkspace(selectedPath)}`,
+        workspace: selectedPath,
+      });
+      await refetchThreads();
+      setSelectedThreadId(thread.id);
+      setProviderStatus(`Added local project ${selectedPath} and created a review thread.`);
+    } catch (error) {
+      setProviderError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setProviderBusy(false);
+    }
+  };
+
   return (
     <SidebarProvider
       defaultOpen
@@ -774,14 +854,26 @@ function App() {
                         />
                       </TextField>
 
-                      <TextField class="mt-3 max-w-md">
-                        <TextFieldInput
-                          placeholder="Destination root (optional)"
-                          value={destinationRoot()}
-                          onInput={(event) => setDestinationRoot(event.currentTarget.value)}
-                          class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
-                        />
-                      </TextField>
+                      <div class="mt-3 flex max-w-xl items-center gap-2">
+                        <TextField class="min-w-0 flex-1">
+                          <TextFieldInput
+                            placeholder="Destination root (optional)"
+                            value={destinationRoot()}
+                            onInput={(event) => setDestinationRoot(event.currentTarget.value)}
+                            class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
+                          />
+                        </TextField>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          class="h-11 border-white/[0.08] px-3 text-neutral-200 hover:border-white/[0.12]"
+                          onClick={() => void handlePickDestinationRoot()}
+                        >
+                          <FolderOpen class="mr-1.5 size-4" />
+                          Browse
+                        </Button>
+                      </div>
 
                       <Button
                         type="submit"
@@ -790,6 +882,48 @@ function App() {
                         disabled={providerBusy() || !githubConnection() || repositoryInput().trim().length === 0}
                       >
                         {providerBusy() ? "Working..." : "Clone for review"}
+                      </Button>
+                    </form>
+
+                    {/* Local project card */}
+                    <form
+                      class="animate-fade-up rounded-2xl border border-white/[0.05] bg-white/[0.02] px-6 py-5"
+                      style={{ "animation-delay": "0.18s" }}
+                      onSubmit={(event) => void handleCreateLocalProjectThread(event)}
+                    >
+                      <p class="text-[15px] font-medium text-neutral-200">Use an existing local project</p>
+                      <p class="mt-1.5 text-[13.5px] leading-relaxed text-neutral-500">
+                        Pick any local directory and create a review thread without cloning.
+                      </p>
+
+                      <div class="mt-4 flex max-w-xl items-center gap-2">
+                        <TextField class="min-w-0 flex-1">
+                          <TextFieldInput
+                            placeholder="/path/to/local/project"
+                            value={localProjectPath()}
+                            onInput={(event) => setLocalProjectPath(event.currentTarget.value)}
+                            class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
+                          />
+                        </TextField>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          class="h-11 border-white/[0.08] px-3 text-neutral-200 hover:border-white/[0.12]"
+                          onClick={() => void handlePickLocalProject()}
+                        >
+                          <FolderOpen class="mr-1.5 size-4" />
+                          Browse
+                        </Button>
+                      </div>
+
+                      <Button
+                        type="submit"
+                        size="sm"
+                        class="mt-4"
+                        disabled={providerBusy() || localProjectPath().trim().length === 0}
+                      >
+                        {providerBusy() ? "Working..." : "Create review from local project"}
                       </Button>
                     </form>
 
@@ -828,9 +962,19 @@ function App() {
           class="border-0 bg-transparent group-data-[side=left]:border-r-0 group-data-[side=right]:border-l-0 [&_[data-sidebar=sidebar]]:bg-transparent"
         >
           <SidebarHeader class="px-4 pt-5 pb-2">
-            <div class="mb-3 flex items-center">
+            <div class="flex items-center">
               <h2 class="app-title text-[22px] text-neutral-200">Rovex</h2>
             </div>
+            <Button
+              type="button"
+              size="sm"
+              class="mt-3 h-10 w-full justify-start gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 text-[13px] font-medium text-neutral-200 hover:border-white/[0.12] hover:bg-white/[0.05]"
+              disabled={providerBusy()}
+              onClick={() => void handleAddLocalRepoFromSidebar()}
+            >
+              <FolderOpen class="size-4" />
+              {providerBusy() ? "Working..." : "New Repo"}
+            </Button>
           </SidebarHeader>
 
           <SidebarContent class="px-2.5">
