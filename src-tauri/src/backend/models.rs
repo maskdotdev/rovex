@@ -279,3 +279,18 @@ pub struct GenerateAiReviewResult {
     pub diff_chars_total: usize,
     pub diff_truncated: bool,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiReviewConfig {
+    pub has_api_key: bool,
+    pub api_key_preview: Option<String>,
+    pub env_file_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetAiReviewApiKeyInput {
+    pub api_key: String,
+    pub persist_to_env: Option<bool>,
+}

@@ -41,6 +41,8 @@ pub fn run() {
             backend::commands::list_workspace_branches,
             backend::commands::checkout_workspace_branch,
             backend::commands::create_workspace_branch,
+            backend::commands::get_ai_review_config,
+            backend::commands::set_ai_review_api_key,
             backend::commands::generate_ai_review,
             backend::commands::run_code_intel_sync
         ])

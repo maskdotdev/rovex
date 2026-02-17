@@ -167,6 +167,17 @@ export type GenerateAiReviewResult = {
   diffTruncated: boolean;
 };
 
+export type AiReviewConfig = {
+  hasApiKey: boolean;
+  apiKeyPreview: string | null;
+  envFilePath: string | null;
+};
+
+export type SetAiReviewApiKeyInput = {
+  apiKey: string;
+  persistToEnv?: boolean;
+};
+
 export function backendHealth() {
   return invoke<BackendHealth>("backend_health");
 }
@@ -233,6 +244,14 @@ export function checkoutWorkspaceBranch(input: CheckoutWorkspaceBranchInput) {
 
 export function createWorkspaceBranch(input: CreateWorkspaceBranchInput) {
   return invoke<CheckoutWorkspaceBranchResult>("create_workspace_branch", { input });
+}
+
+export function getAiReviewConfig() {
+  return invoke<AiReviewConfig>("get_ai_review_config");
+}
+
+export function setAiReviewApiKey(input: SetAiReviewApiKeyInput) {
+  return invoke<AiReviewConfig>("set_ai_review_api_key", { input });
 }
 
 export function generateAiReview(input: GenerateAiReviewInput) {

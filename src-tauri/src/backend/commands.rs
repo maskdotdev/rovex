@@ -11,13 +11,13 @@ use tauri::State;
 
 use super::{
     providers::{provider_client, ProviderDeviceAuthorizationPoll},
-    AddThreadMessageInput, AppState, BackendHealth, CloneRepositoryInput, CloneRepositoryResult,
-    CheckoutWorkspaceBranchInput, CheckoutWorkspaceBranchResult, CodeIntelSyncInput,
-    CodeIntelSyncResult, CompareWorkspaceDiffInput, CompareWorkspaceDiffResult, ConnectProviderInput,
-    CreateThreadInput, CreateWorkspaceBranchInput, GenerateAiReviewInput, GenerateAiReviewResult,
-    ListWorkspaceBranchesInput, ListWorkspaceBranchesResult, Message, MessageRole,
-    PollProviderDeviceAuthInput, PollProviderDeviceAuthResult, ProviderConnection,
-    ProviderDeviceAuthStatus, ProviderKind, StartProviderDeviceAuthInput,
+    AddThreadMessageInput, AiReviewConfig, AppState, BackendHealth, CheckoutWorkspaceBranchInput,
+    CheckoutWorkspaceBranchResult, CloneRepositoryInput, CloneRepositoryResult, CodeIntelSyncInput,
+    CodeIntelSyncResult, CompareWorkspaceDiffInput, CompareWorkspaceDiffResult,
+    ConnectProviderInput, CreateThreadInput, CreateWorkspaceBranchInput, GenerateAiReviewInput,
+    GenerateAiReviewResult, ListWorkspaceBranchesInput, ListWorkspaceBranchesResult, Message,
+    MessageRole, PollProviderDeviceAuthInput, PollProviderDeviceAuthResult, ProviderConnection,
+    ProviderDeviceAuthStatus, ProviderKind, SetAiReviewApiKeyInput, StartProviderDeviceAuthInput,
     StartProviderDeviceAuthResult, Thread, WorkspaceBranch,
 };
 
@@ -317,7 +317,10 @@ fn truncate_chars(value: &str, max_chars: usize) -> (String, bool) {
     if count < max_chars {
         (value.to_string(), false)
     } else {
-        (value[..end].to_string(), value[end..].chars().next().is_some())
+        (
+            value[..end].to_string(),
+            value[end..].chars().next().is_some(),
+        )
     }
 }
 
@@ -330,6 +333,103 @@ fn as_non_empty_trimmed(value: Option<&str>) -> Option<String> {
 
 fn snippet(value: &str, max_chars: usize) -> String {
     truncate_chars(value, max_chars).0
+}
+
+fn resolve_env_file_path() -> Option<PathBuf> {
+    if let Ok(configured) = env::var("ROVEX_ENV_FILE") {
+        let configured = configured.trim();
+        if !configured.is_empty() {
+            return Some(PathBuf::from(configured));
+        }
+    }
+
+    let cwd = env::current_dir().ok()?;
+    let direct = cwd.join(".env");
+    if direct.exists() {
+        return Some(direct);
+    }
+
+    let parent = cwd.parent().map(|value| value.join(".env"));
+    if let Some(parent) = parent {
+        if parent.exists() {
+            return Some(parent);
+        }
+    }
+
+    Some(direct)
+}
+
+fn upsert_env_key(path: &Path, key: &str, value: &str) -> Result<(), String> {
+    let existing = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(format!("Failed to read {}: {error}", format_path(path))),
+    };
+
+    let mut lines: Vec<String> = existing.lines().map(ToOwned::to_owned).collect();
+    let mut updated = false;
+
+    for line in &mut lines {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((name, _)) = line.split_once('=') else {
+            continue;
+        };
+        if name.trim() == key {
+            *line = format!("{key}={value}");
+            updated = true;
+            break;
+        }
+    }
+
+    if !updated {
+        lines.push(format!("{key}={value}"));
+    }
+
+    let mut next = lines.join("\n");
+    if !next.is_empty() && !next.ends_with('\n') {
+        next.push('\n');
+    }
+
+    fs::write(path, next).map_err(|error| format!("Failed to write {}: {error}", format_path(path)))
+}
+
+fn mask_secret(value: &str) -> Option<String> {
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    let char_count = normalized.chars().count();
+    if char_count <= 8 {
+        return Some("*".repeat(char_count.max(4)));
+    }
+
+    let prefix: String = normalized.chars().take(4).collect();
+    let suffix: String = normalized
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<char>>()
+        .into_iter()
+        .rev()
+        .collect();
+    Some(format!("{prefix}...{suffix}"))
+}
+
+fn current_ai_review_config() -> AiReviewConfig {
+    let api_key = env::var(OPENAI_API_KEY_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let env_file_path = resolve_env_file_path().map(|path| format_path(path.as_path()));
+    AiReviewConfig {
+        has_api_key: api_key.is_some(),
+        api_key_preview: api_key.as_deref().and_then(mask_secret),
+        env_file_path,
+    }
 }
 
 fn extract_chat_response_text(body: &serde_json::Value) -> Option<String> {
@@ -1115,6 +1215,31 @@ pub async fn compare_workspace_diff(
 }
 
 #[tauri::command]
+pub async fn get_ai_review_config() -> Result<AiReviewConfig, String> {
+    Ok(current_ai_review_config())
+}
+
+#[tauri::command]
+pub async fn set_ai_review_api_key(
+    input: SetAiReviewApiKeyInput,
+) -> Result<AiReviewConfig, String> {
+    let api_key = input.api_key.trim();
+    if api_key.is_empty() {
+        return Err("API key must not be empty.".to_string());
+    }
+
+    env::set_var(OPENAI_API_KEY_ENV, api_key);
+
+    if input.persist_to_env.unwrap_or(true) {
+        let env_path =
+            resolve_env_file_path().ok_or_else(|| "Unable to resolve .env path.".to_string())?;
+        upsert_env_key(&env_path, OPENAI_API_KEY_ENV, api_key)?;
+    }
+
+    Ok(current_ai_review_config())
+}
+
+#[tauri::command]
 pub async fn generate_ai_review(
     state: State<'_, AppState>,
     input: GenerateAiReviewInput,
@@ -1142,7 +1267,9 @@ pub async fn generate_ai_review(
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("Missing {OPENAI_API_KEY_ENV}. Add it to .env to enable AI review."))?;
+        .ok_or_else(|| {
+            format!("Missing {OPENAI_API_KEY_ENV}. Add it to .env to enable AI review.")
+        })?;
     let model = env::var(ROVEX_REVIEW_MODEL_ENV)
         .ok()
         .map(|value| value.trim().to_string())
@@ -1153,7 +1280,11 @@ pub async fn generate_ai_review(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| DEFAULT_REVIEW_BASE_URL.to_string());
-    let timeout_ms = parse_env_u64(ROVEX_REVIEW_TIMEOUT_MS_ENV, DEFAULT_REVIEW_TIMEOUT_MS, 1_000);
+    let timeout_ms = parse_env_u64(
+        ROVEX_REVIEW_TIMEOUT_MS_ENV,
+        DEFAULT_REVIEW_TIMEOUT_MS,
+        1_000,
+    );
     let max_diff_chars = parse_env_usize(
         ROVEX_REVIEW_MAX_DIFF_CHARS_ENV,
         DEFAULT_REVIEW_MAX_DIFF_CHARS,
@@ -1186,7 +1317,8 @@ pub async fn generate_ai_review(
     .await?;
 
     let review =
-        generate_review_with_openai(&model, &base_url, timeout_ms, &api_key, &review_prompt).await?;
+        generate_review_with_openai(&model, &base_url, timeout_ms, &api_key, &review_prompt)
+            .await?;
 
     persist_thread_message(&state, input.thread_id, MessageRole::Assistant, &review).await?;
 

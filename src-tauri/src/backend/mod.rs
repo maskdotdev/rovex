@@ -6,13 +6,13 @@ mod models;
 mod providers;
 
 pub use models::{
-    AddThreadMessageInput, BackendHealth, CloneRepositoryInput, CloneRepositoryResult,
-    CheckoutWorkspaceBranchInput, CheckoutWorkspaceBranchResult, CodeIntelSyncInput,
-    CodeIntelSyncResult, CompareWorkspaceDiffInput, CompareWorkspaceDiffResult, ConnectProviderInput,
-    CreateThreadInput, CreateWorkspaceBranchInput, GenerateAiReviewInput, GenerateAiReviewResult,
-    ListWorkspaceBranchesInput, ListWorkspaceBranchesResult, Message, MessageRole,
-    PollProviderDeviceAuthInput, PollProviderDeviceAuthResult, ProviderConnection,
-    ProviderDeviceAuthStatus, ProviderKind, StartProviderDeviceAuthInput,
+    AddThreadMessageInput, AiReviewConfig, BackendHealth, CheckoutWorkspaceBranchInput,
+    CheckoutWorkspaceBranchResult, CloneRepositoryInput, CloneRepositoryResult, CodeIntelSyncInput,
+    CodeIntelSyncResult, CompareWorkspaceDiffInput, CompareWorkspaceDiffResult,
+    ConnectProviderInput, CreateThreadInput, CreateWorkspaceBranchInput, GenerateAiReviewInput,
+    GenerateAiReviewResult, ListWorkspaceBranchesInput, ListWorkspaceBranchesResult, Message,
+    MessageRole, PollProviderDeviceAuthInput, PollProviderDeviceAuthResult, ProviderConnection,
+    ProviderDeviceAuthStatus, ProviderKind, SetAiReviewApiKeyInput, StartProviderDeviceAuthInput,
     StartProviderDeviceAuthResult, Thread, WorkspaceBranch,
 };
 

@@ -65,12 +65,15 @@ import {
   deleteThread,
   disconnectProvider,
   generateAiReview,
+  getAiReviewConfig,
   getProviderConnection,
   listThreadMessages,
   listWorkspaceBranches,
   listThreads,
   pollProviderDeviceAuth,
+  setAiReviewApiKey,
   startProviderDeviceAuth,
+  type AiReviewConfig,
   type CompareWorkspaceDiffResult,
   type ListWorkspaceBranchesResult,
   type Message as ThreadMessage,
@@ -447,6 +450,10 @@ function App() {
   const [aiReviewBusy, setAiReviewBusy] = createSignal(false);
   const [aiReviewError, setAiReviewError] = createSignal<string | null>(null);
   const [aiStatus, setAiStatus] = createSignal<string | null>(null);
+  const [aiApiKeyInput, setAiApiKeyInput] = createSignal("");
+  const [aiApiKeyBusy, setAiApiKeyBusy] = createSignal(false);
+  const [aiApiKeyError, setAiApiKeyError] = createSignal<string | null>(null);
+  const [aiApiKeyStatus, setAiApiKeyStatus] = createSignal<string | null>(null);
   let branchSearchInputRef: HTMLInputElement | undefined;
   let branchCreateInputRef: HTMLInputElement | undefined;
   let deviceAuthSession = 0;
@@ -544,6 +551,9 @@ function App() {
       return listThreadMessages(threadId, 100);
     }
   );
+  const [aiReviewConfig, { refetch: refetchAiReviewConfig }] = createResource<AiReviewConfig>(
+    () => getAiReviewConfig()
+  );
   const currentWorkspaceBranch = createMemo(() => {
     const result = workspaceBranches();
     if (!result) return "main";
@@ -582,6 +592,11 @@ function App() {
   });
   const threadMessagesLoadError = createMemo(() => {
     const error = threadMessages.error;
+    if (!error) return null;
+    return error instanceof Error ? error.message : String(error);
+  });
+  const aiReviewConfigLoadError = createMemo(() => {
+    const error = aiReviewConfig.error;
     if (!error) return null;
     return error instanceof Error ? error.message : String(error);
   });
@@ -1000,6 +1015,41 @@ function App() {
     }
   };
 
+  const clearAiApiKeyNotice = () => {
+    setAiApiKeyError(null);
+    setAiApiKeyStatus(null);
+  };
+
+  const handleSaveAiApiKey = async (event: Event) => {
+    event.preventDefault();
+    clearAiApiKeyNotice();
+
+    const apiKey = aiApiKeyInput().trim();
+    if (!apiKey) {
+      setAiApiKeyError("Enter an API key.");
+      return;
+    }
+
+    setAiApiKeyBusy(true);
+    try {
+      const config = await setAiReviewApiKey({
+        apiKey,
+        persistToEnv: true,
+      });
+      setAiApiKeyInput("");
+      await refetchAiReviewConfig();
+      setAiApiKeyStatus(
+        config.envFilePath
+          ? `Saved OPENAI_API_KEY to ${config.envFilePath}.`
+          : "Saved OPENAI_API_KEY."
+      );
+    } catch (error) {
+      setAiApiKeyError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAiApiKeyBusy(false);
+    }
+  };
+
   const resetComparisonView = () => {
     setCompareError(null);
     setCompareResult(null);
@@ -1221,12 +1271,112 @@ function App() {
                     <Show
                       when={activeSettingsTab() === "personalization"}
                       fallback={
-                        <section class="animate-fade-up mt-10 max-w-3xl rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6" style={{ "animation-delay": "0.08s" }}>
-                          <p class="text-[15px] font-medium text-neutral-200">{selectedSettingsItem().label}</p>
-                          <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
-                            This section is ready for settings controls. Select Connections to manage repository providers.
-                          </p>
-                        </section>
+                        <Show
+                          when={activeSettingsTab() === "environments"}
+                          fallback={
+                            <section class="animate-fade-up mt-10 max-w-3xl rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6" style={{ "animation-delay": "0.08s" }}>
+                              <p class="text-[15px] font-medium text-neutral-200">{selectedSettingsItem().label}</p>
+                              <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
+                                This section is ready for settings controls. Select Connections or Environments to configure active integrations.
+                              </p>
+                            </section>
+                          }
+                        >
+                          <section class="animate-fade-up mt-10 max-w-3xl rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6" style={{ "animation-delay": "0.08s" }}>
+                            <p class="text-[15px] font-medium text-neutral-200">
+                              AI Review API Key
+                            </p>
+                            <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
+                              Configure <span class="font-mono text-neutral-300">OPENAI_API_KEY</span> used by AI review requests.
+                            </p>
+
+                            <div class="mt-4 rounded-xl border border-white/[0.06] bg-white/[0.015] p-4">
+                              <div class="flex flex-wrap items-center justify-between gap-2">
+                                <p class="text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500">
+                                  Current key
+                                </p>
+                                <span
+                                  class={`rounded-full border px-2.5 py-1 text-[11.5px] font-medium tracking-wide ${aiReviewConfig()?.hasApiKey
+                                    ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400/90"
+                                    : "border-white/[0.06] bg-white/[0.03] text-neutral-500"
+                                    }`}
+                                >
+                                  {aiReviewConfig()?.hasApiKey ? "Configured" : "Missing"}
+                                </span>
+                              </div>
+                              <p class="mt-2 text-[13px] text-neutral-400">
+                                <Show
+                                  when={aiReviewConfig()?.apiKeyPreview}
+                                  fallback="No API key configured yet."
+                                >
+                                  {(preview) => (
+                                    <span class="font-mono text-neutral-300">{preview()}</span>
+                                  )}
+                                </Show>
+                              </p>
+                              <Show when={aiReviewConfig()?.envFilePath}>
+                                {(envPath) => (
+                                  <p class="mt-2 text-[12px] leading-relaxed text-neutral-500">
+                                    Saved to <span class="font-mono text-neutral-400">{envPath()}</span>
+                                  </p>
+                                )}
+                              </Show>
+                            </div>
+
+                            <form class="mt-4" onSubmit={(event) => void handleSaveAiApiKey(event)}>
+                              <label
+                                for="openai-api-key-input"
+                                class="block text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500"
+                              >
+                                OPENAI_API_KEY
+                              </label>
+                              <TextField class="mt-2 max-w-xl">
+                                <TextFieldInput
+                                  id="openai-api-key-input"
+                                  type="password"
+                                  placeholder="sk-proj-..."
+                                  value={aiApiKeyInput()}
+                                  onInput={(event) => setAiApiKeyInput(event.currentTarget.value)}
+                                  class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
+                                />
+                              </TextField>
+                              <div class="mt-3 flex flex-wrap items-center gap-3">
+                                <Button
+                                  type="submit"
+                                  size="sm"
+                                  disabled={aiApiKeyBusy() || aiApiKeyInput().trim().length === 0}
+                                >
+                                  {aiApiKeyBusy() ? "Saving..." : "Save API key"}
+                                </Button>
+                                <span class="text-[12px] text-neutral-500">
+                                  Applied immediately for this running app and persisted to <span class="font-mono">.env</span>.
+                                </span>
+                              </div>
+                            </form>
+
+                            <Show when={aiReviewConfigLoadError()}>
+                              {(message) => (
+                                <div class="mt-4 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
+                                  Unable to load AI review config: {message()}
+                                </div>
+                              )}
+                            </Show>
+                            <Show when={aiApiKeyError()}>
+                              {(message) => (
+                                <div class="mt-4 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
+                                  {message()}
+                                </div>
+                              )}
+                            </Show>
+                            <Show when={aiApiKeyStatus()}>
+                              {(message) => (
+                                <div class="mt-4 rounded-xl border border-emerald-500/15 bg-emerald-500/5 px-4 py-3 text-[13px] text-emerald-300/90">
+                                  {message()}
+                                </div>
+                              )}
+                            </Show>
+                          </section>
+                        </Show>
                       }
                     >
                       <section class="animate-fade-up mt-10 max-w-3xl rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6" style={{ "animation-delay": "0.08s" }}>
