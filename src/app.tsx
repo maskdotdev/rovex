@@ -72,11 +72,6 @@ type SettingsTab =
   | "archivedThreads"
   | "connections";
 
-type PrimaryAction = {
-  label: string;
-  hint: string;
-};
-
 type SettingsNavItem = {
   id: SettingsTab;
   label: string;
@@ -99,12 +94,6 @@ type RepoGroup = {
 type TimelineEntry =
   | { kind: "line"; text: string; tone?: "default" | "muted" | "strong" }
   | { kind: "edit"; file: string; additions: string; deletions: string };
-
-const primaryActions: PrimaryAction[] = [
-  { label: "New thread", hint: "N" },
-  { label: "Automations", hint: "A" },
-  { label: "Skills", hint: "S" },
-];
 
 const settingsNavItems: SettingsNavItem[] = [
   {
@@ -846,14 +835,6 @@ function App() {
 
           <SidebarContent class="px-2.5">
             <SidebarGroup class="p-0">
-              <SidebarMenu>
-                <For each={primaryActions}>
-                  {(action) => <SidebarRow label={action.label} right={action.hint} />}
-                </For>
-              </SidebarMenu>
-            </SidebarGroup>
-
-            <SidebarGroup class="p-0 pt-3">
               <SidebarGroupLabel class="px-3.5 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-600">
                 Repositories
               </SidebarGroupLabel>
