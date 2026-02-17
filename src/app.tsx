@@ -351,10 +351,6 @@ function App() {
     if (!result) return null;
     return `${result.filesChanged} files changed +${result.insertions} -${result.deletions} vs ${result.baseRef}`;
   });
-  const originBaseRef = createMemo(() => {
-    const baseRef = selectedBaseRef().trim() || "main";
-    return baseRef.startsWith("origin/") ? baseRef : `origin/${baseRef}`;
-  });
   const selectedWorkspace = createMemo(() => selectedReview()?.workspace?.trim() ?? "");
   const [workspaceBranches, { refetch: refetchWorkspaceBranches }] = createResource(
     selectedWorkspace,
@@ -1182,110 +1178,42 @@ function App() {
         <SidebarInset class="bg-transparent p-2 md:p-3">
           <section class="glass-surface flex h-full min-h-[calc(100svh-1rem)] flex-col rounded-2xl border border-white/[0.06] shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
             {/* Header */}
-            <header class="flex items-center justify-between gap-4 border-b border-white/[0.05] px-6 py-4">
-              <div class="flex items-center gap-3">
-                <SidebarTrigger class="h-8 w-8 rounded-lg border border-white/[0.06] text-neutral-500 transition-colors hover:bg-white/[0.04] hover:text-neutral-300" />
-                <div>
-                  <h1 class="app-title text-[clamp(1.25rem,1.6vw,1.75rem)] text-neutral-100">
-                    {selectedReview()?.title ?? "Select a review"}
-                  </h1>
-                  <Show when={selectedReview()}>
-                    <div class="mt-0.5 flex items-center gap-1.5 text-[12.5px] text-neutral-500">
-                      <span>{selectedReview()?.repoName}</span>
-                      <ChevronRight class="size-3 text-neutral-600" />
-                      <span class="text-neutral-400">{selectedReview()?.age} ago</span>
-                    </div>
-                  </Show>
+            <header class="border-b border-white/[0.05] px-6 py-3">
+              <div class="flex items-center justify-between gap-4">
+                <div class="flex items-center gap-3 min-w-0">
+                  <SidebarTrigger class="h-8 w-8 shrink-0 rounded-lg border border-white/[0.06] text-neutral-500 transition-colors hover:bg-white/[0.04] hover:text-neutral-300" />
+                  <div class="min-w-0">
+                    <h1 class="app-title truncate text-[clamp(1rem,1.4vw,1.25rem)] text-neutral-100">
+                      {selectedReview()?.title ?? "Select a review"}
+                    </h1>
+                    <Show when={selectedReview()}>
+                      <div class="mt-0.5 flex items-center gap-1.5 text-[12px] text-neutral-500">
+                        <span>{selectedReview()?.repoName}</span>
+                        <ChevronRight class="size-3 text-neutral-600" />
+                        <span class="text-neutral-400">{selectedReview()?.age} ago</span>
+                      </div>
+                    </Show>
+                  </div>
                 </div>
-              </div>
-              <div class="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  class="border-white/[0.08] text-[13px] font-medium text-neutral-300 hover:border-white/[0.12] hover:text-neutral-100"
-                  onClick={() => void handleCompareSelectedReview()}
-                  disabled={compareBusy() || selectedWorkspace().length === 0}
-                >
-                  {compareBusy()
-                    ? "Comparing..."
-                    : compareResult()
-                      ? "Refresh review"
-                      : `Review vs ${selectedBaseRef()}`}
-                </Button>
-                <Button variant="outline" size="sm" class="border-white/[0.08] text-[13px] font-medium text-neutral-300 hover:border-white/[0.12] hover:text-neutral-100">
-                  Commit
-                </Button>
+                <div class="flex shrink-0 items-center gap-px rounded-lg border border-white/[0.06] bg-white/[0.02] text-[12px]">
+                  <div class="flex items-center gap-1.5 border-r border-white/[0.06] px-3 py-1.5">
+                    <span class="text-neutral-500">Base</span>
+                    <span class="font-medium text-neutral-300">{compareResult()?.baseRef ?? selectedBaseRef()}</span>
+                  </div>
+                  <div class="flex items-center gap-1.5 border-r border-white/[0.06] px-3 py-1.5">
+                    <span class="text-neutral-500">Merge</span>
+                    <span class="font-mono font-medium text-neutral-300">{compareResult()?.mergeBase ? compareResult()?.mergeBase.slice(0, 8) : "—"}</span>
+                  </div>
+                  <div class="flex items-center gap-1.5 px-3 py-1.5">
+                    <span class="text-neutral-500">Head</span>
+                    <span class="font-mono font-medium text-neutral-300">{compareResult()?.head ? compareResult()?.head.slice(0, 8) : "—"}</span>
+                  </div>
+                </div>
               </div>
             </header>
 
-            {/* Review panel */}
-            <div class="flex-1 overflow-y-auto px-7 py-6">
-              <Show
-                when={compareResult()}
-                fallback={
-                  <div class="flex h-full items-center justify-center">
-                    <div class="w-full max-w-3xl rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
-                      <div class="grid gap-3 sm:grid-cols-2">
-                        <button
-                          type="button"
-                          class="group rounded-xl border border-white/[0.08] bg-white/[0.02] px-4 py-3 text-left transition-colors hover:border-white/[0.12] hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:border-white/[0.04] disabled:bg-transparent disabled:text-neutral-600"
-                          onClick={() =>
-                            void handleCompareSelectedReview({
-                              baseRef: selectedBaseRef(),
-                              fetchRemote: false,
-                            })
-                          }
-                          disabled={compareBusy() || selectedWorkspace().length === 0}
-                        >
-                          <div class="text-[14px] font-medium text-neutral-200">
-                            Review current branch vs {selectedBaseRef()}
-                          </div>
-                          <div class="mt-1 text-[12px] text-neutral-500">
-                            Uses local {selectedBaseRef()}
-                          </div>
-                        </button>
-                        <button
-                          type="button"
-                          class="group rounded-xl border border-white/[0.08] bg-white/[0.02] px-4 py-3 text-left transition-colors hover:border-white/[0.12] hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:border-white/[0.04] disabled:bg-transparent disabled:text-neutral-600"
-                          onClick={() =>
-                            void handleCompareSelectedReview({
-                              baseRef: originBaseRef(),
-                              fetchRemote: true,
-                            })
-                          }
-                          disabled={compareBusy() || selectedWorkspace().length === 0}
-                        >
-                          <div class="text-[14px] font-medium text-neutral-200">
-                            Review current branch vs {originBaseRef()}
-                          </div>
-                          <div class="mt-1 text-[12px] text-neutral-500">Fetches origin first</div>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                }
-              >
-                {(result) => (
-                  <div class="grid gap-3 sm:grid-cols-3">
-                    <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
-                      <div class="text-[12px] text-neutral-500">Base</div>
-                      <div class="mt-1 text-[14px] font-medium text-neutral-200">{result().baseRef}</div>
-                    </div>
-                    <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
-                      <div class="text-[12px] text-neutral-500">Merge base</div>
-                      <div class="mt-1 truncate text-[14px] font-medium text-neutral-200">{result().mergeBase.slice(0, 12)}</div>
-                    </div>
-                    <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
-                      <div class="text-[12px] text-neutral-500">Head</div>
-                      <div class="mt-1 truncate text-[14px] font-medium text-neutral-200">{result().head.slice(0, 12)}</div>
-                    </div>
-                  </div>
-                )}
-              </Show>
-            </div>
-
             {/* Footer */}
-            <footer class="px-6 pb-5">
+            <footer class="flex-1 px-6 py-4">
               <Show when={branchActionError()}>
                 {(message) => (
                   <div class="mb-3 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
@@ -1371,7 +1299,7 @@ function App() {
                         </Button>
                       </div>
                     </header>
-                    <div class="max-h-[46svh] overflow-y-auto px-4 py-3">
+                    <div class="max-h-[60svh] overflow-y-auto px-4 py-3">
                       <Show
                         when={result().diff.trim().length > 0}
                         fallback={
