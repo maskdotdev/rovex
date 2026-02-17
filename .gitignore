@@ -4,3 +4,6 @@ dist
 
 *.db
 .argus-search
+
+# code-intelligence
+.code-intelligence/
