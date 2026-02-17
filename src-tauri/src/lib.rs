@@ -6,6 +6,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             let state = tauri::async_runtime::block_on(async {
                 match backend::AppState::initialize().await {
@@ -43,6 +44,8 @@ pub fn run() {
             backend::commands::create_workspace_branch,
             backend::commands::get_ai_review_config,
             backend::commands::set_ai_review_api_key,
+            backend::commands::set_ai_review_settings,
+            backend::commands::get_opencode_sidecar_status,
             backend::commands::generate_ai_review,
             backend::commands::run_code_intel_sync
         ])

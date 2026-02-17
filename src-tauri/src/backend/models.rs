@@ -286,6 +286,10 @@ pub struct AiReviewConfig {
     pub has_api_key: bool,
     pub api_key_preview: Option<String>,
     pub env_file_path: Option<String>,
+    pub review_provider: String,
+    pub review_model: String,
+    pub opencode_provider: String,
+    pub opencode_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -293,4 +297,22 @@ pub struct AiReviewConfig {
 pub struct SetAiReviewApiKeyInput {
     pub api_key: String,
     pub persist_to_env: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetAiReviewSettingsInput {
+    pub review_provider: String,
+    pub review_model: String,
+    pub opencode_provider: Option<String>,
+    pub opencode_model: Option<String>,
+    pub persist_to_env: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpencodeSidecarStatus {
+    pub available: bool,
+    pub version: Option<String>,
+    pub detail: Option<String>,
 }

@@ -19,13 +19,23 @@ The backend lives in `src-tauri/src/backend` and is exposed through Tauri comman
    - Optional: `GITHUB_OAUTH_SCOPE` (default: `repo`)
    - Optional: `GITLAB_OAUTH_SCOPE` (default: `read_user read_repository`)
    - Optional: `GITLAB_BASE_URL` (default: `https://gitlab.com`)
+   - Optional: `ROVEX_REVIEW_PROVIDER` (`openai` or `opencode`, default: `openai`)
    - Optional: `ROVEX_REVIEW_MODEL` (default: `gpt-4.1-mini`)
    - Optional: `ROVEX_REVIEW_BASE_URL` (default: `https://api.openai.com/v1`)
    - Optional: `ROVEX_REVIEW_MAX_DIFF_CHARS` (default: `120000`)
    - Optional: `ROVEX_REVIEW_TIMEOUT_MS` (default: `120000`)
+   - Optional: `ROVEX_OPENCODE_MODEL` (default: `openai/gpt-4.1-mini`)
+   - Optional: `ROVEX_OPENCODE_HOSTNAME` (default: `127.0.0.1`)
+   - Optional: `ROVEX_OPENCODE_PORT` (default: `4096`)
+   - Optional: `ROVEX_OPENCODE_SERVER_TIMEOUT_MS` (default: `5000`)
+   - Optional: `ROVEX_OPENCODE_PROVIDER` (used when `ROVEX_REVIEW_MODEL` does not include provider, default: `openai`)
 
 The app reads `.env` at startup and initializes tables automatically.
 If Turso env vars are missing, the app falls back to a local libsql database instead of crashing.
+
+When `ROVEX_REVIEW_PROVIDER=opencode`, AI review launches the bundled OpenCode sidecar (`src-tauri/tauri.conf.json > bundle.externalBin`) and talks to it over HTTP for session creation and prompt execution.
+See `src-tauri/binaries/README.md` for sidecar binary layout and build-time copy behavior.
+If you package on CI, set `ROVEX_OPENCODE_BIN` so `src-tauri/build.rs` can copy a pinned OpenCode binary for the target triple.
 
 ### Available Tauri Commands
 

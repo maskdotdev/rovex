@@ -171,11 +171,29 @@ export type AiReviewConfig = {
   hasApiKey: boolean;
   apiKeyPreview: string | null;
   envFilePath: string | null;
+  reviewProvider: string;
+  reviewModel: string;
+  opencodeProvider: string;
+  opencodeModel: string | null;
 };
 
 export type SetAiReviewApiKeyInput = {
   apiKey: string;
   persistToEnv?: boolean;
+};
+
+export type SetAiReviewSettingsInput = {
+  reviewProvider: string;
+  reviewModel: string;
+  opencodeProvider?: string | null;
+  opencodeModel?: string | null;
+  persistToEnv?: boolean;
+};
+
+export type OpencodeSidecarStatus = {
+  available: boolean;
+  version: string | null;
+  detail: string | null;
 };
 
 export function backendHealth() {
@@ -252,6 +270,14 @@ export function getAiReviewConfig() {
 
 export function setAiReviewApiKey(input: SetAiReviewApiKeyInput) {
   return invoke<AiReviewConfig>("set_ai_review_api_key", { input });
+}
+
+export function setAiReviewSettings(input: SetAiReviewSettingsInput) {
+  return invoke<AiReviewConfig>("set_ai_review_settings", { input });
+}
+
+export function getOpencodeSidecarStatus() {
+  return invoke<OpencodeSidecarStatus>("get_opencode_sidecar_status");
 }
 
 export function generateAiReview(input: GenerateAiReviewInput) {

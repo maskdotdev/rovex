@@ -11,9 +11,10 @@ pub use models::{
     CodeIntelSyncResult, CompareWorkspaceDiffInput, CompareWorkspaceDiffResult,
     ConnectProviderInput, CreateThreadInput, CreateWorkspaceBranchInput, GenerateAiReviewInput,
     GenerateAiReviewResult, ListWorkspaceBranchesInput, ListWorkspaceBranchesResult, Message,
-    MessageRole, PollProviderDeviceAuthInput, PollProviderDeviceAuthResult, ProviderConnection,
-    ProviderDeviceAuthStatus, ProviderKind, SetAiReviewApiKeyInput, StartProviderDeviceAuthInput,
-    StartProviderDeviceAuthResult, Thread, WorkspaceBranch,
+    MessageRole, OpencodeSidecarStatus, PollProviderDeviceAuthInput, PollProviderDeviceAuthResult,
+    ProviderConnection, ProviderDeviceAuthStatus, ProviderKind, SetAiReviewApiKeyInput,
+    SetAiReviewSettingsInput, StartProviderDeviceAuthInput, StartProviderDeviceAuthResult, Thread,
+    WorkspaceBranch,
 };
 
 use libsql::{Connection, Database};

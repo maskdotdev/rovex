@@ -66,17 +66,20 @@ import {
   disconnectProvider,
   generateAiReview,
   getAiReviewConfig,
+  getOpencodeSidecarStatus,
   getProviderConnection,
   listThreadMessages,
   listWorkspaceBranches,
   listThreads,
   pollProviderDeviceAuth,
   setAiReviewApiKey,
+  setAiReviewSettings,
   startProviderDeviceAuth,
   type AiReviewConfig,
   type CompareWorkspaceDiffResult,
   type ListWorkspaceBranchesResult,
   type Message as ThreadMessage,
+  type OpencodeSidecarStatus,
   type ProviderConnection,
   type ProviderKind,
   type StartProviderDeviceAuthResult,
@@ -454,6 +457,13 @@ function App() {
   const [aiApiKeyBusy, setAiApiKeyBusy] = createSignal(false);
   const [aiApiKeyError, setAiApiKeyError] = createSignal<string | null>(null);
   const [aiApiKeyStatus, setAiApiKeyStatus] = createSignal<string | null>(null);
+  const [aiReviewProviderInput, setAiReviewProviderInput] = createSignal("openai");
+  const [aiReviewModelInput, setAiReviewModelInput] = createSignal("gpt-4.1-mini");
+  const [aiOpencodeProviderInput, setAiOpencodeProviderInput] = createSignal("openai");
+  const [aiOpencodeModelInput, setAiOpencodeModelInput] = createSignal("");
+  const [aiSettingsBusy, setAiSettingsBusy] = createSignal(false);
+  const [aiSettingsError, setAiSettingsError] = createSignal<string | null>(null);
+  const [aiSettingsStatus, setAiSettingsStatus] = createSignal<string | null>(null);
   let branchSearchInputRef: HTMLInputElement | undefined;
   let branchCreateInputRef: HTMLInputElement | undefined;
   let deviceAuthSession = 0;
@@ -554,6 +564,8 @@ function App() {
   const [aiReviewConfig, { refetch: refetchAiReviewConfig }] = createResource<AiReviewConfig>(
     () => getAiReviewConfig()
   );
+  const [opencodeSidecarStatus, { refetch: refetchOpencodeSidecarStatus }] =
+    createResource<OpencodeSidecarStatus>(() => getOpencodeSidecarStatus());
   const currentWorkspaceBranch = createMemo(() => {
     const result = workspaceBranches();
     if (!result) return "main";
@@ -599,6 +611,19 @@ function App() {
     const error = aiReviewConfig.error;
     if (!error) return null;
     return error instanceof Error ? error.message : String(error);
+  });
+  const opencodeSidecarLoadError = createMemo(() => {
+    const error = opencodeSidecarStatus.error;
+    if (!error) return null;
+    return error instanceof Error ? error.message : String(error);
+  });
+  createEffect(() => {
+    const config = aiReviewConfig();
+    if (!config) return;
+    setAiReviewProviderInput(config.reviewProvider || "openai");
+    setAiReviewModelInput(config.reviewModel || "gpt-4.1-mini");
+    setAiOpencodeProviderInput(config.opencodeProvider || "openai");
+    setAiOpencodeModelInput(config.opencodeModel ?? "");
   });
   const visibleThreadMessages = createMemo(() => {
     const messages = threadMessages() ?? [];
@@ -1020,6 +1045,54 @@ function App() {
     setAiApiKeyStatus(null);
   };
 
+  const clearAiSettingsNotice = () => {
+    setAiSettingsError(null);
+    setAiSettingsStatus(null);
+  };
+
+  const handleSaveAiSettings = async (event: Event) => {
+    event.preventDefault();
+    clearAiSettingsNotice();
+
+    const provider = aiReviewProviderInput().trim().toLowerCase();
+    const model = aiReviewModelInput().trim();
+    const opencodeProvider = aiOpencodeProviderInput().trim();
+    const opencodeModel = aiOpencodeModelInput().trim();
+
+    if (provider !== "openai" && provider !== "opencode") {
+      setAiSettingsError("Provider must be openai or opencode.");
+      return;
+    }
+    if (!model) {
+      setAiSettingsError("Enter a review model.");
+      return;
+    }
+
+    setAiSettingsBusy(true);
+    try {
+      await setAiReviewSettings({
+        reviewProvider: provider,
+        reviewModel: model,
+        opencodeProvider: opencodeProvider || "openai",
+        opencodeModel: opencodeModel || null,
+        persistToEnv: true,
+      });
+      await refetchAiReviewConfig();
+      if (provider === "opencode") {
+        await refetchOpencodeSidecarStatus();
+      }
+      setAiSettingsStatus(
+        provider === "opencode"
+          ? "Saved AI review settings for bundled OpenCode provider."
+          : "Saved AI review settings."
+      );
+    } catch (error) {
+      setAiSettingsError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAiSettingsBusy(false);
+    }
+  };
+
   const handleSaveAiApiKey = async (event: Event) => {
     event.preventDefault();
     clearAiApiKeyNotice();
@@ -1284,10 +1357,156 @@ function App() {
                         >
                           <section class="animate-fade-up mt-10 max-w-3xl rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6" style={{ "animation-delay": "0.08s" }}>
                             <p class="text-[15px] font-medium text-neutral-200">
+                              AI Review Provider
+                            </p>
+                            <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
+                              Configure which backend provider and model power reviews. Settings are applied immediately and persisted to <span class="font-mono text-neutral-300">.env</span>.
+                            </p>
+
+                            <div class="mt-4 rounded-xl border border-white/[0.06] bg-white/[0.015] p-4">
+                              <div class="flex flex-wrap items-center justify-between gap-2">
+                                <p class="text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500">
+                                  Active provider
+                                </p>
+                                <span
+                                  class="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[11.5px] font-medium tracking-wide text-neutral-300"
+                                >
+                                  {(aiReviewConfig()?.reviewProvider ?? "openai").toUpperCase()}
+                                </span>
+                              </div>
+                              <p class="mt-2 text-[13px] text-neutral-400">
+                                Model: <span class="font-mono text-neutral-300">{aiReviewConfig()?.reviewModel ?? "gpt-4.1-mini"}</span>
+                              </p>
+                              <Show when={aiReviewConfig()?.envFilePath}>
+                                {(envPath) => (
+                                  <p class="mt-2 text-[12px] leading-relaxed text-neutral-500">
+                                    Saved to <span class="font-mono text-neutral-400">{envPath()}</span>
+                                  </p>
+                                )}
+                              </Show>
+                            </div>
+
+                            <form class="mt-4 max-w-xl space-y-3" onSubmit={(event) => void handleSaveAiSettings(event)}>
+                              <label
+                                for="ai-review-provider-select"
+                                class="block text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500"
+                              >
+                                Review provider
+                              </label>
+                              <select
+                                id="ai-review-provider-select"
+                                value={aiReviewProviderInput()}
+                                onChange={(event) => setAiReviewProviderInput(event.currentTarget.value)}
+                                class="h-11 w-full rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 text-[14px] text-neutral-200 outline-none transition-colors hover:border-white/[0.14] focus:border-amber-500/35"
+                              >
+                                <option value="openai">openai</option>
+                                <option value="opencode">opencode</option>
+                              </select>
+
+                              <label
+                                for="ai-review-model-input"
+                                class="block text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500"
+                              >
+                                Review model
+                              </label>
+                              <TextField>
+                                <TextFieldInput
+                                  id="ai-review-model-input"
+                                  type="text"
+                                  placeholder="gpt-4.1-mini"
+                                  value={aiReviewModelInput()}
+                                  onInput={(event) => setAiReviewModelInput(event.currentTarget.value)}
+                                  class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
+                                />
+                              </TextField>
+
+                              <Show when={aiReviewProviderInput() === "opencode"}>
+                                <>
+                                  <label
+                                    for="opencode-provider-input"
+                                    class="block text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500"
+                                  >
+                                    OpenCode provider fallback
+                                  </label>
+                                  <TextField>
+                                    <TextFieldInput
+                                      id="opencode-provider-input"
+                                      type="text"
+                                      placeholder="openai"
+                                      value={aiOpencodeProviderInput()}
+                                      onInput={(event) => setAiOpencodeProviderInput(event.currentTarget.value)}
+                                      class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
+                                    />
+                                  </TextField>
+
+                                  <label
+                                    for="opencode-model-input"
+                                    class="block text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500"
+                                  >
+                                    OpenCode model override (optional)
+                                  </label>
+                                  <TextField>
+                                    <TextFieldInput
+                                      id="opencode-model-input"
+                                      type="text"
+                                      placeholder="openai/gpt-4.1-mini"
+                                      value={aiOpencodeModelInput()}
+                                      onInput={(event) => setAiOpencodeModelInput(event.currentTarget.value)}
+                                      class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
+                                    />
+                                  </TextField>
+
+                                  <div class="mt-2 rounded-xl border border-white/[0.06] bg-white/[0.015] p-3">
+                                    <div class="flex items-center justify-between gap-2">
+                                      <p class="text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500">
+                                        Bundled sidecar
+                                      </p>
+                                      <span
+                                        class={`rounded-full border px-2.5 py-1 text-[11.5px] font-medium tracking-wide ${opencodeSidecarStatus()?.available
+                                          ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400/90"
+                                          : "border-rose-500/20 bg-rose-500/10 text-rose-300/90"
+                                          }`}
+                                      >
+                                        {opencodeSidecarStatus()?.available ? "Available" : "Missing"}
+                                      </span>
+                                    </div>
+                                    <Show when={opencodeSidecarStatus()?.version}>
+                                      {(version) => (
+                                        <p class="mt-2 text-[12px] text-neutral-400">
+                                          Version: <span class="font-mono text-neutral-300">{version()}</span>
+                                        </p>
+                                      )}
+                                    </Show>
+                                    <Show when={opencodeSidecarStatus()?.detail}>
+                                      {(detail) => (
+                                        <p class="mt-2 text-[12px] text-neutral-500">{detail()}</p>
+                                      )}
+                                    </Show>
+                                    <Show when={opencodeSidecarLoadError()}>
+                                      {(message) => (
+                                        <p class="mt-2 text-[12px] text-rose-300/90">{message()}</p>
+                                      )}
+                                    </Show>
+                                  </div>
+                                </>
+                              </Show>
+
+                              <div class="mt-3 flex flex-wrap items-center gap-3">
+                                <Button
+                                  type="submit"
+                                  size="sm"
+                                  disabled={aiSettingsBusy() || aiReviewModelInput().trim().length === 0}
+                                >
+                                  {aiSettingsBusy() ? "Saving..." : "Save review settings"}
+                                </Button>
+                              </div>
+                            </form>
+
+                            <p class="mt-8 text-[15px] font-medium text-neutral-200">
                               AI Review API Key
                             </p>
                             <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
-                              Configure <span class="font-mono text-neutral-300">OPENAI_API_KEY</span> used by AI review requests.
+                              Configure <span class="font-mono text-neutral-300">OPENAI_API_KEY</span> for OpenAI-backed models.
                             </p>
 
                             <div class="mt-4 rounded-xl border border-white/[0.06] bg-white/[0.015] p-4">
@@ -1314,13 +1533,6 @@ function App() {
                                   )}
                                 </Show>
                               </p>
-                              <Show when={aiReviewConfig()?.envFilePath}>
-                                {(envPath) => (
-                                  <p class="mt-2 text-[12px] leading-relaxed text-neutral-500">
-                                    Saved to <span class="font-mono text-neutral-400">{envPath()}</span>
-                                  </p>
-                                )}
-                              </Show>
                             </div>
 
                             <form class="mt-4" onSubmit={(event) => void handleSaveAiApiKey(event)}>
@@ -1354,6 +1566,20 @@ function App() {
                               </div>
                             </form>
 
+                            <Show when={aiSettingsError()}>
+                              {(message) => (
+                                <div class="mt-4 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
+                                  {message()}
+                                </div>
+                              )}
+                            </Show>
+                            <Show when={aiSettingsStatus()}>
+                              {(message) => (
+                                <div class="mt-4 rounded-xl border border-emerald-500/15 bg-emerald-500/5 px-4 py-3 text-[13px] text-emerald-300/90">
+                                  {message()}
+                                </div>
+                              )}
+                            </Show>
                             <Show when={aiReviewConfigLoadError()}>
                               {(message) => (
                                 <div class="mt-4 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">

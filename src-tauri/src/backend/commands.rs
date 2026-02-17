@@ -6,8 +6,9 @@ use std::{
 };
 
 use reqwest::{Client, StatusCode};
-use serde::Serialize;
-use tauri::State;
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, State};
+use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 
 use super::{
     providers::{provider_client, ProviderDeviceAuthorizationPoll},
@@ -16,23 +17,36 @@ use super::{
     CodeIntelSyncResult, CompareWorkspaceDiffInput, CompareWorkspaceDiffResult,
     ConnectProviderInput, CreateThreadInput, CreateWorkspaceBranchInput, GenerateAiReviewInput,
     GenerateAiReviewResult, ListWorkspaceBranchesInput, ListWorkspaceBranchesResult, Message,
-    MessageRole, PollProviderDeviceAuthInput, PollProviderDeviceAuthResult, ProviderConnection,
-    ProviderDeviceAuthStatus, ProviderKind, SetAiReviewApiKeyInput, StartProviderDeviceAuthInput,
-    StartProviderDeviceAuthResult, Thread, WorkspaceBranch,
+    MessageRole, OpencodeSidecarStatus, PollProviderDeviceAuthInput, PollProviderDeviceAuthResult,
+    ProviderConnection, ProviderDeviceAuthStatus, ProviderKind, SetAiReviewApiKeyInput,
+    SetAiReviewSettingsInput, StartProviderDeviceAuthInput, StartProviderDeviceAuthResult, Thread,
+    WorkspaceBranch,
 };
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 200;
 const DEFAULT_REPOSITORIES_DIR: &str = "rovex/repos";
 const OPENAI_API_KEY_ENV: &str = "OPENAI_API_KEY";
+const ROVEX_REVIEW_PROVIDER_ENV: &str = "ROVEX_REVIEW_PROVIDER";
 const ROVEX_REVIEW_MODEL_ENV: &str = "ROVEX_REVIEW_MODEL";
 const ROVEX_REVIEW_BASE_URL_ENV: &str = "ROVEX_REVIEW_BASE_URL";
 const ROVEX_REVIEW_MAX_DIFF_CHARS_ENV: &str = "ROVEX_REVIEW_MAX_DIFF_CHARS";
 const ROVEX_REVIEW_TIMEOUT_MS_ENV: &str = "ROVEX_REVIEW_TIMEOUT_MS";
+const ROVEX_OPENCODE_MODEL_ENV: &str = "ROVEX_OPENCODE_MODEL";
+const ROVEX_OPENCODE_HOSTNAME_ENV: &str = "ROVEX_OPENCODE_HOSTNAME";
+const ROVEX_OPENCODE_PORT_ENV: &str = "ROVEX_OPENCODE_PORT";
+const ROVEX_OPENCODE_SERVER_TIMEOUT_MS_ENV: &str = "ROVEX_OPENCODE_SERVER_TIMEOUT_MS";
+const ROVEX_OPENCODE_PROVIDER_ENV: &str = "ROVEX_OPENCODE_PROVIDER";
+const DEFAULT_REVIEW_PROVIDER: &str = "openai";
 const DEFAULT_REVIEW_MODEL: &str = "gpt-4.1-mini";
 const DEFAULT_REVIEW_BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_REVIEW_MAX_DIFF_CHARS: usize = 120_000;
 const DEFAULT_REVIEW_TIMEOUT_MS: u64 = 120_000;
+const DEFAULT_OPENCODE_HOSTNAME: &str = "127.0.0.1";
+const DEFAULT_OPENCODE_PORT: u16 = 4096;
+const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS: u64 = 5_000;
+const DEFAULT_OPENCODE_PROVIDER: &str = "openai";
+const OPENCODE_SIDECAR_NAME: &str = "opencode";
 
 struct ProviderConnectionRow {
     provider: ProviderKind,
@@ -41,6 +55,29 @@ struct ProviderConnectionRow {
     access_token: String,
     created_at: String,
     updated_at: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ReviewProvider {
+    OpenAi,
+    Opencode,
+}
+
+impl ReviewProvider {
+    fn from_env() -> Result<Self, String> {
+        let provider = env::var(ROVEX_REVIEW_PROVIDER_ENV)
+            .ok()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| DEFAULT_REVIEW_PROVIDER.to_string());
+        match provider.as_str() {
+            "openai" => Ok(Self::OpenAi),
+            "opencode" => Ok(Self::Opencode),
+            other => Err(format!(
+                "Unsupported {ROVEX_REVIEW_PROVIDER_ENV} value '{other}'. Use 'openai' or 'opencode'."
+            )),
+        }
+    }
 }
 
 fn parse_limit(limit: Option<u32>) -> i64 {
@@ -291,6 +328,14 @@ fn parse_env_u64(name: &str, fallback: u64, min: u64) -> u64 {
         .unwrap_or(fallback)
 }
 
+fn parse_env_u16(name: &str, fallback: u16, min: u16) -> u16 {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<u16>().ok())
+        .filter(|value| *value >= min)
+        .unwrap_or(fallback)
+}
+
 fn parse_env_usize(name: &str, fallback: usize, min: usize) -> usize {
     env::var(name)
         .ok()
@@ -419,8 +464,30 @@ fn mask_secret(value: &str) -> Option<String> {
     Some(format!("{prefix}...{suffix}"))
 }
 
+fn current_review_provider_value() -> String {
+    env::var(ROVEX_REVIEW_PROVIDER_ENV)
+        .ok()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| value == "openai" || value == "opencode")
+        .unwrap_or_else(|| DEFAULT_REVIEW_PROVIDER.to_string())
+}
+
 fn current_ai_review_config() -> AiReviewConfig {
     let api_key = env::var(OPENAI_API_KEY_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let review_model = env::var(ROVEX_REVIEW_MODEL_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_REVIEW_MODEL.to_string());
+    let opencode_provider = env::var(ROVEX_OPENCODE_PROVIDER_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_OPENCODE_PROVIDER.to_string());
+    let opencode_model = env::var(ROVEX_OPENCODE_MODEL_ENV)
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
@@ -429,6 +496,10 @@ fn current_ai_review_config() -> AiReviewConfig {
         has_api_key: api_key.is_some(),
         api_key_preview: api_key.as_deref().and_then(mask_secret),
         env_file_path,
+        review_provider: current_review_provider_value(),
+        review_model,
+        opencode_provider,
+        opencode_model,
     }
 }
 
@@ -516,6 +587,119 @@ struct OpenAiChatRequest<'a> {
     messages: Vec<OpenAiChatMessage<'a>>,
 }
 
+struct ResolvedOpencodeModel {
+    provider_id: String,
+    model_id: String,
+    display: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpencodeSessionResponse {
+    id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct OpencodeModelRef<'a> {
+    #[serde(rename = "providerID")]
+    provider_id: &'a str,
+    #[serde(rename = "modelID")]
+    model_id: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct OpencodeTextPartInput<'a> {
+    #[serde(rename = "type")]
+    part_type: &'static str,
+    text: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct OpencodePromptRequest<'a> {
+    model: OpencodeModelRef<'a>,
+    parts: Vec<OpencodeTextPartInput<'a>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpencodePromptResponse {
+    parts: Vec<OpencodePromptPart>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpencodePromptPart {
+    #[serde(rename = "type")]
+    part_type: String,
+    text: Option<String>,
+}
+
+fn resolve_opencode_model(review_model: &str) -> Result<ResolvedOpencodeModel, String> {
+    let configured_model = env::var(ROVEX_OPENCODE_MODEL_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            if review_model.contains('/') {
+                review_model.to_string()
+            } else {
+                let provider = env::var(ROVEX_OPENCODE_PROVIDER_ENV)
+                    .ok()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| DEFAULT_OPENCODE_PROVIDER.to_string());
+                format!("{provider}/{review_model}")
+            }
+        });
+
+    let (provider_id, model_id) = configured_model.split_once('/').ok_or_else(|| {
+        format!(
+            "Invalid OpenCode model '{configured_model}'. Set {ROVEX_OPENCODE_MODEL_ENV} as '<provider>/<model>'."
+        )
+    })?;
+    let provider_id = provider_id.trim();
+    let model_id = model_id.trim();
+    if provider_id.is_empty() || model_id.is_empty() {
+        return Err(format!(
+            "Invalid OpenCode model '{configured_model}'. Set {ROVEX_OPENCODE_MODEL_ENV} as '<provider>/<model>'."
+        ));
+    }
+
+    Ok(ResolvedOpencodeModel {
+        provider_id: provider_id.to_string(),
+        model_id: model_id.to_string(),
+        display: format!("{provider_id}/{model_id}"),
+    })
+}
+
+fn extract_opencode_server_url(line: &str) -> Option<String> {
+    if !line.contains("opencode server listening") {
+        return None;
+    }
+
+    let start = line.find("http://").or_else(|| line.find("https://"))?;
+    let url = line[start..].split_whitespace().next()?.trim();
+    if url.is_empty() {
+        return None;
+    }
+
+    Some(url.trim_end_matches('/').to_string())
+}
+
+fn extract_opencode_review_text(parts: &[OpencodePromptPart]) -> Option<String> {
+    let text = parts
+        .iter()
+        .filter(|part| part.part_type == "text")
+        .filter_map(|part| part.text.as_deref())
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
 async fn generate_review_with_openai(
     model: &str,
     base_url: &str,
@@ -577,6 +761,208 @@ async fn generate_review_with_openai(
     let review = extract_chat_response_text(&body)
         .ok_or_else(|| "AI provider returned an empty response.".to_string())?;
     Ok(review)
+}
+
+async fn wait_for_opencode_server(
+    app: &AppHandle,
+    hostname: &str,
+    port: u16,
+    startup_timeout_ms: u64,
+) -> Result<(String, tauri_plugin_shell::process::CommandChild), String> {
+    let command = app
+        .shell()
+        .sidecar(OPENCODE_SIDECAR_NAME)
+        .map_err(|error| format!("Failed to prepare bundled OpenCode sidecar: {error}"))?
+        .args([
+            "serve".to_string(),
+            format!("--hostname={hostname}"),
+            format!("--port={port}"),
+        ]);
+    let (mut events, child) = command
+        .spawn()
+        .map_err(|error| format!("Failed to start bundled OpenCode sidecar: {error}"))?;
+    let mut child = Some(child);
+    let mut output_lines: Vec<String> = Vec::new();
+    let start = tokio::time::Instant::now();
+    let startup_timeout = Duration::from_millis(startup_timeout_ms);
+
+    loop {
+        let elapsed = start.elapsed();
+        if elapsed >= startup_timeout {
+            if let Some(child) = child.take() {
+                let _ = child.kill();
+            }
+            let output = output_lines.join("\n");
+            return Err(format!(
+                "Timed out waiting for OpenCode sidecar startup after {startup_timeout_ms}ms. Output: {}",
+                snippet(output.trim(), 400)
+            ));
+        }
+        let remaining = startup_timeout.saturating_sub(elapsed);
+        let event = tokio::time::timeout(remaining, events.recv())
+            .await
+            .map_err(|_| {
+                if let Some(child) = child.take() {
+                    let _ = child.kill();
+                }
+                let output = output_lines.join("\n");
+                format!(
+                    "Timed out waiting for OpenCode sidecar startup after {startup_timeout_ms}ms. Output: {}",
+                    snippet(output.trim(), 400)
+                )
+            })?;
+
+        let Some(event) = event else {
+            if let Some(child) = child.take() {
+                let _ = child.kill();
+            }
+            let output = output_lines.join("\n");
+            return Err(format!(
+                "OpenCode sidecar closed before startup completed. Output: {}",
+                snippet(output.trim(), 400)
+            ));
+        };
+
+        match event {
+            CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
+                let line = String::from_utf8_lossy(&bytes).trim().to_string();
+                if line.is_empty() {
+                    continue;
+                }
+                if output_lines.len() >= 30 {
+                    output_lines.remove(0);
+                }
+                if let Some(url) = extract_opencode_server_url(&line) {
+                    let child = child.take().ok_or_else(|| {
+                        "Internal error: missing OpenCode sidecar handle.".to_string()
+                    })?;
+                    return Ok((url, child));
+                }
+                output_lines.push(line);
+            }
+            CommandEvent::Error(message) => {
+                let line = message.trim();
+                if !line.is_empty() {
+                    if output_lines.len() >= 30 {
+                        output_lines.remove(0);
+                    }
+                    output_lines.push(line.to_string());
+                }
+            }
+            CommandEvent::Terminated(payload) => {
+                if let Some(child) = child.take() {
+                    let _ = child.kill();
+                }
+                let output = output_lines.join("\n");
+                return Err(format!(
+                    "OpenCode sidecar terminated before startup (code: {:?}). Output: {}",
+                    payload.code,
+                    snippet(output.trim(), 400)
+                ));
+            }
+            _ => {}
+        }
+    }
+}
+
+async fn generate_review_with_opencode(
+    app: &AppHandle,
+    workspace: &str,
+    prompt: &str,
+    timeout_ms: u64,
+    review_model: &str,
+) -> Result<(String, String), String> {
+    let resolved_model = resolve_opencode_model(review_model)?;
+    let hostname = env::var(ROVEX_OPENCODE_HOSTNAME_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_OPENCODE_HOSTNAME.to_string());
+    let port = parse_env_u16(ROVEX_OPENCODE_PORT_ENV, DEFAULT_OPENCODE_PORT, 1);
+    let server_timeout_ms = parse_env_u64(
+        ROVEX_OPENCODE_SERVER_TIMEOUT_MS_ENV,
+        DEFAULT_OPENCODE_SERVER_TIMEOUT_MS,
+        1_000,
+    );
+
+    let (server_url, sidecar_child) =
+        wait_for_opencode_server(app, &hostname, port, server_timeout_ms).await?;
+    let base_url = server_url.trim_end_matches('/').to_string();
+    let client = Client::builder()
+        .timeout(Duration::from_millis(timeout_ms))
+        .build()
+        .map_err(|error| format!("Failed to initialize OpenCode HTTP client: {error}"))?;
+    let mut session_id: Option<String> = None;
+
+    let review_result: Result<(String, String), String> = async {
+        let session_endpoint = format!("{base_url}/session");
+        let session_response = client
+            .post(&session_endpoint)
+            .query(&[("directory", workspace)])
+            .send()
+            .await
+            .map_err(|error| format!("Failed to create OpenCode session: {error}"))?;
+        if !session_response.status().is_success() {
+            let status = session_response.status();
+            let body = session_response.text().await.unwrap_or_default();
+            return Err(format!(
+                "OpenCode session creation failed with {status}: {}",
+                snippet(body.trim(), 300)
+            ));
+        }
+        let session: OpencodeSessionResponse = session_response
+            .json()
+            .await
+            .map_err(|error| format!("Failed to parse OpenCode session response: {error}"))?;
+        session_id = Some(session.id.clone());
+
+        let prompt_endpoint = format!("{base_url}/session/{}/message", session.id);
+        let prompt_response = client
+            .post(&prompt_endpoint)
+            .query(&[("directory", workspace)])
+            .json(&OpencodePromptRequest {
+                model: OpencodeModelRef {
+                    provider_id: &resolved_model.provider_id,
+                    model_id: &resolved_model.model_id,
+                },
+                parts: vec![OpencodeTextPartInput {
+                    part_type: "text",
+                    text: prompt,
+                }],
+            })
+            .send()
+            .await
+            .map_err(|error| format!("Failed to request OpenCode review: {error}"))?;
+        if !prompt_response.status().is_success() {
+            let status = prompt_response.status();
+            let body = prompt_response.text().await.unwrap_or_default();
+            return Err(format!(
+                "OpenCode review request failed with {status}: {}",
+                snippet(body.trim(), 300)
+            ));
+        }
+        let prompt_body: OpencodePromptResponse = prompt_response
+            .json()
+            .await
+            .map_err(|error| format!("Failed to parse OpenCode review response: {error}"))?;
+        let review = extract_opencode_review_text(&prompt_body.parts)
+            .ok_or_else(|| "OpenCode returned an empty review response.".to_string())?;
+
+        Ok((review, resolved_model.display.clone()))
+    }
+    .await;
+
+    if let Some(session_id) = &session_id {
+        let endpoint = format!("{base_url}/session/{session_id}");
+        let _ = client
+            .delete(endpoint)
+            .query(&[("directory", workspace)])
+            .send()
+            .await;
+    }
+    let _ = sidecar_child.kill();
+
+    review_result
 }
 
 fn to_provider_connection(connection: &ProviderConnectionRow) -> ProviderConnection {
@@ -1240,7 +1626,105 @@ pub async fn set_ai_review_api_key(
 }
 
 #[tauri::command]
+pub async fn set_ai_review_settings(
+    input: SetAiReviewSettingsInput,
+) -> Result<AiReviewConfig, String> {
+    let review_provider = input.review_provider.trim().to_lowercase();
+    if review_provider != "openai" && review_provider != "opencode" {
+        return Err("Review provider must be 'openai' or 'opencode'.".to_string());
+    }
+
+    let review_model = input.review_model.trim();
+    if review_model.is_empty() {
+        return Err("Review model must not be empty.".to_string());
+    }
+
+    let opencode_provider = input
+        .opencode_provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_OPENCODE_PROVIDER);
+    let opencode_model = input
+        .opencode_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    env::set_var(ROVEX_REVIEW_PROVIDER_ENV, &review_provider);
+    env::set_var(ROVEX_REVIEW_MODEL_ENV, review_model);
+    env::set_var(ROVEX_OPENCODE_PROVIDER_ENV, opencode_provider);
+    if let Some(model) = &opencode_model {
+        env::set_var(ROVEX_OPENCODE_MODEL_ENV, model);
+    }
+
+    if input.persist_to_env.unwrap_or(true) {
+        let env_path =
+            resolve_env_file_path().ok_or_else(|| "Unable to resolve .env path.".to_string())?;
+        upsert_env_key(&env_path, ROVEX_REVIEW_PROVIDER_ENV, &review_provider)?;
+        upsert_env_key(&env_path, ROVEX_REVIEW_MODEL_ENV, review_model)?;
+        upsert_env_key(&env_path, ROVEX_OPENCODE_PROVIDER_ENV, opencode_provider)?;
+        if let Some(model) = &opencode_model {
+            upsert_env_key(&env_path, ROVEX_OPENCODE_MODEL_ENV, model)?;
+        }
+    }
+
+    Ok(current_ai_review_config())
+}
+
+#[tauri::command]
+pub async fn get_opencode_sidecar_status(app: AppHandle) -> Result<OpencodeSidecarStatus, String> {
+    let command = match app.shell().sidecar(OPENCODE_SIDECAR_NAME) {
+        Ok(command) => command,
+        Err(error) => {
+            return Ok(OpencodeSidecarStatus {
+                available: false,
+                version: None,
+                detail: Some(format!("Bundled sidecar is unavailable: {error}")),
+            });
+        }
+    };
+
+    let output = match command.arg("--version").output().await {
+        Ok(output) => output,
+        Err(error) => {
+            return Ok(OpencodeSidecarStatus {
+                available: false,
+                version: None,
+                detail: Some(format!("Failed to run bundled OpenCode sidecar: {error}")),
+            });
+        }
+    };
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim();
+        return Ok(OpencodeSidecarStatus {
+            available: false,
+            version: None,
+            detail: Some(if detail.is_empty() {
+                "Bundled OpenCode sidecar exited with a non-zero status.".to_string()
+            } else {
+                snippet(detail, 300)
+            }),
+        });
+    }
+
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok(OpencodeSidecarStatus {
+        available: true,
+        version: if version.is_empty() {
+            None
+        } else {
+            Some(version)
+        },
+        detail: None,
+    })
+}
+
+#[tauri::command]
 pub async fn generate_ai_review(
+    app: AppHandle,
     state: State<'_, AppState>,
     input: GenerateAiReviewInput,
 ) -> Result<GenerateAiReviewResult, String> {
@@ -1263,23 +1747,12 @@ pub async fn generate_ai_review(
         return Err("There are no changes to review.".to_string());
     }
 
-    let api_key = env::var(OPENAI_API_KEY_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            format!("Missing {OPENAI_API_KEY_ENV}. Add it to .env to enable AI review.")
-        })?;
+    let review_provider = ReviewProvider::from_env()?;
     let model = env::var(ROVEX_REVIEW_MODEL_ENV)
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| DEFAULT_REVIEW_MODEL.to_string());
-    let base_url = env::var(ROVEX_REVIEW_BASE_URL_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| DEFAULT_REVIEW_BASE_URL.to_string());
     let timeout_ms = parse_env_u64(
         ROVEX_REVIEW_TIMEOUT_MS_ENV,
         DEFAULT_REVIEW_TIMEOUT_MS,
@@ -1316,9 +1789,36 @@ pub async fn generate_ai_review(
     )
     .await?;
 
-    let review =
-        generate_review_with_openai(&model, &base_url, timeout_ms, &api_key, &review_prompt)
+    let (review, resolved_model) = match review_provider {
+        ReviewProvider::OpenAi => {
+            let api_key = env::var(OPENAI_API_KEY_ENV)
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    format!("Missing {OPENAI_API_KEY_ENV}. Add it to .env to enable AI review.")
+                })?;
+            let base_url = env::var(ROVEX_REVIEW_BASE_URL_ENV)
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| DEFAULT_REVIEW_BASE_URL.to_string());
+
+            let review = generate_review_with_openai(
+                &model,
+                &base_url,
+                timeout_ms,
+                &api_key,
+                &review_prompt,
+            )
             .await?;
+            (review, model.clone())
+        }
+        ReviewProvider::Opencode => {
+            generate_review_with_opencode(&app, workspace, &review_prompt, timeout_ms, &model)
+                .await?
+        }
+    };
 
     persist_thread_message(&state, input.thread_id, MessageRole::Assistant, &review).await?;
 
@@ -1331,7 +1831,7 @@ pub async fn generate_ai_review(
         files_changed: input.files_changed,
         insertions: input.insertions,
         deletions: input.deletions,
-        model,
+        model: resolved_model,
         review,
         diff_chars_used,
         diff_chars_total,
