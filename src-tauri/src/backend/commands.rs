@@ -1,7 +1,7 @@
 use std::{
     env, fs,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Output},
 };
 
 use tauri::State;
@@ -9,10 +9,10 @@ use tauri::State;
 use super::{
     providers::{provider_client, ProviderDeviceAuthorizationPoll},
     AddThreadMessageInput, AppState, BackendHealth, CloneRepositoryInput, CloneRepositoryResult,
-    CodeIntelSyncInput, CodeIntelSyncResult, ConnectProviderInput, CreateThreadInput, Message,
-    MessageRole, PollProviderDeviceAuthInput, PollProviderDeviceAuthResult, ProviderConnection,
-    ProviderDeviceAuthStatus, ProviderKind, StartProviderDeviceAuthInput,
-    StartProviderDeviceAuthResult, Thread,
+    CodeIntelSyncInput, CodeIntelSyncResult, CompareWorkspaceDiffInput, CompareWorkspaceDiffResult,
+    ConnectProviderInput, CreateThreadInput, Message, MessageRole, PollProviderDeviceAuthInput,
+    PollProviderDeviceAuthResult, ProviderConnection, ProviderDeviceAuthStatus, ProviderKind,
+    StartProviderDeviceAuthInput, StartProviderDeviceAuthResult, Thread,
 };
 
 const DEFAULT_LIMIT: i64 = 50;
@@ -102,6 +102,105 @@ fn resolve_repository_root(explicit_root: Option<&str>) -> Result<PathBuf, Strin
 
 fn format_path(path: &Path) -> String {
     path.to_string_lossy().to_string()
+}
+
+fn summarize_process_output(output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stderr.is_empty() {
+        stderr
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        "Unknown process failure.".to_string()
+    }
+}
+
+fn run_git(repo_path: &Path, args: &[&str], context: &str) -> Result<Output, String> {
+    let output = Command::new("git")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .arg("-C")
+        .arg(repo_path)
+        .args(args)
+        .output()
+        .map_err(|error| format!("Failed to run git {context}: {error}"))?;
+
+    if output.status.success() {
+        Ok(output)
+    } else {
+        Err(format!(
+            "git {context} failed: {}",
+            summarize_process_output(&output)
+        ))
+    }
+}
+
+fn run_git_trimmed(repo_path: &Path, args: &[&str], context: &str) -> Result<String, String> {
+    let output = run_git(repo_path, args, context)?;
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn git_ref_exists(repo_path: &Path, reference: &str) -> bool {
+    let commit_reference = format!("{reference}^{{commit}}");
+    Command::new("git")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .arg("-C")
+        .arg(repo_path)
+        .arg("rev-parse")
+        .arg("--verify")
+        .arg("--quiet")
+        .arg(commit_reference)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn resolve_base_ref(repo_path: &Path, requested_base_ref: &str) -> Result<String, String> {
+    let mut candidates = vec![requested_base_ref.to_string()];
+    if requested_base_ref == "origin/main" {
+        candidates.push("origin/master".to_string());
+        candidates.push("main".to_string());
+        candidates.push("master".to_string());
+    }
+
+    for candidate in candidates {
+        if git_ref_exists(repo_path, &candidate) {
+            return Ok(candidate);
+        }
+    }
+
+    Err(format!(
+        "Unable to resolve base ref '{requested_base_ref}'. Make sure the branch exists and has been fetched."
+    ))
+}
+
+fn parse_numstat(diff_numstat: &str) -> (i64, i64, i64) {
+    let mut files_changed = 0i64;
+    let mut insertions = 0i64;
+    let mut deletions = 0i64;
+
+    for line in diff_numstat
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let mut columns = line.splitn(3, '\t');
+        let Some(additions) = columns.next() else {
+            continue;
+        };
+        let Some(removals) = columns.next() else {
+            continue;
+        };
+        let Some(_path) = columns.next() else {
+            continue;
+        };
+
+        files_changed += 1;
+        insertions += additions.parse::<i64>().unwrap_or(0);
+        deletions += removals.parse::<i64>().unwrap_or(0);
+    }
+
+    (files_changed, insertions, deletions)
 }
 
 fn to_provider_connection(connection: &ProviderConnectionRow) -> ProviderConnection {
@@ -660,6 +759,98 @@ pub async fn clone_repository(
         provider: input.provider,
         repository: repository.slug(),
         workspace: format_path(&destination_path),
+    })
+}
+
+#[tauri::command]
+pub async fn compare_workspace_diff(
+    input: CompareWorkspaceDiffInput,
+) -> Result<CompareWorkspaceDiffResult, String> {
+    let workspace = input.workspace.trim();
+    if workspace.is_empty() {
+        return Err("Workspace path must not be empty.".to_string());
+    }
+
+    let repo_path = PathBuf::from(workspace);
+    if !repo_path.exists() {
+        return Err(format!(
+            "Workspace does not exist: {}",
+            format_path(&repo_path)
+        ));
+    }
+    if !repo_path.is_dir() {
+        return Err(format!(
+            "Workspace is not a directory: {}",
+            format_path(&repo_path)
+        ));
+    }
+
+    let is_git_repo = run_git_trimmed(
+        &repo_path,
+        &["rev-parse", "--is-inside-work-tree"],
+        "rev-parse",
+    )?;
+    if is_git_repo != "true" {
+        return Err(format!(
+            "Workspace is not a git repository: {}",
+            format_path(&repo_path)
+        ));
+    }
+
+    let requested_base_ref = input
+        .base_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("origin/main");
+
+    let should_fetch_origin =
+        input.fetch_remote.unwrap_or(true) && requested_base_ref.starts_with("origin/");
+    if should_fetch_origin {
+        run_git(&repo_path, &["fetch", "--quiet", "origin"], "fetch origin")?;
+    }
+
+    let base_ref = resolve_base_ref(&repo_path, requested_base_ref)?;
+    let head = run_git_trimmed(&repo_path, &["rev-parse", "HEAD"], "resolve HEAD")?;
+    let merge_base = run_git_trimmed(
+        &repo_path,
+        &["merge-base", "HEAD", base_ref.as_str()],
+        "resolve merge-base",
+    )?;
+
+    let diff_output = run_git(
+        &repo_path,
+        &[
+            "diff",
+            "--merge-base",
+            base_ref.as_str(),
+            "--no-color",
+            "--patch",
+            "--find-renames",
+            "--full-index",
+            "--binary",
+        ],
+        "diff",
+    )?;
+    let diff = String::from_utf8_lossy(&diff_output.stdout).to_string();
+
+    let numstat_output = run_git(
+        &repo_path,
+        &["diff", "--merge-base", base_ref.as_str(), "--numstat"],
+        "diff --numstat",
+    )?;
+    let numstat = String::from_utf8_lossy(&numstat_output.stdout);
+    let (files_changed, insertions, deletions) = parse_numstat(&numstat);
+
+    Ok(CompareWorkspaceDiffResult {
+        workspace: format_path(&repo_path),
+        base_ref,
+        merge_base,
+        head,
+        diff,
+        files_changed,
+        insertions,
+        deletions,
     })
 }
 

@@ -7,10 +7,10 @@ mod providers;
 
 pub use models::{
     AddThreadMessageInput, BackendHealth, CloneRepositoryInput, CloneRepositoryResult,
-    CodeIntelSyncInput, CodeIntelSyncResult, ConnectProviderInput, CreateThreadInput, Message,
-    MessageRole, PollProviderDeviceAuthInput, PollProviderDeviceAuthResult,
-    ProviderConnection, ProviderDeviceAuthStatus, ProviderKind, StartProviderDeviceAuthInput,
-    StartProviderDeviceAuthResult, Thread,
+    CodeIntelSyncInput, CodeIntelSyncResult, CompareWorkspaceDiffInput, CompareWorkspaceDiffResult,
+    ConnectProviderInput, CreateThreadInput, Message, MessageRole, PollProviderDeviceAuthInput,
+    PollProviderDeviceAuthResult, ProviderConnection, ProviderDeviceAuthStatus, ProviderKind,
+    StartProviderDeviceAuthInput, StartProviderDeviceAuthResult, Thread,
 };
 
 use libsql::{Connection, Database};

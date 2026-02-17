@@ -36,6 +36,7 @@ pub fn run() {
             backend::commands::list_provider_connections,
             backend::commands::disconnect_provider,
             backend::commands::clone_repository,
+            backend::commands::compare_workspace_diff,
             backend::commands::run_code_intel_sync
         ])
         .run(tauri::generate_context!())

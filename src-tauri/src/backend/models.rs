@@ -178,3 +178,24 @@ pub struct CloneRepositoryResult {
     pub repository: String,
     pub workspace: String,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompareWorkspaceDiffInput {
+    pub workspace: String,
+    pub base_ref: Option<String>,
+    pub fetch_remote: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompareWorkspaceDiffResult {
+    pub workspace: String,
+    pub base_ref: String,
+    pub merge_base: String,
+    pub head: String,
+    pub diff: String,
+    pub files_changed: i64,
+    pub insertions: i64,
+    pub deletions: i64,
+}

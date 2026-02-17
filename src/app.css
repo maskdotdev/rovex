@@ -117,3 +117,16 @@ textarea:focus {
   background: rgba(212, 175, 55, 0.2);
   color: #fafaf7;
 }
+
+.rovex-diff-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.rovex-diff-file {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.8rem;
+  background: rgba(255, 255, 255, 0.02);
+}

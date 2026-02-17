@@ -227,10 +227,7 @@ impl ProviderClient for GitHubProviderClient {
         let params = [
             ("client_id", client_id.as_str()),
             ("device_code", code),
-            (
-                "grant_type",
-                "urn:ietf:params:oauth:grant-type:device_code",
-            ),
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
         ];
 
         let response = client
@@ -280,9 +277,7 @@ impl ProviderClient for GitHubProviderClient {
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .unwrap_or("No description returned.");
-                Err(format!(
-                    "GitHub OAuth returned {error_code}: {description}"
-                ))
+                Err(format!("GitHub OAuth returned {error_code}: {description}"))
             }
             None => Err("GitHub OAuth response did not contain an access token.".to_string()),
         }

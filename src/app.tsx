@@ -21,12 +21,15 @@ import {
   Palette,
   PlusCircle,
   PlugZap,
+  RefreshCcw,
   Send,
   Server,
   SlidersHorizontal,
   Workflow,
+  X,
 } from "lucide-solid";
 import { Button } from "@/components/button";
+import { DiffViewer } from "@/components/diff-viewer";
 import {
   Sidebar,
   SidebarContent,
@@ -47,6 +50,7 @@ import {
 } from "@/components/sidebar";
 import { TextField, TextFieldInput } from "@/components/text-field";
 import {
+  compareWorkspaceDiff,
   cloneRepository,
   connectProvider,
   createThread,
@@ -55,6 +59,7 @@ import {
   listThreads,
   pollProviderDeviceAuth,
   startProviderDeviceAuth,
+  type CompareWorkspaceDiffResult,
   type StartProviderDeviceAuthResult,
   type ProviderConnection,
   type Thread,
@@ -86,6 +91,7 @@ type RepoReview = {
   repoName: string;
   title: string;
   age: string;
+  workspace: string | null;
 };
 
 type RepoGroup = {
@@ -238,6 +244,7 @@ function groupThreadsByRepo(threads: Thread[]): RepoGroup[] {
       title: thread.title,
       repoName,
       age: formatRelativeAge(thread.createdAt),
+      workspace: thread.workspace,
     };
     groups.set(repoName, [...(groups.get(repoName) ?? []), nextReview]);
   }
@@ -346,6 +353,10 @@ function App() {
   const [deviceAuthInProgress, setDeviceAuthInProgress] = createSignal(false);
   const [deviceAuthUserCode, setDeviceAuthUserCode] = createSignal<string | null>(null);
   const [deviceAuthVerificationUrl, setDeviceAuthVerificationUrl] = createSignal<string | null>(null);
+  const [compareBusy, setCompareBusy] = createSignal(false);
+  const [compareError, setCompareError] = createSignal<string | null>(null);
+  const [compareResult, setCompareResult] = createSignal<CompareWorkspaceDiffResult | null>(null);
+  const [showDiffViewer, setShowDiffViewer] = createSignal(false);
   let deviceAuthSession = 0;
 
   createEffect(() => {
@@ -373,6 +384,20 @@ function App() {
 
     return undefined;
   });
+
+  createEffect(() => {
+    selectedThreadId();
+    setCompareError(null);
+    setCompareResult(null);
+    setShowDiffViewer(false);
+  });
+
+  const compareSummary = createMemo(() => {
+    const result = compareResult();
+    if (!result) return null;
+    return `${result.filesChanged} files changed +${result.insertions} -${result.deletions} vs ${result.baseRef}`;
+  });
+  const selectedWorkspace = createMemo(() => selectedReview()?.workspace?.trim() ?? "");
 
   const selectedSettingsItem = createMemo(() => {
     const selected = settingsNavItems.find((item) => item.id === activeSettingsTab());
@@ -653,6 +678,48 @@ function App() {
     } finally {
       setProviderBusy(false);
     }
+  };
+
+  const handleOpenDiffsDocs = async () => {
+    try {
+      await openUrl("https://diffs.com/");
+    } catch (error) {
+      setCompareError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const handleCompareSelectedReview = async () => {
+    setCompareError(null);
+
+    const workspace = selectedWorkspace();
+    if (!workspace) {
+      setCompareError("Select a review that has a local workspace path.");
+      return;
+    }
+
+    setCompareBusy(true);
+    try {
+      const result = await compareWorkspaceDiff({
+        workspace,
+        baseRef: "origin/main",
+        fetchRemote: true,
+      });
+      setCompareResult(result);
+      setShowDiffViewer(true);
+    } catch (error) {
+      setCompareError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCompareBusy(false);
+    }
+  };
+
+  const handleOpenDiffViewer = async () => {
+    if (compareResult()) {
+      setShowDiffViewer(true);
+      return;
+    }
+
+    await handleCompareSelectedReview();
   };
 
   return (
@@ -1073,8 +1140,14 @@ function App() {
                 </div>
               </div>
               <div class="flex gap-2">
-                <Button variant="outline" size="sm" class="border-white/[0.08] text-[13px] font-medium text-neutral-300 hover:border-white/[0.12] hover:text-neutral-100">
-                  Open
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="border-white/[0.08] text-[13px] font-medium text-neutral-300 hover:border-white/[0.12] hover:text-neutral-100"
+                  onClick={() => void handleCompareSelectedReview()}
+                  disabled={compareBusy() || selectedWorkspace().length === 0}
+                >
+                  {compareBusy() ? "Comparing..." : "Compare main"}
                 </Button>
                 <Button variant="outline" size="sm" class="border-white/[0.08] text-[13px] font-medium text-neutral-300 hover:border-white/[0.12] hover:text-neutral-100">
                   Commit
@@ -1091,15 +1164,24 @@ function App() {
 
             {/* Footer */}
             <footer class="px-6 pb-5">
+              <Show when={compareError()}>
+                {(message) => (
+                  <div class="mb-3 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
+                    {message()}
+                  </div>
+                )}
+              </Show>
+
               {/* Change summary bar */}
               <div class="mb-3 flex items-center justify-between rounded-xl border border-white/[0.05] bg-white/[0.02] px-4 py-2.5 text-[13px]">
-                <span class="text-neutral-400">
-                  3 files changed{" "}
-                  <span class="font-medium tabular-nums text-emerald-400/80">+95</span>{" "}
-                  <span class="font-medium tabular-nums text-rose-400/70">-15</span>
-                </span>
-                <button type="button" class="flex items-center gap-1 font-medium text-amber-400/80 transition-colors hover:text-amber-300">
-                  Review changes
+                <span class="text-neutral-400">{compareSummary() ?? "Compare against origin/main to load the full diff."}</span>
+                <button
+                  type="button"
+                  class="flex items-center gap-1 font-medium text-amber-400/80 transition-colors hover:text-amber-300 disabled:cursor-not-allowed disabled:text-neutral-500"
+                  disabled={compareBusy() || selectedWorkspace().length === 0}
+                  onClick={() => void handleOpenDiffViewer()}
+                >
+                  {compareBusy() ? "Comparing..." : compareResult() ? "Review changes" : "Load diff"}
                   <ChevronRight class="size-3.5" />
                 </button>
               </div>
@@ -1134,6 +1216,66 @@ function App() {
             </footer>
           </section>
         </SidebarInset>
+
+        <Show when={showDiffViewer() && compareResult()}>
+          {(result) => (
+            <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-3">
+              <button
+                type="button"
+                class="absolute inset-0 cursor-default"
+                aria-label="Close diff viewer"
+                onClick={() => setShowDiffViewer(false)}
+              />
+              <section class="relative flex h-[min(920px,95svh)] w-[min(1380px,96vw)] flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0e0e11] shadow-[0_30px_80px_rgba(0,0,0,0.55)]">
+                <header class="flex items-start justify-between gap-4 border-b border-white/[0.06] px-5 py-4">
+                  <div class="min-w-0">
+                    <h2 class="app-title text-[1.25rem] text-neutral-100">Diff vs {result().baseRef}</h2>
+                    <p class="mt-1 truncate text-[13px] text-neutral-500">
+                      {result().filesChanged} files, +{result().insertions} -{result().deletions} | {result().workspace}
+                    </p>
+                    <p class="mt-1 text-[12px] text-neutral-600">
+                      Rendered with <button type="button" class="text-amber-400/80 hover:text-amber-300" onClick={() => void handleOpenDiffsDocs()}>diffs.com</button>
+                    </p>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      class="border-white/[0.1] text-neutral-300 hover:border-white/[0.14]"
+                      onClick={() => void handleCompareSelectedReview()}
+                      disabled={compareBusy()}
+                    >
+                      <RefreshCcw class="mr-1.5 size-3.5" />
+                      Refresh
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      class="border-white/[0.1] text-neutral-300 hover:border-white/[0.14]"
+                      onClick={() => setShowDiffViewer(false)}
+                    >
+                      <X class="size-4" />
+                    </Button>
+                  </div>
+                </header>
+                <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+                  <Show
+                    when={result().diff.trim().length > 0}
+                    fallback={
+                      <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-[14px] text-neutral-400">
+                        No differences found against {result().baseRef}.
+                      </div>
+                    }
+                  >
+                    <DiffViewer patch={result().diff} />
+                  </Show>
+                </div>
+              </section>
+            </div>
+          )}
+        </Show>
       </Show>
     </SidebarProvider>
   );

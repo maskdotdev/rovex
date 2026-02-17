@@ -89,6 +89,23 @@ export type CloneRepositoryResult = {
   workspace: string;
 };
 
+export type CompareWorkspaceDiffInput = {
+  workspace: string;
+  baseRef?: string | null;
+  fetchRemote?: boolean;
+};
+
+export type CompareWorkspaceDiffResult = {
+  workspace: string;
+  baseRef: string;
+  mergeBase: string;
+  head: string;
+  diff: string;
+  filesChanged: number;
+  insertions: number;
+  deletions: number;
+};
+
 export function backendHealth() {
   return invoke<BackendHealth>("backend_health");
 }
@@ -135,4 +152,8 @@ export function disconnectProvider(provider: ProviderKind) {
 
 export function cloneRepository(input: CloneRepositoryInput) {
   return invoke<CloneRepositoryResult>("clone_repository", { input });
+}
+
+export function compareWorkspaceDiff(input: CompareWorkspaceDiffInput) {
+  return invoke<CompareWorkspaceDiffResult>("compare_workspace_diff", { input });
 }
