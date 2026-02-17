@@ -99,10 +99,6 @@ type RepoGroup = {
   reviews: RepoReview[];
 };
 
-type TimelineEntry =
-  | { kind: "line"; text: string; tone?: "default" | "muted" | "strong" }
-  | { kind: "edit"; file: string; additions: string; deletions: string };
-
 const settingsNavItems: SettingsNavItem[] = [
   {
     id: "general",
@@ -160,43 +156,6 @@ const settingsNavItems: SettingsNavItem[] = [
   },
 ];
 
-const timelineEntries: TimelineEntry[] = [
-  {
-    kind: "line",
-    tone: "muted",
-    text: "Ran bunx eslint src/middleware.ts 'src/app/(app)/layout.tsx' ...",
-  },
-  {
-    kind: "line",
-    tone: "muted",
-    text: "Ran git diff -- src/middleware.ts 'src/app/(app)/layout.tsx' ...",
-  },
-  { kind: "line", tone: "strong", text: "Ran git status --short" },
-  {
-    kind: "line",
-    tone: "strong",
-    text: "Code changes are in place and lint passes on touched files.",
-  },
-  { kind: "line", tone: "muted", text: "Explored 3 files" },
-  {
-    kind: "line",
-    text: "I spotted one edge case: stale/invalid auth cookies could still hit protected URLs.",
-  },
-  { kind: "edit", file: "layout.tsx", additions: "+7", deletions: "-3" },
-  {
-    kind: "edit",
-    file: "app-layout-client.tsx",
-    additions: "+18",
-    deletions: "-1",
-  },
-  {
-    kind: "line",
-    tone: "muted",
-    text: "Ran bunx tsc --noEmit --pretty false for 3s",
-  },
-  { kind: "line", tone: "muted", text: "Thinking" },
-];
-
 const UNKNOWN_REPO = "unknown-repo";
 
 function sleep(ms: number): Promise<void> {
@@ -250,54 +209,6 @@ function groupThreadsByRepo(threads: Thread[]): RepoGroup[] {
   }
 
   return [...groups.entries()].map(([repoName, reviews]) => ({ repoName, reviews }));
-}
-
-function TimelineRow(props: { entry: TimelineEntry; index: number }) {
-  if (props.entry.kind === "edit") {
-    return (
-      <div
-        class="animate-fade-up group mb-4 flex items-center gap-3 rounded-xl border border-white/[0.04] bg-white/[0.02] px-4 py-3 transition-colors hover:border-white/[0.08] hover:bg-white/[0.03]"
-        style={{ "animation-delay": `${props.index * 0.04}s` }}
-      >
-        <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-400/80">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><title>Edit</title><path d="M12 20h9"/><path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.855z"/></svg>
-        </div>
-        <span class="text-[13.5px] text-neutral-300">
-          <span class="font-medium text-amber-200/90">{props.entry.file}</span>
-        </span>
-        <div class="ml-auto flex items-center gap-2 text-[12.5px] font-medium tabular-nums">
-          <span class="text-emerald-400/80">{props.entry.additions}</span>
-          <span class="text-rose-400/70">{props.entry.deletions}</span>
-        </div>
-      </div>
-    );
-  }
-
-  const toneStyles: Record<"default" | "muted" | "strong", string> = {
-    default: "text-neutral-300",
-    muted: "text-neutral-500",
-    strong: "font-medium text-neutral-200",
-  };
-
-  const tone = props.entry.tone ?? "default";
-
-  return (
-    <div
-      class="animate-fade-up mb-4 flex gap-3"
-      style={{ "animation-delay": `${props.index * 0.04}s` }}
-    >
-      <div class="mt-[7px] flex shrink-0">
-        <span
-          class={`block h-1.5 w-1.5 rounded-full ${
-            tone === "strong" ? "bg-amber-400/60" : tone === "muted" ? "bg-neutral-600" : "bg-neutral-500"
-          }`}
-        />
-      </div>
-      <p class={`max-w-[82ch] text-[14px] leading-[1.7] ${toneStyles[tone]}`}>
-        {props.entry.text}
-      </p>
-    </div>
-  );
 }
 
 function SidebarRow(props: {
@@ -357,6 +268,7 @@ function App() {
   const [compareError, setCompareError] = createSignal<string | null>(null);
   const [compareResult, setCompareResult] = createSignal<CompareWorkspaceDiffResult | null>(null);
   const [showDiffViewer, setShowDiffViewer] = createSignal(false);
+  const [selectedBaseRef, setSelectedBaseRef] = createSignal("main");
   let deviceAuthSession = 0;
 
   createEffect(() => {
@@ -396,6 +308,18 @@ function App() {
     const result = compareResult();
     if (!result) return null;
     return `${result.filesChanged} files changed +${result.insertions} -${result.deletions} vs ${result.baseRef}`;
+  });
+  const baseRefOptions = createMemo(() => {
+    const options = new Set(["main", "master", "develop", "release"]);
+    const selected = selectedBaseRef().trim();
+    const resultRef = compareResult()?.baseRef?.trim();
+    if (selected.length > 0) options.add(selected);
+    if (resultRef && resultRef.length > 0) options.add(resultRef);
+    return [...options];
+  });
+  const originBaseRef = createMemo(() => {
+    const baseRef = selectedBaseRef().trim() || "main";
+    return baseRef.startsWith("origin/") ? baseRef : `origin/${baseRef}`;
   });
   const selectedWorkspace = createMemo(() => selectedReview()?.workspace?.trim() ?? "");
 
@@ -688,7 +612,18 @@ function App() {
     }
   };
 
-  const handleCompareSelectedReview = async () => {
+  const handleSwitchBaseRef = (value: string) => {
+    const nextBaseRef = value.trim();
+    if (!nextBaseRef || nextBaseRef === selectedBaseRef()) return;
+    setSelectedBaseRef(nextBaseRef);
+    setCompareError(null);
+    setCompareResult(null);
+    setShowDiffViewer(false);
+  };
+
+  const handleCompareSelectedReview = async (target: { baseRef?: string; fetchRemote?: boolean } = {}) => {
+    const baseRef = target.baseRef?.trim() || selectedBaseRef().trim() || "main";
+    const fetchRemote = target.fetchRemote ?? false;
     setCompareError(null);
 
     const workspace = selectedWorkspace();
@@ -701,9 +636,10 @@ function App() {
     try {
       const result = await compareWorkspaceDiff({
         workspace,
-        baseRef: "origin/main",
-        fetchRemote: true,
+        baseRef,
+        fetchRemote,
       });
+      setSelectedBaseRef(result.baseRef);
       setCompareResult(result);
       setShowDiffViewer(true);
     } catch (error) {
@@ -1147,7 +1083,11 @@ function App() {
                   onClick={() => void handleCompareSelectedReview()}
                   disabled={compareBusy() || selectedWorkspace().length === 0}
                 >
-                  {compareBusy() ? "Comparing..." : "Compare main"}
+                  {compareBusy()
+                    ? "Comparing..."
+                    : compareResult()
+                      ? "Refresh review"
+                      : `Review vs ${selectedBaseRef()}`}
                 </Button>
                 <Button variant="outline" size="sm" class="border-white/[0.08] text-[13px] font-medium text-neutral-300 hover:border-white/[0.12] hover:text-neutral-100">
                   Commit
@@ -1155,11 +1095,70 @@ function App() {
               </div>
             </header>
 
-            {/* Timeline */}
+            {/* Review panel */}
             <div class="flex-1 overflow-y-auto px-7 py-6">
-              <For each={timelineEntries}>
-                {(entry, index) => <TimelineRow entry={entry} index={index()} />}
-              </For>
+              <Show
+                when={compareResult()}
+                fallback={
+                  <div class="flex h-full items-center justify-center">
+                    <div class="w-full max-w-3xl rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+                      <div class="grid gap-3 sm:grid-cols-2">
+                        <button
+                          type="button"
+                          class="group rounded-xl border border-white/[0.08] bg-white/[0.02] px-4 py-3 text-left transition-colors hover:border-white/[0.12] hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:border-white/[0.04] disabled:bg-transparent disabled:text-neutral-600"
+                          onClick={() =>
+                            void handleCompareSelectedReview({
+                              baseRef: selectedBaseRef(),
+                              fetchRemote: false,
+                            })
+                          }
+                          disabled={compareBusy() || selectedWorkspace().length === 0}
+                        >
+                          <div class="text-[14px] font-medium text-neutral-200">
+                            Review current branch vs {selectedBaseRef()}
+                          </div>
+                          <div class="mt-1 text-[12px] text-neutral-500">
+                            Uses local {selectedBaseRef()}
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          class="group rounded-xl border border-white/[0.08] bg-white/[0.02] px-4 py-3 text-left transition-colors hover:border-white/[0.12] hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:border-white/[0.04] disabled:bg-transparent disabled:text-neutral-600"
+                          onClick={() =>
+                            void handleCompareSelectedReview({
+                              baseRef: originBaseRef(),
+                              fetchRemote: true,
+                            })
+                          }
+                          disabled={compareBusy() || selectedWorkspace().length === 0}
+                        >
+                          <div class="text-[14px] font-medium text-neutral-200">
+                            Review current branch vs {originBaseRef()}
+                          </div>
+                          <div class="mt-1 text-[12px] text-neutral-500">Fetches origin first</div>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                }
+              >
+                {(result) => (
+                  <div class="grid gap-3 sm:grid-cols-3">
+                    <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
+                      <div class="text-[12px] text-neutral-500">Base</div>
+                      <div class="mt-1 text-[14px] font-medium text-neutral-200">{result().baseRef}</div>
+                    </div>
+                    <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
+                      <div class="text-[12px] text-neutral-500">Merge base</div>
+                      <div class="mt-1 truncate text-[14px] font-medium text-neutral-200">{result().mergeBase.slice(0, 12)}</div>
+                    </div>
+                    <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
+                      <div class="text-[12px] text-neutral-500">Head</div>
+                      <div class="mt-1 truncate text-[14px] font-medium text-neutral-200">{result().head.slice(0, 12)}</div>
+                    </div>
+                  </div>
+                )}
+              </Show>
             </div>
 
             {/* Footer */}
@@ -1174,14 +1173,18 @@ function App() {
 
               {/* Change summary bar */}
               <div class="mb-3 flex items-center justify-between rounded-xl border border-white/[0.05] bg-white/[0.02] px-4 py-2.5 text-[13px]">
-                <span class="text-neutral-400">{compareSummary() ?? "Compare against origin/main to load the full diff."}</span>
+                <span class="text-neutral-400">{compareSummary() ?? "No review loaded."}</span>
                 <button
                   type="button"
                   class="flex items-center gap-1 font-medium text-amber-400/80 transition-colors hover:text-amber-300 disabled:cursor-not-allowed disabled:text-neutral-500"
                   disabled={compareBusy() || selectedWorkspace().length === 0}
                   onClick={() => void handleOpenDiffViewer()}
                 >
-                  {compareBusy() ? "Comparing..." : compareResult() ? "Review changes" : "Load diff"}
+                  {compareBusy()
+                    ? "Comparing..."
+                    : compareResult()
+                      ? "Review changes"
+                      : `Review vs ${selectedBaseRef()}`}
                   <ChevronRight class="size-3.5" />
                 </button>
               </div>
@@ -1193,7 +1196,7 @@ function App() {
               >
                 <TextField>
                   <TextFieldInput
-                    placeholder="Ask for follow-up changes..."
+                    placeholder="Ask a code question..."
                     class="h-12 border-0 bg-transparent px-4 text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:ring-0 focus:ring-offset-0"
                   />
                 </TextField>
@@ -1213,6 +1216,19 @@ function App() {
                   </Button>
                 </div>
               </form>
+
+              <div class="mt-2.5 flex justify-end">
+                <select
+                  value={selectedBaseRef()}
+                  class="branch-base-select"
+                  aria-label="Base branch"
+                  onChange={(event) => handleSwitchBaseRef(event.currentTarget.value)}
+                >
+                  <For each={baseRefOptions()}>
+                    {(baseRef) => <option value={baseRef}>{baseRef}</option>}
+                  </For>
+                </select>
+              </div>
             </footer>
           </section>
         </SidebarInset>
@@ -1243,7 +1259,12 @@ function App() {
                       variant="outline"
                       size="sm"
                       class="border-white/[0.1] text-neutral-300 hover:border-white/[0.14]"
-                      onClick={() => void handleCompareSelectedReview()}
+                      onClick={() =>
+                        void handleCompareSelectedReview({
+                          baseRef: result().baseRef,
+                          fetchRemote: result().baseRef.startsWith("origin/"),
+                        })
+                      }
                       disabled={compareBusy()}
                     >
                       <RefreshCcw class="mr-1.5 size-3.5" />

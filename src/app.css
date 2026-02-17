@@ -130,3 +130,29 @@ textarea:focus {
   border-radius: 0.8rem;
   background: rgba(255, 255, 255, 0.02);
 }
+
+.branch-base-select {
+  appearance: none;
+  min-width: 8.8rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.8rem;
+  background: rgba(255, 255, 255, 0.02);
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  padding: 0.55rem 0.85rem;
+  cursor: pointer;
+}
+
+.branch-base-select:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.branch-base-select option {
+  background: #111214;
+  color: #e8e8ea;
+}
