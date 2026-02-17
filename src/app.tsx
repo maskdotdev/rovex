@@ -64,6 +64,7 @@ import {
   createThread,
   deleteThread,
   disconnectProvider,
+  generateAiFollowUp,
   generateAiReview,
   getAiReviewConfig,
   getOpencodeSidecarStatus,
@@ -630,6 +631,9 @@ function App() {
     if (messages.length <= 12) return messages;
     return messages.slice(messages.length - 12);
   });
+  const hasReviewStarted = createMemo(() =>
+    (threadMessages() ?? []).some((message) => message.role === "assistant")
+  );
 
   const clearProviderNotice = () => {
     setProviderError(null);
@@ -1231,8 +1235,7 @@ function App() {
     await handleCompareSelectedReview();
   };
 
-  const handleRunAiReview = async (event: Event) => {
-    event.preventDefault();
+  const handleStartAiReview = async () => {
     setAiReviewError(null);
     setAiStatus(null);
 
@@ -1268,9 +1271,54 @@ function App() {
         prompt: aiPrompt().trim() || null,
       });
       await refetchThreadMessages();
+      setAiPrompt("");
       setAiStatus(
-        `AI review completed with ${response.model}${response.diffTruncated ? " (truncated diff input)." : "."}`
+        `Review started with ${response.model}${response.diffTruncated ? " (truncated diff input)." : "."}`
       );
+    } catch (error) {
+      setAiReviewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAiReviewBusy(false);
+    }
+  };
+
+  const handleAskAiFollowUp = async (event: Event) => {
+    event.preventDefault();
+    setAiReviewError(null);
+    setAiStatus(null);
+
+    const threadId = selectedThreadId();
+    if (threadId == null) {
+      setAiReviewError("Select a review before asking questions.");
+      return;
+    }
+    if (!hasReviewStarted()) {
+      setAiReviewError("Start review before asking follow-up questions.");
+      return;
+    }
+
+    const workspace = selectedWorkspace().trim();
+    if (!workspace) {
+      setAiReviewError("Select a review that has a local workspace path.");
+      return;
+    }
+
+    const question = aiPrompt().trim();
+    if (!question) {
+      setAiReviewError("Type a follow-up question.");
+      return;
+    }
+
+    setAiReviewBusy(true);
+    try {
+      const response = await generateAiFollowUp({
+        threadId,
+        workspace,
+        question,
+      });
+      await refetchThreadMessages();
+      setAiPrompt("");
+      setAiStatus(`Answered with ${response.model}.`);
     } catch (error) {
       setAiReviewError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1449,7 +1497,7 @@ function App() {
                                     <TextFieldInput
                                       id="opencode-model-input"
                                       type="text"
-                                      placeholder="openai/gpt-4.1-mini"
+                                      placeholder="openai/gpt-5"
                                       value={aiOpencodeModelInput()}
                                       onInput={(event) => setAiOpencodeModelInput(event.currentTarget.value)}
                                       class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
@@ -2168,21 +2216,35 @@ function App() {
               {/* Change summary bar */}
               <div class="mb-3 flex items-center justify-between rounded-xl border border-white/[0.05] bg-white/[0.02] px-4 py-2.5 text-[13px]">
                 <span class="text-neutral-400">{compareSummary() ?? "No review loaded."}</span>
-                <button
-                  type="button"
-                  class="flex items-center gap-1 font-medium text-amber-400/80 transition-colors hover:text-amber-300 disabled:cursor-not-allowed disabled:text-neutral-500"
-                  disabled={compareBusy() || selectedWorkspace().length === 0}
-                  onClick={() => void handleOpenDiffViewer()}
-                >
-                  {compareBusy()
-                    ? "Comparing..."
-                    : compareResult()
-                      ? showDiffViewer()
-                        ? "Hide changes"
-                        : "Review changes"
-                      : `Review vs ${selectedBaseRef()}`}
-                  <ChevronRight class="size-3.5" />
-                </button>
+                <div class="flex items-center gap-3">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={aiReviewBusy() || compareBusy() || selectedWorkspace().length === 0}
+                    onClick={() => void handleStartAiReview()}
+                  >
+                    {aiReviewBusy()
+                      ? "Starting..."
+                      : hasReviewStarted()
+                        ? "Run review again"
+                        : "Start review"}
+                  </Button>
+                  <button
+                    type="button"
+                    class="flex items-center gap-1 font-medium text-amber-400/80 transition-colors hover:text-amber-300 disabled:cursor-not-allowed disabled:text-neutral-500"
+                    disabled={compareBusy() || selectedWorkspace().length === 0}
+                    onClick={() => void handleOpenDiffViewer()}
+                  >
+                    {compareBusy()
+                      ? "Comparing..."
+                      : compareResult()
+                        ? showDiffViewer()
+                          ? "Hide changes"
+                          : "Review changes"
+                        : `Review vs ${selectedBaseRef()}`}
+                    <ChevronRight class="size-3.5" />
+                  </button>
+                </div>
               </div>
 
               <Show when={showDiffViewer() && compareResult()}>
@@ -2225,7 +2287,7 @@ function App() {
                   when={visibleThreadMessages().length > 0}
                   fallback={
                     <p class="px-4 py-4 text-[13px] text-neutral-500">
-                      Run AI review to populate findings on this thread.
+                      Start review to generate findings, then ask follow-up questions below.
                     </p>
                   }
                 >
@@ -2253,13 +2315,17 @@ function App() {
             <footer class="shrink-0 px-6 pb-4 pt-3">
               <form
                 class="overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.02]"
-                onSubmit={(event) => void handleRunAiReview(event)}
+                onSubmit={(event) => void handleAskAiFollowUp(event)}
               >
                 <TextField>
                   <TextFieldInput
                     value={aiPrompt()}
                     onInput={(event) => setAiPrompt(event.currentTarget.value)}
-                    placeholder="Ask AI to focus on specific risks (optional)..."
+                    placeholder={
+                      hasReviewStarted()
+                        ? "Ask a follow-up question about this review..."
+                        : "Click Start review above to begin."
+                    }
                     class="h-12 border-0 bg-transparent px-4 text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:ring-0 focus:ring-offset-0"
                   />
                 </TextField>
@@ -2414,7 +2480,13 @@ function App() {
                     <Button
                       type="submit"
                       size="icon"
-                      disabled={aiReviewBusy() || compareBusy() || selectedWorkspace().length === 0}
+                      disabled={
+                        aiReviewBusy() ||
+                        compareBusy() ||
+                        selectedWorkspace().length === 0 ||
+                        !hasReviewStarted() ||
+                        aiPrompt().trim().length === 0
+                      }
                       class="h-8 w-8 rounded-xl bg-amber-500/90 text-neutral-900 shadow-[0_0_12px_rgba(212,175,55,0.15)] hover:bg-amber-400/90 disabled:bg-neutral-700 disabled:text-neutral-400"
                     >
                       <Send class="size-3.5" />

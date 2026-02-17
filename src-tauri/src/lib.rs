@@ -47,6 +47,7 @@ pub fn run() {
             backend::commands::set_ai_review_settings,
             backend::commands::get_opencode_sidecar_status,
             backend::commands::generate_ai_review,
+            backend::commands::generate_ai_follow_up,
             backend::commands::run_code_intel_sync
         ])
         .run(tauri::generate_context!())

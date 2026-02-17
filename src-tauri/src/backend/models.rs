@@ -280,6 +280,23 @@ pub struct GenerateAiReviewResult {
     pub diff_truncated: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateAiFollowUpInput {
+    pub thread_id: i64,
+    pub workspace: String,
+    pub question: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateAiFollowUpResult {
+    pub thread_id: i64,
+    pub workspace: String,
+    pub model: String,
+    pub answer: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiReviewConfig {

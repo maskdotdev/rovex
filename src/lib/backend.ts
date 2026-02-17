@@ -167,6 +167,19 @@ export type GenerateAiReviewResult = {
   diffTruncated: boolean;
 };
 
+export type GenerateAiFollowUpInput = {
+  threadId: number;
+  workspace: string;
+  question: string;
+};
+
+export type GenerateAiFollowUpResult = {
+  threadId: number;
+  workspace: string;
+  model: string;
+  answer: string;
+};
+
 export type AiReviewConfig = {
   hasApiKey: boolean;
   apiKeyPreview: string | null;
@@ -282,4 +295,8 @@ export function getOpencodeSidecarStatus() {
 
 export function generateAiReview(input: GenerateAiReviewInput) {
   return invoke<GenerateAiReviewResult>("generate_ai_review", { input });
+}
+
+export function generateAiFollowUp(input: GenerateAiFollowUpInput) {
+  return invoke<GenerateAiFollowUpResult>("generate_ai_follow_up", { input });
 }

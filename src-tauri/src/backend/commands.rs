@@ -15,9 +15,10 @@ use super::{
     AddThreadMessageInput, AiReviewConfig, AppState, BackendHealth, CheckoutWorkspaceBranchInput,
     CheckoutWorkspaceBranchResult, CloneRepositoryInput, CloneRepositoryResult, CodeIntelSyncInput,
     CodeIntelSyncResult, CompareWorkspaceDiffInput, CompareWorkspaceDiffResult,
-    ConnectProviderInput, CreateThreadInput, CreateWorkspaceBranchInput, GenerateAiReviewInput,
-    GenerateAiReviewResult, ListWorkspaceBranchesInput, ListWorkspaceBranchesResult, Message,
-    MessageRole, OpencodeSidecarStatus, PollProviderDeviceAuthInput, PollProviderDeviceAuthResult,
+    ConnectProviderInput, CreateThreadInput, CreateWorkspaceBranchInput, GenerateAiFollowUpInput,
+    GenerateAiFollowUpResult, GenerateAiReviewInput, GenerateAiReviewResult,
+    ListWorkspaceBranchesInput, ListWorkspaceBranchesResult, Message, MessageRole,
+    OpencodeSidecarStatus, PollProviderDeviceAuthInput, PollProviderDeviceAuthResult,
     ProviderConnection, ProviderDeviceAuthStatus, ProviderKind, SetAiReviewApiKeyInput,
     SetAiReviewSettingsInput, StartProviderDeviceAuthInput, StartProviderDeviceAuthResult, Thread,
     WorkspaceBranch,
@@ -42,10 +43,13 @@ const DEFAULT_REVIEW_MODEL: &str = "gpt-4.1-mini";
 const DEFAULT_REVIEW_BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_REVIEW_MAX_DIFF_CHARS: usize = 120_000;
 const DEFAULT_REVIEW_TIMEOUT_MS: u64 = 120_000;
+const DEFAULT_FOLLOW_UP_HISTORY_CHARS: usize = 40_000;
+const MAX_FOLLOW_UP_MESSAGES: i64 = 40;
 const DEFAULT_OPENCODE_HOSTNAME: &str = "127.0.0.1";
 const DEFAULT_OPENCODE_PORT: u16 = 4096;
 const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS: u64 = 5_000;
 const DEFAULT_OPENCODE_PROVIDER: &str = "openai";
+const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-5";
 const OPENCODE_SIDECAR_NAME: &str = "opencode";
 
 struct ProviderConnectionRow {
@@ -490,7 +494,8 @@ fn current_ai_review_config() -> AiReviewConfig {
     let opencode_model = env::var(ROVEX_OPENCODE_MODEL_ENV)
         .ok()
         .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
+        .filter(|value| !value.is_empty())
+        .or_else(|| Some(DEFAULT_OPENCODE_MODEL.to_string()));
     let env_file_path = resolve_env_file_path().map(|path| format_path(path.as_path()));
     AiReviewConfig {
         has_api_key: api_key.is_some(),
@@ -619,18 +624,6 @@ struct OpencodePromptRequest<'a> {
     parts: Vec<OpencodeTextPartInput<'a>>,
 }
 
-#[derive(Debug, Deserialize)]
-struct OpencodePromptResponse {
-    parts: Vec<OpencodePromptPart>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpencodePromptPart {
-    #[serde(rename = "type")]
-    part_type: String,
-    text: Option<String>,
-}
-
 fn resolve_opencode_model(review_model: &str) -> Result<ResolvedOpencodeModel, String> {
     let configured_model = env::var(ROVEX_OPENCODE_MODEL_ENV)
         .ok()
@@ -639,6 +632,8 @@ fn resolve_opencode_model(review_model: &str) -> Result<ResolvedOpencodeModel, S
         .unwrap_or_else(|| {
             if review_model.contains('/') {
                 review_model.to_string()
+            } else if review_model == DEFAULT_REVIEW_MODEL {
+                DEFAULT_OPENCODE_MODEL.to_string()
             } else {
                 let provider = env::var(ROVEX_OPENCODE_PROVIDER_ENV)
                     .ok()
@@ -683,21 +678,280 @@ fn extract_opencode_server_url(line: &str) -> Option<String> {
     Some(url.trim_end_matches('/').to_string())
 }
 
-fn extract_opencode_review_text(parts: &[OpencodePromptPart]) -> Option<String> {
-    let text = parts
-        .iter()
-        .filter(|part| part.part_type == "text")
-        .filter_map(|part| part.text.as_deref())
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n");
+fn extract_opencode_text_from_parts_value(value: &serde_json::Value) -> Option<String> {
+    let mut parts = Vec::new();
+    for item in value.as_array()? {
+        if let Some(text) = item.as_str() {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                parts.push(trimmed.to_string());
+            }
+            continue;
+        }
 
-    if text.is_empty() {
+        let part_type = item.get("type").and_then(|part| part.as_str());
+        if let Some(text) = item.get("text").and_then(|part| part.as_str()) {
+            if part_type == Some("text") || part_type.is_none() {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    parts.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    if parts.is_empty() {
         None
     } else {
-        Some(text)
+        Some(parts.join("\n\n"))
     }
+}
+
+fn extract_opencode_text_from_json(value: &serde_json::Value) -> Option<String> {
+    if let Some(parts) = value.get("parts") {
+        if let Some(text) = extract_opencode_text_from_parts_value(parts) {
+            return Some(text);
+        }
+    }
+    if let Some(parts) = value.pointer("/message/parts") {
+        if let Some(text) = extract_opencode_text_from_parts_value(parts) {
+            return Some(text);
+        }
+    }
+    if let Some(parts) = value.pointer("/response/parts") {
+        if let Some(text) = extract_opencode_text_from_parts_value(parts) {
+            return Some(text);
+        }
+    }
+    if let Some(parts) = value.pointer("/result/parts") {
+        if let Some(text) = extract_opencode_text_from_parts_value(parts) {
+            return Some(text);
+        }
+    }
+
+    let role = value.get("role").and_then(|item| item.as_str());
+    let part_type = value.get("type").and_then(|item| item.as_str());
+    if (role == Some("assistant") || role.is_none())
+        && (part_type == Some("text") || part_type.is_none())
+    {
+        if let Some(text) = value.get("text").and_then(|item| item.as_str()) {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+
+    if let Some(array) = value.as_array() {
+        let mut collected = Vec::new();
+        for entry in array {
+            if let Some(text) = extract_opencode_text_from_json(entry) {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    collected.push(trimmed.to_string());
+                }
+            }
+        }
+        if !collected.is_empty() {
+            return Some(collected.join("\n\n"));
+        }
+    }
+
+    None
+}
+
+fn extract_opencode_review_from_body(body: &str) -> Option<String> {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(text) = extract_opencode_text_from_json(&value) {
+            return Some(text);
+        }
+    }
+
+    let mut chunks = Vec::new();
+    for line in trimmed.lines() {
+        let normalized = line.trim();
+        if normalized.is_empty() {
+            continue;
+        }
+        let payload = normalized
+            .strip_prefix("data:")
+            .map(str::trim)
+            .unwrap_or(normalized);
+        if payload.is_empty() || payload == "[DONE]" {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) {
+            if let Some(text) = extract_opencode_text_from_json(&value) {
+                let trimmed_text = text.trim();
+                if !trimmed_text.is_empty() {
+                    chunks.push(trimmed_text.to_string());
+                }
+            }
+        }
+    }
+
+    let looks_structured =
+        trimmed.starts_with('{') || trimmed.starts_with('[') || trimmed.starts_with("data:");
+    if chunks.is_empty() {
+        if looks_structured {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    } else {
+        Some(chunks.join("\n\n"))
+    }
+}
+
+fn extract_latest_assistant_review_from_messages_body(body: &str) -> Option<String> {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let value = serde_json::from_str::<serde_json::Value>(trimmed).ok()?;
+    let items: Vec<&serde_json::Value> = if let Some(array) = value.as_array() {
+        array.iter().collect()
+    } else {
+        vec![&value]
+    };
+
+    for item in items.into_iter().rev() {
+        let role = item
+            .pointer("/info/role")
+            .and_then(|entry| entry.as_str())
+            .or_else(|| item.get("role").and_then(|entry| entry.as_str()));
+        if role != Some("assistant") {
+            continue;
+        }
+
+        if let Some(parts) = item.get("parts") {
+            if let Some(text) = extract_opencode_text_from_parts_value(parts) {
+                return Some(text);
+            }
+        }
+        if let Some(text) = extract_opencode_text_from_json(item) {
+            let normalized = text.trim();
+            if !normalized.is_empty() {
+                return Some(normalized.to_string());
+            }
+        }
+    }
+
+    None
+}
+
+fn format_follow_up_history(messages: &[Message], max_chars: usize) -> (String, bool) {
+    let mut entries = Vec::new();
+    for message in messages {
+        let content = message.content.trim();
+        if content.is_empty() {
+            continue;
+        }
+        let role = match message.role {
+            MessageRole::System => "System",
+            MessageRole::User => "User",
+            MessageRole::Assistant => "Assistant",
+        };
+        entries.push(format!("{role}: {content}"));
+    }
+
+    let joined = entries.join("\n\n");
+    truncate_chars(&joined, max_chars)
+}
+
+fn build_follow_up_prompt(
+    thread: &Thread,
+    workspace: &str,
+    question: &str,
+    history: &str,
+    history_truncated: bool,
+) -> String {
+    format!(
+        "Continue this code review conversation.\n\nThread: {}\nWorkspace: {}\nConversation history truncated: {}\n\nConversation history:\n{}\n\nUser follow-up question:\n{}\n\nAnswer only based on available context. If context is missing, say exactly what is missing. Keep the answer concise and actionable.",
+        thread.title,
+        workspace,
+        if history_truncated { "yes" } else { "no" },
+        history,
+        question
+    )
+}
+
+async fn validate_opencode_model_available(
+    client: &Client,
+    base_url: &str,
+    workspace: &str,
+    model: &ResolvedOpencodeModel,
+) -> Result<(), String> {
+    let endpoint = format!("{}/provider", base_url.trim_end_matches('/'));
+    let response = client
+        .get(&endpoint)
+        .query(&[("directory", workspace)])
+        .send()
+        .await
+        .map_err(|error| format!("Failed to validate OpenCode model: {error}"))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "OpenCode provider listing failed with {status}: {}",
+            snippet(body.trim(), 300)
+        ));
+    }
+
+    let body = response.text().await.unwrap_or_default();
+    let value = serde_json::from_str::<serde_json::Value>(&body)
+        .map_err(|error| format!("Failed to parse OpenCode provider listing: {error}"))?;
+    let providers = value
+        .get("all")
+        .and_then(|entry| entry.as_array())
+        .ok_or_else(|| "OpenCode provider listing did not include 'all'.".to_string())?;
+
+    let provider = providers
+        .iter()
+        .find(|entry| entry.get("id").and_then(|entry| entry.as_str()) == Some(&model.provider_id))
+        .ok_or_else(|| {
+            let available = providers
+                .iter()
+                .filter_map(|entry| entry.get("id").and_then(|entry| entry.as_str()))
+                .take(12)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "OpenCode provider '{}' is not available. Available providers: {}",
+                model.provider_id, available
+            )
+        })?;
+
+    let models = provider
+        .get("models")
+        .and_then(|entry| entry.as_object())
+        .ok_or_else(|| {
+            format!(
+                "OpenCode provider '{}' does not expose models.",
+                model.provider_id
+            )
+        })?;
+
+    if models.contains_key(&model.model_id) {
+        return Ok(());
+    }
+
+    let suggestions = models
+        .keys()
+        .take(12)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!(
+        "OpenCode model '{}' is not available for provider '{}'. Available models include: {}",
+        model.model_id, model.provider_id, suggestions
+    ))
 }
 
 async fn generate_review_with_openai(
@@ -892,6 +1146,7 @@ async fn generate_review_with_opencode(
         .timeout(Duration::from_millis(timeout_ms))
         .build()
         .map_err(|error| format!("Failed to initialize OpenCode HTTP client: {error}"))?;
+    validate_opencode_model_available(&client, &base_url, workspace, &resolved_model).await?;
     let mut session_id: Option<String> = None;
 
     let review_result: Result<(String, String), String> = async {
@@ -941,12 +1196,46 @@ async fn generate_review_with_opencode(
                 snippet(body.trim(), 300)
             ));
         }
-        let prompt_body: OpencodePromptResponse = prompt_response
-            .json()
-            .await
-            .map_err(|error| format!("Failed to parse OpenCode review response: {error}"))?;
-        let review = extract_opencode_review_text(&prompt_body.parts)
-            .ok_or_else(|| "OpenCode returned an empty review response.".to_string())?;
+        let prompt_body = prompt_response.text().await.unwrap_or_default();
+        let review = if let Some(review) = extract_opencode_review_from_body(&prompt_body) {
+            review
+        } else {
+            let messages_endpoint = format!("{base_url}/session/{}/message", session.id);
+            let poll_started = tokio::time::Instant::now();
+            let poll_timeout = Duration::from_millis(timeout_ms);
+
+            loop {
+                let messages_response = client
+                    .get(&messages_endpoint)
+                    .query(&[("directory", workspace), ("limit", "40")])
+                    .send()
+                    .await
+                    .map_err(|error| format!("Failed to poll OpenCode messages: {error}"))?;
+
+                let status = messages_response.status();
+                let body = messages_response.text().await.unwrap_or_default();
+                if !status.is_success() {
+                    return Err(format!(
+                        "OpenCode messages poll failed with {status}: {}",
+                        snippet(body.trim(), 300)
+                    ));
+                }
+
+                if let Some(review) = extract_latest_assistant_review_from_messages_body(&body) {
+                    break review;
+                }
+
+                if poll_started.elapsed() >= poll_timeout {
+                    let initial = snippet(prompt_body.trim(), 200);
+                    let polled = snippet(body.trim(), 200);
+                    return Err(format!(
+                        "Failed to parse OpenCode review response body. Initial response: {initial}. Latest polled messages: {polled}"
+                    ));
+                }
+
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        };
 
         Ok((review, resolved_model.display.clone()))
     }
@@ -1131,6 +1420,50 @@ async fn load_message_by_id(state: &AppState, message_id: i64) -> Result<Message
             .get(4)
             .map_err(|error| format!("Failed to parse message created_at: {error}"))?,
     })
+}
+
+async fn load_recent_thread_messages(
+    state: &AppState,
+    thread_id: i64,
+    limit: i64,
+) -> Result<Vec<Message>, String> {
+    let conn = state.connection()?;
+    let mut rows = conn
+        .query(
+            "SELECT id, thread_id, role, content, created_at FROM messages WHERE thread_id = ?1 ORDER BY created_at DESC LIMIT ?2",
+            (thread_id, limit),
+        )
+        .await
+        .map_err(|error| format!("Failed to load thread messages: {error}"))?;
+
+    let mut messages = Vec::new();
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(|error| format!("Failed to read thread message rows: {error}"))?
+    {
+        let role: String = row
+            .get(2)
+            .map_err(|error| format!("Failed to parse thread message role: {error}"))?;
+        messages.push(Message {
+            id: row
+                .get(0)
+                .map_err(|error| format!("Failed to parse thread message id: {error}"))?,
+            thread_id: row
+                .get(1)
+                .map_err(|error| format!("Failed to parse thread message thread_id: {error}"))?,
+            role: parse_message_role(role)?,
+            content: row
+                .get(3)
+                .map_err(|error| format!("Failed to parse thread message content: {error}"))?,
+            created_at: row
+                .get(4)
+                .map_err(|error| format!("Failed to parse thread message created_at: {error}"))?,
+        });
+    }
+
+    messages.reverse();
+    Ok(messages)
 }
 
 #[tauri::command]
@@ -1836,6 +2169,97 @@ pub async fn generate_ai_review(
         diff_chars_used,
         diff_chars_total,
         diff_truncated,
+    })
+}
+
+#[tauri::command]
+pub async fn generate_ai_follow_up(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    input: GenerateAiFollowUpInput,
+) -> Result<GenerateAiFollowUpResult, String> {
+    let thread = load_thread_by_id(&state, input.thread_id).await?;
+    let workspace = as_non_empty_trimmed(Some(input.workspace.as_str()))
+        .or_else(|| as_non_empty_trimmed(thread.workspace.as_deref()))
+        .ok_or_else(|| "Workspace path must not be empty.".to_string())?;
+    let question = input.question.trim();
+    if question.is_empty() {
+        return Err("Question must not be empty.".to_string());
+    }
+
+    let recent_messages =
+        load_recent_thread_messages(&state, input.thread_id, MAX_FOLLOW_UP_MESSAGES).await?;
+    if !recent_messages
+        .iter()
+        .any(|message| matches!(message.role, MessageRole::Assistant))
+    {
+        return Err("Start review before asking follow-up questions.".to_string());
+    }
+
+    let history_limit = parse_env_usize(
+        ROVEX_REVIEW_MAX_DIFF_CHARS_ENV,
+        DEFAULT_FOLLOW_UP_HISTORY_CHARS,
+        1_000,
+    );
+    let (history, history_truncated) = format_follow_up_history(&recent_messages, history_limit);
+    if history.trim().is_empty() {
+        return Err("No conversation history available for follow-up.".to_string());
+    }
+
+    let follow_up_prompt =
+        build_follow_up_prompt(&thread, &workspace, question, &history, history_truncated);
+    let review_provider = ReviewProvider::from_env()?;
+    let model = env::var(ROVEX_REVIEW_MODEL_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_REVIEW_MODEL.to_string());
+    let timeout_ms = parse_env_u64(
+        ROVEX_REVIEW_TIMEOUT_MS_ENV,
+        DEFAULT_REVIEW_TIMEOUT_MS,
+        1_000,
+    );
+
+    persist_thread_message(&state, input.thread_id, MessageRole::User, question).await?;
+
+    let (answer, resolved_model) = match review_provider {
+        ReviewProvider::OpenAi => {
+            let api_key = env::var(OPENAI_API_KEY_ENV)
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    format!("Missing {OPENAI_API_KEY_ENV}. Add it to .env to enable AI review.")
+                })?;
+            let base_url = env::var(ROVEX_REVIEW_BASE_URL_ENV)
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| DEFAULT_REVIEW_BASE_URL.to_string());
+
+            let answer = generate_review_with_openai(
+                &model,
+                &base_url,
+                timeout_ms,
+                &api_key,
+                &follow_up_prompt,
+            )
+            .await?;
+            (answer, model.clone())
+        }
+        ReviewProvider::Opencode => {
+            generate_review_with_opencode(&app, &workspace, &follow_up_prompt, timeout_ms, &model)
+                .await?
+        }
+    };
+
+    persist_thread_message(&state, input.thread_id, MessageRole::Assistant, &answer).await?;
+
+    Ok(GenerateAiFollowUpResult {
+        thread_id: input.thread_id,
+        workspace,
+        model: resolved_model,
+        answer,
     })
 }
 

@@ -24,7 +24,7 @@ The backend lives in `src-tauri/src/backend` and is exposed through Tauri comman
    - Optional: `ROVEX_REVIEW_BASE_URL` (default: `https://api.openai.com/v1`)
    - Optional: `ROVEX_REVIEW_MAX_DIFF_CHARS` (default: `120000`)
    - Optional: `ROVEX_REVIEW_TIMEOUT_MS` (default: `120000`)
-   - Optional: `ROVEX_OPENCODE_MODEL` (default: `openai/gpt-4.1-mini`)
+   - Optional: `ROVEX_OPENCODE_MODEL` (default: `openai/gpt-5`)
    - Optional: `ROVEX_OPENCODE_HOSTNAME` (default: `127.0.0.1`)
    - Optional: `ROVEX_OPENCODE_PORT` (default: `4096`)
    - Optional: `ROVEX_OPENCODE_SERVER_TIMEOUT_MS` (default: `5000`)
@@ -52,6 +52,7 @@ If you package on CI, set `ROVEX_OPENCODE_BIN` so `src-tauri/build.rs` can copy 
 - `disconnect_provider(provider)`
 - `clone_repository({ provider, repository, destinationRoot?, directoryName?, shallow? })`
 - `generate_ai_review({ threadId, workspace, baseRef, mergeBase, head, filesChanged, insertions, deletions, diff, prompt? })`
+- `generate_ai_follow_up({ threadId, workspace, question })`
 
 `role` accepts `system`, `user`, or `assistant`.
 `provider` accepts `github` and `gitlab`.
