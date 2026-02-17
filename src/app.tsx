@@ -774,7 +774,7 @@ function App() {
 
   const handleOpenDiffViewer = async () => {
     if (compareResult()) {
-      setShowDiffViewer(true);
+      setShowDiffViewer((current) => !current);
       return;
     }
 
@@ -1313,11 +1313,79 @@ function App() {
                   {compareBusy()
                     ? "Comparing..."
                     : compareResult()
-                      ? "Review changes"
+                      ? showDiffViewer()
+                        ? "Hide changes"
+                        : "Review changes"
                       : `Review vs ${selectedBaseRef()}`}
                   <ChevronRight class="size-3.5" />
                 </button>
               </div>
+
+              <Show when={showDiffViewer() && compareResult()}>
+                {(result) => (
+                  <section class="mb-3 overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0f1013]">
+                    <header class="flex items-start justify-between gap-3 border-b border-white/[0.06] px-4 py-3">
+                      <div class="min-w-0">
+                        <h2 class="app-title text-[1rem] text-neutral-100">
+                          Diff vs {result().baseRef}
+                        </h2>
+                        <p class="mt-1 truncate text-[12px] text-neutral-500">
+                          {result().filesChanged} files, +{result().insertions} -{result().deletions}
+                        </p>
+                        <p class="mt-1 text-[12px] text-neutral-600">
+                          Rendered with{" "}
+                          <button
+                            type="button"
+                            class="text-amber-400/80 hover:text-amber-300"
+                            onClick={() => void handleOpenDiffsDocs()}
+                          >
+                            diffs.com
+                          </button>
+                        </p>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          class="border-white/[0.1] text-neutral-300 hover:border-white/[0.14]"
+                          onClick={() =>
+                            void handleCompareSelectedReview({
+                              baseRef: result().baseRef,
+                              fetchRemote: result().baseRef.startsWith("origin/"),
+                            })
+                          }
+                          disabled={compareBusy()}
+                        >
+                          <RefreshCcw class="mr-1.5 size-3.5" />
+                          Refresh
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          class="border-white/[0.1] text-neutral-300 hover:border-white/[0.14]"
+                          onClick={() => setShowDiffViewer(false)}
+                        >
+                          <X class="size-4" />
+                        </Button>
+                      </div>
+                    </header>
+                    <div class="max-h-[46svh] overflow-y-auto px-4 py-3">
+                      <Show
+                        when={result().diff.trim().length > 0}
+                        fallback={
+                          <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-[14px] text-neutral-400">
+                            No differences found against {result().baseRef}.
+                          </div>
+                        }
+                      >
+                        <DiffViewer patch={result().diff} />
+                      </Show>
+                    </div>
+                  </section>
+                )}
+              </Show>
 
               {/* Input area */}
               <form
@@ -1489,70 +1557,6 @@ function App() {
           </section>
         </SidebarInset>
 
-        <Show when={showDiffViewer() && compareResult()}>
-          {(result) => (
-            <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-3">
-              <button
-                type="button"
-                class="absolute inset-0 cursor-default"
-                aria-label="Close diff viewer"
-                onClick={() => setShowDiffViewer(false)}
-              />
-              <section class="relative flex h-[min(920px,95svh)] w-[min(1380px,96vw)] flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0e0e11] shadow-[0_30px_80px_rgba(0,0,0,0.55)]">
-                <header class="flex items-start justify-between gap-4 border-b border-white/[0.06] px-5 py-4">
-                  <div class="min-w-0">
-                    <h2 class="app-title text-[1.25rem] text-neutral-100">Diff vs {result().baseRef}</h2>
-                    <p class="mt-1 truncate text-[13px] text-neutral-500">
-                      {result().filesChanged} files, +{result().insertions} -{result().deletions} | {result().workspace}
-                    </p>
-                    <p class="mt-1 text-[12px] text-neutral-600">
-                      Rendered with <button type="button" class="text-amber-400/80 hover:text-amber-300" onClick={() => void handleOpenDiffsDocs()}>diffs.com</button>
-                    </p>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      class="border-white/[0.1] text-neutral-300 hover:border-white/[0.14]"
-                      onClick={() =>
-                        void handleCompareSelectedReview({
-                          baseRef: result().baseRef,
-                          fetchRemote: result().baseRef.startsWith("origin/"),
-                        })
-                      }
-                      disabled={compareBusy()}
-                    >
-                      <RefreshCcw class="mr-1.5 size-3.5" />
-                      Refresh
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      class="border-white/[0.1] text-neutral-300 hover:border-white/[0.14]"
-                      onClick={() => setShowDiffViewer(false)}
-                    >
-                      <X class="size-4" />
-                    </Button>
-                  </div>
-                </header>
-                <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-                  <Show
-                    when={result().diff.trim().length > 0}
-                    fallback={
-                      <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-[14px] text-neutral-400">
-                        No differences found against {result().baseRef}.
-                      </div>
-                    }
-                  >
-                    <DiffViewer patch={result().diff} />
-                  </Show>
-                </div>
-              </section>
-            </div>
-          )}
-        </Show>
       </Show>
     </SidebarProvider>
   );
