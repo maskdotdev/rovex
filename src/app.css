@@ -131,28 +131,194 @@ textarea:focus {
   background: rgba(255, 255, 255, 0.02);
 }
 
-.branch-base-select {
-  appearance: none;
-  min-width: 8.8rem;
+.branch-picker-trigger {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 12.5rem;
+  align-items: center;
+  gap: 0.55rem;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 0.8rem;
-  background: rgba(255, 255, 255, 0.02);
-  color: rgba(255, 255, 255, 0.66);
-  font-size: 1.1rem;
+  border-radius: 999px;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
+  color: rgba(255, 255, 255, 0.86);
+  padding: 0.4rem 0.68rem;
+  font-size: 0.9rem;
   font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1;
-  padding: 0.55rem 0.85rem;
-  cursor: pointer;
+  letter-spacing: -0.01em;
+  transition: border-color 160ms ease, background-color 160ms ease;
 }
 
-.branch-base-select:focus {
+.branch-picker-trigger:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04));
+}
+
+.branch-picker-trigger:disabled {
+  opacity: 0.55;
+}
+
+.branch-picker-popover {
+  width: min(23rem, calc(100vw - 2rem));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 1.45rem;
+  background:
+    radial-gradient(120% 140% at 20% 0%, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.01) 48%),
+    #151619;
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  padding: 0.85rem;
+  z-index: 80;
+}
+
+.branch-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.95rem;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 0.66rem 0.8rem;
+}
+
+.branch-picker-search-input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 1.03rem;
+  letter-spacing: -0.015em;
+}
+
+.branch-picker-search-input::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.branch-picker-search-input:focus {
   outline: none;
-  border-color: rgba(255, 255, 255, 0.18);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04);
+  box-shadow: none !important;
 }
 
-.branch-base-select option {
-  background: #111214;
-  color: #e8e8ea;
+.branch-picker-section-label {
+  margin: 0.92rem 0 0.5rem;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.branch-picker-list {
+  max-height: min(18rem, 36svh);
+  overflow-y: auto;
+  padding-right: 0.18rem;
+}
+
+.branch-picker-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.2rem;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.85rem;
+}
+
+.branch-picker-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-radius: 0.86rem;
+  padding: 0.58rem 0.65rem;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.99rem;
+  letter-spacing: -0.01em;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.branch-picker-item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.branch-picker-item:disabled {
+  opacity: 0.65;
+}
+
+.branch-picker-create-wrap {
+  margin-top: 0.72rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 0.72rem;
+}
+
+.branch-picker-create-trigger {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.62rem;
+  border-radius: 0.86rem;
+  padding: 0.58rem 0.65rem;
+  color: rgba(255, 255, 255, 0.93);
+  font-size: 0.99rem;
+  letter-spacing: -0.01em;
+  transition: background-color 140ms ease;
+}
+
+.branch-picker-create-trigger:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.branch-picker-create-trigger:disabled {
+  opacity: 0.65;
+}
+
+.branch-picker-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.branch-picker-create-input {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.78rem;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.95);
+  font-size: 0.96rem;
+  padding: 0.52rem 0.68rem;
+}
+
+.branch-picker-create-input:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: none !important;
+}
+
+.branch-picker-create-cancel,
+.branch-picker-create-submit {
+  border-radius: 0.62rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  padding: 0.34rem 0.55rem;
+  transition: background-color 140ms ease;
+}
+
+.branch-picker-create-cancel {
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.branch-picker-create-cancel:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.branch-picker-create-submit {
+  background: rgba(255, 255, 255, 0.13);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.branch-picker-create-submit:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.branch-picker-create-submit:disabled {
+  opacity: 0.5;
 }

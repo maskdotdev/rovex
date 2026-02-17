@@ -199,3 +199,47 @@ pub struct CompareWorkspaceDiffResult {
     pub insertions: i64,
     pub deletions: i64,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListWorkspaceBranchesInput {
+    pub workspace: String,
+    pub fetch_remote: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceBranch {
+    pub name: String,
+    pub is_current: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListWorkspaceBranchesResult {
+    pub workspace: String,
+    pub current_branch: Option<String>,
+    pub branches: Vec<WorkspaceBranch>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckoutWorkspaceBranchInput {
+    pub workspace: String,
+    pub branch_name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckoutWorkspaceBranchResult {
+    pub workspace: String,
+    pub branch_name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateWorkspaceBranchInput {
+    pub workspace: String,
+    pub branch_name: String,
+    pub from_ref: Option<String>,
+}

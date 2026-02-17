@@ -13,21 +13,25 @@ import { open } from "@tauri-apps/plugin-dialog";
 import {
   Archive,
   ArrowLeft,
+  Check,
   ChevronRight,
   CircleDot,
   FolderOpen,
   GitBranch,
+  LoaderCircle,
   Monitor,
   Palette,
   PlusCircle,
   PlugZap,
   RefreshCcw,
+  Search,
   Send,
   Server,
   SlidersHorizontal,
   Workflow,
   X,
 } from "lucide-solid";
+import * as Popover from "@kobalte/core/popover";
 import { Button } from "@/components/button";
 import { DiffViewer } from "@/components/diff-viewer";
 import {
@@ -50,16 +54,20 @@ import {
 } from "@/components/sidebar";
 import { TextField, TextFieldInput } from "@/components/text-field";
 import {
+  checkoutWorkspaceBranch,
   compareWorkspaceDiff,
   cloneRepository,
   connectProvider,
+  createWorkspaceBranch,
   createThread,
   disconnectProvider,
   getProviderConnection,
+  listWorkspaceBranches,
   listThreads,
   pollProviderDeviceAuth,
   startProviderDeviceAuth,
   type CompareWorkspaceDiffResult,
+  type ListWorkspaceBranchesResult,
   type StartProviderDeviceAuthResult,
   type ProviderConnection,
   type Thread,
@@ -269,6 +277,14 @@ function App() {
   const [compareResult, setCompareResult] = createSignal<CompareWorkspaceDiffResult | null>(null);
   const [showDiffViewer, setShowDiffViewer] = createSignal(false);
   const [selectedBaseRef, setSelectedBaseRef] = createSignal("main");
+  const [branchPopoverOpen, setBranchPopoverOpen] = createSignal(false);
+  const [branchSearchQuery, setBranchSearchQuery] = createSignal("");
+  const [branchCreateMode, setBranchCreateMode] = createSignal(false);
+  const [newBranchName, setNewBranchName] = createSignal("");
+  const [branchActionBusy, setBranchActionBusy] = createSignal(false);
+  const [branchActionError, setBranchActionError] = createSignal<string | null>(null);
+  let branchSearchInputRef: HTMLInputElement | undefined;
+  let branchCreateInputRef: HTMLInputElement | undefined;
   let deviceAuthSession = 0;
 
   createEffect(() => {
@@ -302,6 +318,32 @@ function App() {
     setCompareError(null);
     setCompareResult(null);
     setShowDiffViewer(false);
+    setBranchPopoverOpen(false);
+    setBranchSearchQuery("");
+    setBranchCreateMode(false);
+    setNewBranchName("");
+    setBranchActionError(null);
+  });
+
+  createEffect(() => {
+    if (!branchPopoverOpen()) return;
+    setBranchSearchQuery("");
+    setBranchCreateMode(false);
+    setNewBranchName("");
+    setBranchActionError(null);
+    if (selectedWorkspace().length > 0) {
+      void refetchWorkspaceBranches();
+    }
+    queueMicrotask(() => {
+      branchSearchInputRef?.focus();
+    });
+  });
+
+  createEffect(() => {
+    if (!branchCreateMode()) return;
+    queueMicrotask(() => {
+      branchCreateInputRef?.focus();
+    });
   });
 
   const compareSummary = createMemo(() => {
@@ -309,19 +351,33 @@ function App() {
     if (!result) return null;
     return `${result.filesChanged} files changed +${result.insertions} -${result.deletions} vs ${result.baseRef}`;
   });
-  const baseRefOptions = createMemo(() => {
-    const options = new Set(["main", "master", "develop", "release"]);
-    const selected = selectedBaseRef().trim();
-    const resultRef = compareResult()?.baseRef?.trim();
-    if (selected.length > 0) options.add(selected);
-    if (resultRef && resultRef.length > 0) options.add(resultRef);
-    return [...options];
-  });
   const originBaseRef = createMemo(() => {
     const baseRef = selectedBaseRef().trim() || "main";
     return baseRef.startsWith("origin/") ? baseRef : `origin/${baseRef}`;
   });
   const selectedWorkspace = createMemo(() => selectedReview()?.workspace?.trim() ?? "");
+  const [workspaceBranches, { refetch: refetchWorkspaceBranches }] = createResource(
+    selectedWorkspace,
+    async (workspace): Promise<ListWorkspaceBranchesResult | null> => {
+      const normalizedWorkspace = workspace.trim();
+      if (!normalizedWorkspace) return null;
+      return listWorkspaceBranches({ workspace: normalizedWorkspace });
+    }
+  );
+  const currentWorkspaceBranch = createMemo(() => {
+    const result = workspaceBranches();
+    if (!result) return "main";
+    return result.currentBranch?.trim() || "HEAD";
+  });
+  const filteredWorkspaceBranches = createMemo(() => {
+    const query = branchSearchQuery().trim().toLowerCase();
+    const branches = workspaceBranches()?.branches ?? [];
+    if (!query) return branches;
+    return branches.filter((branch) => branch.name.toLowerCase().includes(query));
+  });
+  const canCreateBranch = createMemo(
+    () => !branchActionBusy() && newBranchName().trim().length > 0
+  );
 
   const selectedSettingsItem = createMemo(() => {
     const selected = settingsNavItems.find((item) => item.id === activeSettingsTab());
@@ -336,6 +392,11 @@ function App() {
 
   const providerConnectionError = createMemo(() => {
     const error = githubConnection.error;
+    if (!error) return null;
+    return error instanceof Error ? error.message : String(error);
+  });
+  const workspaceBranchLoadError = createMemo(() => {
+    const error = workspaceBranches.error;
     if (!error) return null;
     return error instanceof Error ? error.message : String(error);
   });
@@ -612,13 +673,75 @@ function App() {
     }
   };
 
-  const handleSwitchBaseRef = (value: string) => {
-    const nextBaseRef = value.trim();
-    if (!nextBaseRef || nextBaseRef === selectedBaseRef()) return;
-    setSelectedBaseRef(nextBaseRef);
+  const resetComparisonView = () => {
     setCompareError(null);
     setCompareResult(null);
     setShowDiffViewer(false);
+  };
+
+  const handleCheckoutBranch = async (branchName: string) => {
+    const workspace = selectedWorkspace().trim();
+    const normalizedBranchName = branchName.trim();
+    if (!workspace) {
+      setBranchActionError("Select a review with a local workspace before switching branches.");
+      return;
+    }
+    if (!normalizedBranchName) return;
+
+    setBranchActionBusy(true);
+    setBranchActionError(null);
+    try {
+      await checkoutWorkspaceBranch({
+        workspace,
+        branchName: normalizedBranchName,
+      });
+      await refetchWorkspaceBranches();
+      setBranchPopoverOpen(false);
+      setBranchCreateMode(false);
+      setNewBranchName("");
+      resetComparisonView();
+    } catch (error) {
+      setBranchActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBranchActionBusy(false);
+    }
+  };
+
+  const handleStartCreateBranch = () => {
+    setBranchCreateMode(true);
+    setNewBranchName(branchSearchQuery().trim());
+  };
+
+  const handleCreateAndCheckoutBranch = async (event: Event) => {
+    event.preventDefault();
+    const workspace = selectedWorkspace().trim();
+    const branchName = newBranchName().trim();
+    if (!workspace) {
+      setBranchActionError("Select a review with a local workspace before creating a branch.");
+      return;
+    }
+    if (!branchName) {
+      setBranchActionError("Branch name must not be empty.");
+      return;
+    }
+
+    setBranchActionBusy(true);
+    setBranchActionError(null);
+    try {
+      await createWorkspaceBranch({
+        workspace,
+        branchName,
+      });
+      await refetchWorkspaceBranches();
+      setBranchPopoverOpen(false);
+      setBranchCreateMode(false);
+      setNewBranchName("");
+      resetComparisonView();
+    } catch (error) {
+      setBranchActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBranchActionBusy(false);
+    }
   };
 
   const handleCompareSelectedReview = async (target: { baseRef?: string; fetchRemote?: boolean } = {}) => {
@@ -1163,6 +1286,13 @@ function App() {
 
             {/* Footer */}
             <footer class="px-6 pb-5">
+              <Show when={branchActionError()}>
+                {(message) => (
+                  <div class="mb-3 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
+                    {message()}
+                  </div>
+                )}
+              </Show>
               <Show when={compareError()}>
                 {(message) => (
                   <div class="mb-3 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
@@ -1218,16 +1348,142 @@ function App() {
               </form>
 
               <div class="mt-2.5 flex justify-end">
-                <select
-                  value={selectedBaseRef()}
-                  class="branch-base-select"
-                  aria-label="Base branch"
-                  onChange={(event) => handleSwitchBaseRef(event.currentTarget.value)}
+                <Popover.Root
+                  open={branchPopoverOpen()}
+                  onOpenChange={setBranchPopoverOpen}
+                  placement="top-end"
+                  gutter={8}
                 >
-                  <For each={baseRefOptions()}>
-                    {(baseRef) => <option value={baseRef}>{baseRef}</option>}
-                  </For>
-                </select>
+                  <Popover.Trigger
+                    as="button"
+                    type="button"
+                    class="branch-picker-trigger"
+                    disabled={selectedWorkspace().length === 0}
+                    aria-label="Switch current branch"
+                  >
+                    <GitBranch class="size-4 text-neutral-400" />
+                    <span class="max-w-[8.75rem] truncate">
+                      {workspaceBranches.loading && !workspaceBranches()
+                        ? "Loading..."
+                        : currentWorkspaceBranch()}
+                    </span>
+                    <ChevronRight class="size-3.5 rotate-90 text-neutral-500" />
+                  </Popover.Trigger>
+                  <Popover.Portal>
+                    <Popover.Content
+                      class="branch-picker-popover"
+                      onOpenAutoFocus={(event) => event.preventDefault()}
+                    >
+                      <div class="branch-picker-search">
+                        <Search class="size-4 text-neutral-500" />
+                        <input
+                          ref={(element) => {
+                            branchSearchInputRef = element;
+                          }}
+                          value={branchSearchQuery()}
+                          onInput={(event) =>
+                            setBranchSearchQuery(event.currentTarget.value)}
+                          class="branch-picker-search-input"
+                          placeholder="Search branches"
+                        />
+                      </div>
+
+                      <p class="branch-picker-section-label">Branches</p>
+                      <div class="branch-picker-list">
+                        <Show
+                          when={!workspaceBranches.loading}
+                          fallback={
+                            <div class="branch-picker-loading">
+                              <LoaderCircle class="size-4 animate-spin text-neutral-500" />
+                              <span>Loading branches...</span>
+                            </div>
+                          }
+                        >
+                          <Show
+                            when={filteredWorkspaceBranches().length > 0}
+                            fallback={
+                              <p class="px-3 py-2 text-[13px] text-neutral-500">
+                                {workspaceBranchLoadError() ?? "No branches found."}
+                              </p>
+                            }
+                          >
+                            <For each={filteredWorkspaceBranches()}>
+                              {(branch) => (
+                                <button
+                                  type="button"
+                                  class="branch-picker-item"
+                                  disabled={branchActionBusy()}
+                                  onClick={() => void handleCheckoutBranch(branch.name)}
+                                >
+                                  <span class="flex items-center gap-3 truncate">
+                                    <GitBranch class="size-4 text-neutral-500" />
+                                    <span class="truncate">{branch.name}</span>
+                                  </span>
+                                  <Show when={branch.isCurrent}>
+                                    <Check class="size-5 text-neutral-100" />
+                                  </Show>
+                                </button>
+                              )}
+                            </For>
+                          </Show>
+                        </Show>
+                      </div>
+
+                      <div class="branch-picker-create-wrap">
+                        <Show
+                          when={!branchCreateMode()}
+                          fallback={
+                            <form
+                              class="branch-picker-create-form"
+                              onSubmit={(event) =>
+                                void handleCreateAndCheckoutBranch(event)}
+                            >
+                              <input
+                                ref={(element) => {
+                                  branchCreateInputRef = element;
+                                }}
+                                value={newBranchName()}
+                                onInput={(event) =>
+                                  setNewBranchName(event.currentTarget.value)}
+                                class="branch-picker-create-input"
+                                placeholder="feature/new-branch"
+                              />
+                              <div class="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  class="branch-picker-create-cancel"
+                                  onClick={() => {
+                                    setBranchCreateMode(false);
+                                    setNewBranchName("");
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="submit"
+                                  class="branch-picker-create-submit"
+                                  disabled={!canCreateBranch()}
+                                >
+                                  Create
+                                </button>
+                              </div>
+                            </form>
+                          }
+                        >
+                          <button
+                            type="button"
+                            class="branch-picker-create-trigger"
+                            disabled={branchActionBusy()}
+                            onClick={handleStartCreateBranch}
+                          >
+                            <PlusCircle class="size-4" />
+                            <span>Create and checkout new branch...</span>
+                          </button>
+                        </Show>
+                      </div>
+                    </Popover.Content>
+                  </Popover.Portal>
+                </Popover.Root>
               </div>
             </footer>
           </section>

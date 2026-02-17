@@ -9,10 +9,12 @@ use tauri::State;
 use super::{
     providers::{provider_client, ProviderDeviceAuthorizationPoll},
     AddThreadMessageInput, AppState, BackendHealth, CloneRepositoryInput, CloneRepositoryResult,
-    CodeIntelSyncInput, CodeIntelSyncResult, CompareWorkspaceDiffInput, CompareWorkspaceDiffResult,
-    ConnectProviderInput, CreateThreadInput, Message, MessageRole, PollProviderDeviceAuthInput,
+    CheckoutWorkspaceBranchInput, CheckoutWorkspaceBranchResult, CodeIntelSyncInput,
+    CodeIntelSyncResult, CompareWorkspaceDiffInput, CompareWorkspaceDiffResult, ConnectProviderInput,
+    CreateThreadInput, CreateWorkspaceBranchInput, ListWorkspaceBranchesInput,
+    ListWorkspaceBranchesResult, Message, MessageRole, PollProviderDeviceAuthInput,
     PollProviderDeviceAuthResult, ProviderConnection, ProviderDeviceAuthStatus, ProviderKind,
-    StartProviderDeviceAuthInput, StartProviderDeviceAuthResult, Thread,
+    StartProviderDeviceAuthInput, StartProviderDeviceAuthResult, Thread, WorkspaceBranch,
 };
 
 const DEFAULT_LIMIT: i64 = 50;
@@ -138,6 +140,71 @@ fn run_git(repo_path: &Path, args: &[&str], context: &str) -> Result<Output, Str
 fn run_git_trimmed(repo_path: &Path, args: &[&str], context: &str) -> Result<String, String> {
     let output = run_git(repo_path, args, context)?;
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn resolve_workspace_repo_path(workspace: &str) -> Result<PathBuf, String> {
+    let workspace = workspace.trim();
+    if workspace.is_empty() {
+        return Err("Workspace path must not be empty.".to_string());
+    }
+
+    let repo_path = PathBuf::from(workspace);
+    if !repo_path.exists() {
+        return Err(format!(
+            "Workspace does not exist: {}",
+            format_path(&repo_path)
+        ));
+    }
+    if !repo_path.is_dir() {
+        return Err(format!(
+            "Workspace is not a directory: {}",
+            format_path(&repo_path)
+        ));
+    }
+
+    Ok(repo_path)
+}
+
+fn ensure_git_repository(repo_path: &Path) -> Result<(), String> {
+    let is_git_repo = run_git_trimmed(
+        repo_path,
+        &["rev-parse", "--is-inside-work-tree"],
+        "rev-parse",
+    )?;
+    if is_git_repo != "true" {
+        return Err(format!(
+            "Workspace is not a git repository: {}",
+            format_path(repo_path)
+        ));
+    }
+
+    Ok(())
+}
+
+fn parse_branch_name(value: &str) -> Result<String, String> {
+    let branch_name = value.trim();
+    if branch_name.is_empty() {
+        return Err("Branch name must not be empty.".to_string());
+    }
+    Ok(branch_name.to_string())
+}
+
+fn validate_branch_name(repo_path: &Path, branch_name: &str) -> Result<(), String> {
+    run_git(
+        repo_path,
+        &["check-ref-format", "--branch", branch_name],
+        "check-ref-format",
+    )?;
+    Ok(())
+}
+
+fn branch_sort_priority(name: &str) -> i32 {
+    match name {
+        "main" => 0,
+        "master" => 1,
+        "develop" => 2,
+        _ => 3,
+    }
 }
 
 fn git_ref_exists(repo_path: &Path, reference: &str) -> bool {
@@ -766,36 +833,8 @@ pub async fn clone_repository(
 pub async fn compare_workspace_diff(
     input: CompareWorkspaceDiffInput,
 ) -> Result<CompareWorkspaceDiffResult, String> {
-    let workspace = input.workspace.trim();
-    if workspace.is_empty() {
-        return Err("Workspace path must not be empty.".to_string());
-    }
-
-    let repo_path = PathBuf::from(workspace);
-    if !repo_path.exists() {
-        return Err(format!(
-            "Workspace does not exist: {}",
-            format_path(&repo_path)
-        ));
-    }
-    if !repo_path.is_dir() {
-        return Err(format!(
-            "Workspace is not a directory: {}",
-            format_path(&repo_path)
-        ));
-    }
-
-    let is_git_repo = run_git_trimmed(
-        &repo_path,
-        &["rev-parse", "--is-inside-work-tree"],
-        "rev-parse",
-    )?;
-    if is_git_repo != "true" {
-        return Err(format!(
-            "Workspace is not a git repository: {}",
-            format_path(&repo_path)
-        ));
-    }
+    let repo_path = resolve_workspace_repo_path(&input.workspace)?;
+    ensure_git_repository(&repo_path)?;
 
     let requested_base_ref = input
         .base_ref
@@ -851,6 +890,120 @@ pub async fn compare_workspace_diff(
         files_changed,
         insertions,
         deletions,
+    })
+}
+
+#[tauri::command]
+pub async fn list_workspace_branches(
+    input: ListWorkspaceBranchesInput,
+) -> Result<ListWorkspaceBranchesResult, String> {
+    let repo_path = resolve_workspace_repo_path(&input.workspace)?;
+    ensure_git_repository(&repo_path)?;
+
+    if input.fetch_remote.unwrap_or(false) {
+        run_git(&repo_path, &["fetch", "--quiet", "origin"], "fetch origin")?;
+    }
+
+    let current_branch = run_git_trimmed(
+        &repo_path,
+        &["branch", "--show-current"],
+        "branch --show-current",
+    )?;
+    let current_branch = if current_branch.is_empty() {
+        None
+    } else {
+        Some(current_branch)
+    };
+
+    let branch_output = run_git(
+        &repo_path,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+        "for-each-ref",
+    )?;
+    let raw_branches = String::from_utf8_lossy(&branch_output.stdout);
+    let mut branch_names: Vec<String> = raw_branches
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+
+    branch_names.sort_by(|left, right| {
+        branch_sort_priority(left)
+            .cmp(&branch_sort_priority(right))
+            .then_with(|| left.to_lowercase().cmp(&right.to_lowercase()))
+    });
+    branch_names.dedup();
+
+    let branches = branch_names
+        .into_iter()
+        .map(|name| WorkspaceBranch {
+            is_current: current_branch.as_deref() == Some(name.as_str()),
+            name,
+        })
+        .collect();
+
+    Ok(ListWorkspaceBranchesResult {
+        workspace: format_path(&repo_path),
+        current_branch,
+        branches,
+    })
+}
+
+#[tauri::command]
+pub async fn checkout_workspace_branch(
+    input: CheckoutWorkspaceBranchInput,
+) -> Result<CheckoutWorkspaceBranchResult, String> {
+    let repo_path = resolve_workspace_repo_path(&input.workspace)?;
+    ensure_git_repository(&repo_path)?;
+
+    let branch_name = parse_branch_name(&input.branch_name)?;
+    validate_branch_name(&repo_path, &branch_name)?;
+    run_git(
+        &repo_path,
+        &["checkout", branch_name.as_str()],
+        "checkout branch",
+    )?;
+
+    Ok(CheckoutWorkspaceBranchResult {
+        workspace: format_path(&repo_path),
+        branch_name,
+    })
+}
+
+#[tauri::command]
+pub async fn create_workspace_branch(
+    input: CreateWorkspaceBranchInput,
+) -> Result<CheckoutWorkspaceBranchResult, String> {
+    let repo_path = resolve_workspace_repo_path(&input.workspace)?;
+    ensure_git_repository(&repo_path)?;
+
+    let branch_name = parse_branch_name(&input.branch_name)?;
+    validate_branch_name(&repo_path, &branch_name)?;
+
+    let from_ref = input
+        .from_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    if let Some(from_ref) = from_ref {
+        run_git(
+            &repo_path,
+            &["checkout", "-b", branch_name.as_str(), from_ref],
+            "checkout -b",
+        )?;
+    } else {
+        run_git(
+            &repo_path,
+            &["checkout", "-b", branch_name.as_str()],
+            "checkout -b",
+        )?;
+    }
+
+    Ok(CheckoutWorkspaceBranchResult {
+        workspace: format_path(&repo_path),
+        branch_name,
     })
 }
 

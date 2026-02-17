@@ -106,6 +106,38 @@ export type CompareWorkspaceDiffResult = {
   deletions: number;
 };
 
+export type ListWorkspaceBranchesInput = {
+  workspace: string;
+  fetchRemote?: boolean;
+};
+
+export type WorkspaceBranch = {
+  name: string;
+  isCurrent: boolean;
+};
+
+export type ListWorkspaceBranchesResult = {
+  workspace: string;
+  currentBranch: string | null;
+  branches: WorkspaceBranch[];
+};
+
+export type CheckoutWorkspaceBranchInput = {
+  workspace: string;
+  branchName: string;
+};
+
+export type CheckoutWorkspaceBranchResult = {
+  workspace: string;
+  branchName: string;
+};
+
+export type CreateWorkspaceBranchInput = {
+  workspace: string;
+  branchName: string;
+  fromRef?: string | null;
+};
+
 export function backendHealth() {
   return invoke<BackendHealth>("backend_health");
 }
@@ -156,4 +188,16 @@ export function cloneRepository(input: CloneRepositoryInput) {
 
 export function compareWorkspaceDiff(input: CompareWorkspaceDiffInput) {
   return invoke<CompareWorkspaceDiffResult>("compare_workspace_diff", { input });
+}
+
+export function listWorkspaceBranches(input: ListWorkspaceBranchesInput) {
+  return invoke<ListWorkspaceBranchesResult>("list_workspace_branches", { input });
+}
+
+export function checkoutWorkspaceBranch(input: CheckoutWorkspaceBranchInput) {
+  return invoke<CheckoutWorkspaceBranchResult>("checkout_workspace_branch", { input });
+}
+
+export function createWorkspaceBranch(input: CreateWorkspaceBranchInput) {
+  return invoke<CheckoutWorkspaceBranchResult>("create_workspace_branch", { input });
 }
