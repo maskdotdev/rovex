@@ -1,12 +1,94 @@
 import {
   FileDiff,
   parsePatchFiles,
+  registerCustomCSSVariableTheme,
   type FileDiffMetadata,
   type FileDiffOptions,
 } from "@pierre/diffs";
 import { Columns2, Hash, PaintBucket, Rows3, WrapText } from "lucide-solid";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/tooltip";
+
+const rovexDarkThemeDefaults = {
+  foreground: "#F2F4F8",
+  background: "#0F1116",
+  "ansi-black": "#17171A",
+  "ansi-red": "#FF7B72",
+  "ansi-green": "#3FD28E",
+  "ansi-yellow": "#F6C766",
+  "ansi-blue": "#79B8FF",
+  "ansi-magenta": "#C9A7FF",
+  "ansi-cyan": "#66D9E8",
+  "ansi-white": "#E8E8EA",
+  "ansi-bright-black": "#6F768A",
+  "ansi-bright-red": "#FFB0A9",
+  "ansi-bright-green": "#8CECC0",
+  "ansi-bright-yellow": "#F8D995",
+  "ansi-bright-blue": "#A8D2FF",
+  "ansi-bright-magenta": "#E0CBFF",
+  "ansi-bright-cyan": "#A5EDF5",
+  "ansi-bright-white": "#F8F8FA",
+  "token-link": "#F5C86E",
+  "token-string": "#86E1A8",
+  "token-comment": "#8D94A8",
+  "token-constant": "#D5BCFF",
+  "token-keyword": "#E7BE58",
+  "token-parameter": "#F0D08F",
+  "token-function": "#8AC7FF",
+  "token-string-expression": "#F4D07F",
+  "token-punctuation": "#BAC1D3",
+  "token-inserted": "#6CE4A8",
+  "token-deleted": "#FF9C94",
+  "token-changed": "#F4D27C",
+} as const;
+
+const rovexLightThemeDefaults = {
+  foreground: "#2B2A28",
+  background: "#F7F4EC",
+  "ansi-black": "#2F2E2A",
+  "ansi-red": "#C55050",
+  "ansi-green": "#2E8F61",
+  "ansi-yellow": "#A87314",
+  "ansi-blue": "#3D70AE",
+  "ansi-magenta": "#7D5DC0",
+  "ansi-cyan": "#2B7F91",
+  "ansi-white": "#FBFAF7",
+  "ansi-bright-black": "#5F5B52",
+  "ansi-bright-red": "#DD7272",
+  "ansi-bright-green": "#45A879",
+  "ansi-bright-yellow": "#BB8E2B",
+  "ansi-bright-blue": "#5A8BC2",
+  "ansi-bright-magenta": "#A27BD4",
+  "ansi-bright-cyan": "#49A4B0",
+  "ansi-bright-white": "#FFFFFF",
+  "token-link": "#9D6911",
+  "token-string": "#278553",
+  "token-comment": "#7C766D",
+  "token-constant": "#6E56B5",
+  "token-keyword": "#8C5910",
+  "token-parameter": "#8E6630",
+  "token-function": "#2C5D92",
+  "token-string-expression": "#A66F18",
+  "token-punctuation": "#6F695F",
+  "token-inserted": "#2E8F61",
+  "token-deleted": "#C55050",
+  "token-changed": "#A87314",
+} as const;
+
+const rovexThemeRegistryFlag = "__rovexDiffThemesRegistered";
+
+function registerRovexDiffThemes() {
+  const registry = globalThis as typeof globalThis & {
+    [rovexThemeRegistryFlag]?: boolean;
+  };
+  if (registry[rovexThemeRegistryFlag]) return;
+
+  registerCustomCSSVariableTheme("rovex-dark", rovexDarkThemeDefaults, true);
+  registerCustomCSSVariableTheme("rovex-light", rovexLightThemeDefaults, true);
+  registry[rovexThemeRegistryFlag] = true;
+}
+
+registerRovexDiffThemes();
 
 export type DiffViewerTheme = {
   dark: string;
@@ -16,6 +98,7 @@ export type DiffViewerTheme = {
 type DiffViewerProps = {
   patch: string;
   theme: DiffViewerTheme;
+  themeId?: string;
   themeType?: "system" | "light" | "dark";
   showToolbar?: boolean;
 };
@@ -34,20 +117,26 @@ type DiffRenderOptions = Pick<
   | "overflow"
   | "theme"
   | "themeType"
+  | "unsafeCSS"
 >;
+
+const diffStickyHeaderUnsafeCSS = `
+[data-diffs-header] {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  border-bottom: 1px solid color-mix(in lab, var(--diffs-bg) 92%, var(--diffs-fg));
+  background: color-mix(in lab, var(--diffs-bg) 94%, black);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+`;
 
 function DiffFileCard(props: DiffFileCardProps) {
   let visibilityAnchorRef: HTMLDivElement | undefined;
   let containerRef: HTMLDivElement | undefined;
   const [shouldRender, setShouldRender] = createSignal(props.index < 2);
   const [renderError, setRenderError] = createSignal<string | null>(null);
-
-  const fileLabel = createMemo(() => {
-    const name = props.file.name.trim();
-    const prevName = props.file.prevName?.trim();
-    if (prevName && prevName !== name) return `${prevName} -> ${name}`;
-    return name;
-  });
 
   createEffect(() => {
     const anchor = visibilityAnchorRef;
@@ -96,10 +185,6 @@ function DiffFileCard(props: DiffFileCardProps) {
 
   return (
     <section class="rovex-diff-file">
-      <div class="rovex-diff-file-meta">
-        <span class="rovex-diff-file-path">{fileLabel()}</span>
-        <span class="rovex-diff-file-type">{props.file.type}</span>
-      </div>
       <Show when={renderError()}>
         {(message) => (
           <div class="mx-3 mb-3 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-[12px] text-rose-300/90">
@@ -125,6 +210,9 @@ function DiffFileCard(props: DiffFileCardProps) {
 
 export function DiffViewer(props: DiffViewerProps) {
   const showToolbar = createMemo(() => props.showToolbar ?? true);
+  const themeClass = createMemo(() =>
+    props.themeId?.trim() ? `rovex-diff-theme-${props.themeId}` : ""
+  );
   const [lineWrap, setLineWrap] = createSignal(false);
   const [lineNumbers, setLineNumbers] = createSignal(true);
   const [unifiedStyle, setUnifiedStyle] = createSignal(false);
@@ -137,6 +225,7 @@ export function DiffViewer(props: DiffViewerProps) {
     disableBackground: disableBackground(),
     theme: props.theme,
     themeType: props.themeType ?? "dark",
+    unsafeCSS: diffStickyHeaderUnsafeCSS,
   }));
 
   const parsedDiff = createMemo(() => {
@@ -168,7 +257,7 @@ export function DiffViewer(props: DiffViewerProps) {
   });
 
   return (
-    <>
+    <div class={themeClass()}>
       <Show when={parseError()}>
         {(message) => (
           <div class="mb-3 rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-[13px] text-rose-300/90">
@@ -251,6 +340,6 @@ export function DiffViewer(props: DiffViewerProps) {
           )}
         </For>
       </div>
-    </>
+    </div>
   );
 }

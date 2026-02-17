@@ -66,15 +66,18 @@ import {
   createThread,
   deleteThread,
   disconnectProvider,
+  generateAiReview,
   getProviderConnection,
+  listThreadMessages,
   listWorkspaceBranches,
   listThreads,
   pollProviderDeviceAuth,
   startProviderDeviceAuth,
   type CompareWorkspaceDiffResult,
   type ListWorkspaceBranchesResult,
-  type StartProviderDeviceAuthResult,
+  type Message as ThreadMessage,
   type ProviderConnection,
+  type StartProviderDeviceAuthResult,
   type Thread,
 } from "@/lib/backend";
 import "./app.css";
@@ -179,8 +182,14 @@ const settingsNavItems: SettingsNavItem[] = [
 const UNKNOWN_REPO = "unknown-repo";
 const REPO_DISPLAY_NAME_STORAGE_KEY = "rovex.settings.repo-display-names";
 const DIFF_THEME_STORAGE_KEY = "rovex.settings.diff-theme";
-const DEFAULT_DIFF_THEME_ID = "pierre";
+const DEFAULT_DIFF_THEME_ID = "rovex";
 const diffThemePresets: DiffThemePreset[] = [
+  {
+    id: "rovex",
+    label: "Rovex",
+    description: "Amber-forward palette matched to Rovex's glass and graphite UI.",
+    theme: { dark: "rovex-dark", light: "rovex-light" },
+  },
   {
     id: "pierre",
     label: "Pierre",
@@ -394,6 +403,10 @@ function App() {
   const [newBranchName, setNewBranchName] = createSignal("");
   const [branchActionBusy, setBranchActionBusy] = createSignal(false);
   const [branchActionError, setBranchActionError] = createSignal<string | null>(null);
+  const [aiPrompt, setAiPrompt] = createSignal("");
+  const [aiReviewBusy, setAiReviewBusy] = createSignal(false);
+  const [aiReviewError, setAiReviewError] = createSignal<string | null>(null);
+  const [aiStatus, setAiStatus] = createSignal<string | null>(null);
   let branchSearchInputRef: HTMLInputElement | undefined;
   let branchCreateInputRef: HTMLInputElement | undefined;
   let deviceAuthSession = 0;
@@ -444,6 +457,9 @@ function App() {
     setBranchCreateMode(false);
     setNewBranchName("");
     setBranchActionError(null);
+    setAiPrompt("");
+    setAiReviewError(null);
+    setAiStatus(null);
   });
 
   createEffect(() => {
@@ -481,6 +497,13 @@ function App() {
       return listWorkspaceBranches({ workspace: normalizedWorkspace });
     }
   );
+  const [threadMessages, { refetch: refetchThreadMessages }] = createResource(
+    selectedThreadId,
+    async (threadId): Promise<ThreadMessage[]> => {
+      if (threadId == null) return [];
+      return listThreadMessages(threadId, 100);
+    }
+  );
   const currentWorkspaceBranch = createMemo(() => {
     const result = workspaceBranches();
     if (!result) return "main";
@@ -516,6 +539,16 @@ function App() {
     const error = workspaceBranches.error;
     if (!error) return null;
     return error instanceof Error ? error.message : String(error);
+  });
+  const threadMessagesLoadError = createMemo(() => {
+    const error = threadMessages.error;
+    if (!error) return null;
+    return error instanceof Error ? error.message : String(error);
+  });
+  const visibleThreadMessages = createMemo(() => {
+    const messages = threadMessages() ?? [];
+    if (messages.length <= 12) return messages;
+    return messages.slice(messages.length - 12);
   });
 
   const clearProviderNotice = () => {
@@ -1003,6 +1036,53 @@ function App() {
     await handleCompareSelectedReview();
   };
 
+  const handleRunAiReview = async (event: Event) => {
+    event.preventDefault();
+    setAiReviewError(null);
+    setAiStatus(null);
+
+    const threadId = selectedThreadId();
+    if (threadId == null) {
+      setAiReviewError("Select a review before running AI.");
+      return;
+    }
+
+    let comparison = compareResult();
+    if (!comparison) {
+      await handleCompareSelectedReview();
+      comparison = compareResult();
+    }
+
+    if (!comparison) {
+      setAiReviewError("Load a diff before running AI review.");
+      return;
+    }
+
+    setAiReviewBusy(true);
+    try {
+      const response = await generateAiReview({
+        threadId,
+        workspace: comparison.workspace,
+        baseRef: comparison.baseRef,
+        mergeBase: comparison.mergeBase,
+        head: comparison.head,
+        filesChanged: comparison.filesChanged,
+        insertions: comparison.insertions,
+        deletions: comparison.deletions,
+        diff: comparison.diff,
+        prompt: aiPrompt().trim() || null,
+      });
+      await refetchThreadMessages();
+      setAiStatus(
+        `AI review completed with ${response.model}${response.diffTruncated ? " (truncated diff input)." : "."}`
+      );
+    } catch (error) {
+      setAiReviewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAiReviewBusy(false);
+    }
+  };
+
   return (
     <SidebarProvider
       defaultOpen
@@ -1136,6 +1216,7 @@ function App() {
                               <DiffViewer
                                 patch={diffThemePreviewPatch}
                                 theme={selectedDiffTheme().theme}
+                                themeId={selectedDiffTheme().id}
                                 themeType="dark"
                                 showToolbar={false}
                               />
@@ -1596,6 +1677,20 @@ function App() {
                   </div>
                 )}
               </Show>
+              <Show when={aiReviewError()}>
+                {(message) => (
+                  <div class="mb-3 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
+                    {message()}
+                  </div>
+                )}
+              </Show>
+              <Show when={aiStatus()}>
+                {(message) => (
+                  <div class="mb-3 rounded-xl border border-emerald-500/15 bg-emerald-500/5 px-4 py-3 text-[13px] text-emerald-300/90">
+                    {message()}
+                  </div>
+                )}
+              </Show>
 
               {/* Change summary bar */}
               <div class="mb-3 flex items-center justify-between rounded-xl border border-white/[0.05] bg-white/[0.02] px-4 py-2.5 text-[13px]">
@@ -1630,22 +1725,68 @@ function App() {
                     <DiffViewer
                       patch={result().diff}
                       theme={selectedDiffTheme().theme}
+                      themeId={selectedDiffTheme().id}
                       themeType="dark"
                     />
                   </Show>
                 )}
               </Show>
+
+              <div class="mt-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
+                <div class="flex items-center justify-between border-b border-white/[0.05] px-4 py-2.5">
+                  <h3 class="text-[12px] font-semibold uppercase tracking-[0.1em] text-neutral-500">
+                    Review Notes
+                  </h3>
+                  <span class="text-[12px] text-neutral-600">
+                    {(threadMessages() ?? []).length} messages
+                  </span>
+                </div>
+                <Show when={threadMessagesLoadError()}>
+                  {(message) => (
+                    <p class="px-4 py-3 text-[13px] text-rose-300/90">
+                      Unable to load thread messages: {message()}
+                    </p>
+                  )}
+                </Show>
+                <Show
+                  when={visibleThreadMessages().length > 0}
+                  fallback={
+                    <p class="px-4 py-4 text-[13px] text-neutral-500">
+                      Run AI review to populate findings on this thread.
+                    </p>
+                  }
+                >
+                  <div class="max-h-[20rem] space-y-2 overflow-y-auto px-3 py-3">
+                    <For each={visibleThreadMessages()}>
+                      {(message) => (
+                        <div class="rounded-lg border border-white/[0.05] bg-white/[0.015] px-3 py-2.5">
+                          <div class="mb-1.5 flex items-center gap-2 text-[11px] uppercase tracking-[0.08em] text-neutral-500">
+                            <span>{message.role}</span>
+                            <span class="text-neutral-700">•</span>
+                            <span class="normal-case text-neutral-600">{formatRelativeAge(message.createdAt)} ago</span>
+                          </div>
+                          <p class="whitespace-pre-wrap text-[13px] leading-5 text-neutral-200">
+                            {message.content}
+                          </p>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </div>
             </div>
 
             {/* Input area */}
             <footer class="shrink-0 px-6 pb-4 pt-3">
               <form
                 class="overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.02]"
-                onSubmit={(event) => event.preventDefault()}
+                onSubmit={(event) => void handleRunAiReview(event)}
               >
                 <TextField>
                   <TextFieldInput
-                    placeholder="Ask a code question..."
+                    value={aiPrompt()}
+                    onInput={(event) => setAiPrompt(event.currentTarget.value)}
+                    placeholder="Ask AI to focus on specific risks (optional)..."
                     class="h-12 border-0 bg-transparent px-4 text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:ring-0 focus:ring-offset-0"
                   />
                 </TextField>
@@ -1660,150 +1801,154 @@ function App() {
                     </div>
                     <span class="text-[12px] text-neutral-600">High</span>
                   </div>
-                  <Button size="icon" class="h-8 w-8 rounded-xl bg-amber-500/90 text-neutral-900 shadow-[0_0_12px_rgba(212,175,55,0.15)] hover:bg-amber-400/90">
-                    <Send class="size-3.5" />
-                  </Button>
+                  <div class="flex items-center gap-2">
+                    <Popover.Root
+                      open={branchPopoverOpen()}
+                      onOpenChange={setBranchPopoverOpen}
+                      placement="top-end"
+                      gutter={8}
+                    >
+                      <Popover.Trigger
+                        as="button"
+                        type="button"
+                        class="branch-picker-trigger"
+                        disabled={selectedWorkspace().length === 0}
+                        aria-label="Switch current branch"
+                      >
+                        <GitBranch class="size-4 text-neutral-400" />
+                        <span class="max-w-[8.75rem] truncate">
+                          {workspaceBranches.loading && !workspaceBranches()
+                            ? "Loading..."
+                            : currentWorkspaceBranch()}
+                        </span>
+                        <ChevronRight class="size-3.5 rotate-90 text-neutral-500" />
+                      </Popover.Trigger>
+                      <Popover.Portal>
+                        <Popover.Content
+                          class="branch-picker-popover"
+                          onOpenAutoFocus={(event) => event.preventDefault()}
+                        >
+                          <div class="branch-picker-search">
+                            <Search class="size-4 text-neutral-500" />
+                            <input
+                              ref={(element) => {
+                                branchSearchInputRef = element;
+                              }}
+                              value={branchSearchQuery()}
+                              onInput={(event) =>
+                                setBranchSearchQuery(event.currentTarget.value)}
+                              class="branch-picker-search-input"
+                              placeholder="Search branches"
+                            />
+                          </div>
+
+                          <p class="branch-picker-section-label">Branches</p>
+                          <div class="branch-picker-list">
+                            <Show
+                              when={!workspaceBranches.loading}
+                              fallback={
+                                <div class="branch-picker-loading">
+                                  <LoaderCircle class="size-4 animate-spin text-neutral-500" />
+                                  <span>Loading branches...</span>
+                                </div>
+                              }
+                            >
+                              <Show
+                                when={filteredWorkspaceBranches().length > 0}
+                                fallback={
+                                  <p class="px-3 py-2 text-[13px] text-neutral-500">
+                                    {workspaceBranchLoadError() ?? "No branches found."}
+                                  </p>
+                                }
+                              >
+                                <For each={filteredWorkspaceBranches()}>
+                                  {(branch) => (
+                                    <button
+                                      type="button"
+                                      class="branch-picker-item"
+                                      disabled={branchActionBusy()}
+                                      onClick={() => void handleCheckoutBranch(branch.name)}
+                                    >
+                                      <span class="flex items-center gap-3 truncate">
+                                        <GitBranch class="size-4 text-neutral-500" />
+                                        <span class="truncate">{branch.name}</span>
+                                      </span>
+                                      <Show when={branch.isCurrent}>
+                                        <Check class="size-5 text-neutral-100" />
+                                      </Show>
+                                    </button>
+                                  )}
+                                </For>
+                              </Show>
+                            </Show>
+                          </div>
+
+                          <div class="branch-picker-create-wrap">
+                            <Show
+                              when={!branchCreateMode()}
+                              fallback={
+                                <form
+                                  class="branch-picker-create-form"
+                                  onSubmit={(event) =>
+                                    void handleCreateAndCheckoutBranch(event)}
+                                >
+                                  <input
+                                    ref={(element) => {
+                                      branchCreateInputRef = element;
+                                    }}
+                                    value={newBranchName()}
+                                    onInput={(event) =>
+                                      setNewBranchName(event.currentTarget.value)}
+                                    class="branch-picker-create-input"
+                                    placeholder="feature/new-branch"
+                                  />
+                                  <div class="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      class="branch-picker-create-cancel"
+                                      onClick={() => {
+                                        setBranchCreateMode(false);
+                                        setNewBranchName("");
+                                      }}
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="submit"
+                                      class="branch-picker-create-submit"
+                                      disabled={!canCreateBranch()}
+                                    >
+                                      Create
+                                    </button>
+                                  </div>
+                                </form>
+                              }
+                            >
+                              <button
+                                type="button"
+                                class="branch-picker-create-trigger"
+                                disabled={branchActionBusy()}
+                                onClick={handleStartCreateBranch}
+                              >
+                                <PlusCircle class="size-4" />
+                                <span>Create and checkout new branch...</span>
+                              </button>
+                            </Show>
+                          </div>
+                        </Popover.Content>
+                      </Popover.Portal>
+                    </Popover.Root>
+                    <Button
+                      type="submit"
+                      size="icon"
+                      disabled={aiReviewBusy() || compareBusy() || selectedWorkspace().length === 0}
+                      class="h-8 w-8 rounded-xl bg-amber-500/90 text-neutral-900 shadow-[0_0_12px_rgba(212,175,55,0.15)] hover:bg-amber-400/90 disabled:bg-neutral-700 disabled:text-neutral-400"
+                    >
+                      <Send class="size-3.5" />
+                    </Button>
+                  </div>
                 </div>
               </form>
-
-              <div class="mt-2.5 flex justify-end">
-                <Popover.Root
-                  open={branchPopoverOpen()}
-                  onOpenChange={setBranchPopoverOpen}
-                  placement="top-end"
-                  gutter={8}
-                >
-                  <Popover.Trigger
-                    as="button"
-                    type="button"
-                    class="branch-picker-trigger"
-                    disabled={selectedWorkspace().length === 0}
-                    aria-label="Switch current branch"
-                  >
-                    <GitBranch class="size-4 text-neutral-400" />
-                    <span class="max-w-[8.75rem] truncate">
-                      {workspaceBranches.loading && !workspaceBranches()
-                        ? "Loading..."
-                        : currentWorkspaceBranch()}
-                    </span>
-                    <ChevronRight class="size-3.5 rotate-90 text-neutral-500" />
-                  </Popover.Trigger>
-                  <Popover.Portal>
-                    <Popover.Content
-                      class="branch-picker-popover"
-                      onOpenAutoFocus={(event) => event.preventDefault()}
-                    >
-                      <div class="branch-picker-search">
-                        <Search class="size-4 text-neutral-500" />
-                        <input
-                          ref={(element) => {
-                            branchSearchInputRef = element;
-                          }}
-                          value={branchSearchQuery()}
-                          onInput={(event) =>
-                            setBranchSearchQuery(event.currentTarget.value)}
-                          class="branch-picker-search-input"
-                          placeholder="Search branches"
-                        />
-                      </div>
-
-                      <p class="branch-picker-section-label">Branches</p>
-                      <div class="branch-picker-list">
-                        <Show
-                          when={!workspaceBranches.loading}
-                          fallback={
-                            <div class="branch-picker-loading">
-                              <LoaderCircle class="size-4 animate-spin text-neutral-500" />
-                              <span>Loading branches...</span>
-                            </div>
-                          }
-                        >
-                          <Show
-                            when={filteredWorkspaceBranches().length > 0}
-                            fallback={
-                              <p class="px-3 py-2 text-[13px] text-neutral-500">
-                                {workspaceBranchLoadError() ?? "No branches found."}
-                              </p>
-                            }
-                          >
-                            <For each={filteredWorkspaceBranches()}>
-                              {(branch) => (
-                                <button
-                                  type="button"
-                                  class="branch-picker-item"
-                                  disabled={branchActionBusy()}
-                                  onClick={() => void handleCheckoutBranch(branch.name)}
-                                >
-                                  <span class="flex items-center gap-3 truncate">
-                                    <GitBranch class="size-4 text-neutral-500" />
-                                    <span class="truncate">{branch.name}</span>
-                                  </span>
-                                  <Show when={branch.isCurrent}>
-                                    <Check class="size-5 text-neutral-100" />
-                                  </Show>
-                                </button>
-                              )}
-                            </For>
-                          </Show>
-                        </Show>
-                      </div>
-
-                      <div class="branch-picker-create-wrap">
-                        <Show
-                          when={!branchCreateMode()}
-                          fallback={
-                            <form
-                              class="branch-picker-create-form"
-                              onSubmit={(event) =>
-                                void handleCreateAndCheckoutBranch(event)}
-                            >
-                              <input
-                                ref={(element) => {
-                                  branchCreateInputRef = element;
-                                }}
-                                value={newBranchName()}
-                                onInput={(event) =>
-                                  setNewBranchName(event.currentTarget.value)}
-                                class="branch-picker-create-input"
-                                placeholder="feature/new-branch"
-                              />
-                              <div class="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  class="branch-picker-create-cancel"
-                                  onClick={() => {
-                                    setBranchCreateMode(false);
-                                    setNewBranchName("");
-                                  }}
-                                >
-                                  Cancel
-                                </button>
-                                <button
-                                  type="submit"
-                                  class="branch-picker-create-submit"
-                                  disabled={!canCreateBranch()}
-                                >
-                                  Create
-                                </button>
-                              </div>
-                            </form>
-                          }
-                        >
-                          <button
-                            type="button"
-                            class="branch-picker-create-trigger"
-                            disabled={branchActionBusy()}
-                            onClick={handleStartCreateBranch}
-                          >
-                            <PlusCircle class="size-4" />
-                            <span>Create and checkout new branch...</span>
-                          </button>
-                        </Show>
-                      </div>
-                    </Popover.Content>
-                  </Popover.Portal>
-                </Popover.Root>
-              </div>
             </footer>
           </section>
         </SidebarInset>

@@ -16,6 +16,10 @@ The backend lives in `src-tauri/src/backend` and is exposed through Tauri comman
    - Optional: `ROVEX_LOCAL_DATABASE_URL` (default fallback: `file:rovex-dev.db`)
    - Optional: `ROVEX_REPOSITORIES_DIR` (default clone destination: `~/rovex/repos`)
    - Optional: `GITHUB_OAUTH_SCOPE` (default: `repo`)
+   - Optional: `ROVEX_REVIEW_MODEL` (default: `gpt-4.1-mini`)
+   - Optional: `ROVEX_REVIEW_BASE_URL` (default: `https://api.openai.com/v1`)
+   - Optional: `ROVEX_REVIEW_MAX_DIFF_CHARS` (default: `120000`)
+   - Optional: `ROVEX_REVIEW_TIMEOUT_MS` (default: `120000`)
 
 The app reads `.env` at startup and initializes tables automatically.
 If Turso env vars are missing, the app falls back to a local libsql database instead of crashing.
@@ -34,6 +38,7 @@ If Turso env vars are missing, the app falls back to a local libsql database ins
 - `list_provider_connections()`
 - `disconnect_provider(provider)`
 - `clone_repository({ provider, repository, destinationRoot?, directoryName?, shallow? })`
+- `generate_ai_review({ threadId, workspace, baseRef, mergeBase, head, filesChanged, insertions, deletions, diff, prompt? })`
 
 `role` accepts `system`, `user`, or `assistant`.
 `provider` currently accepts `github`.

@@ -2,8 +2,11 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     process::{Command, Output},
+    time::Duration,
 };
 
+use reqwest::{Client, StatusCode};
+use serde::Serialize;
 use tauri::State;
 
 use super::{
@@ -11,15 +14,25 @@ use super::{
     AddThreadMessageInput, AppState, BackendHealth, CloneRepositoryInput, CloneRepositoryResult,
     CheckoutWorkspaceBranchInput, CheckoutWorkspaceBranchResult, CodeIntelSyncInput,
     CodeIntelSyncResult, CompareWorkspaceDiffInput, CompareWorkspaceDiffResult, ConnectProviderInput,
-    CreateThreadInput, CreateWorkspaceBranchInput, ListWorkspaceBranchesInput,
-    ListWorkspaceBranchesResult, Message, MessageRole, PollProviderDeviceAuthInput,
-    PollProviderDeviceAuthResult, ProviderConnection, ProviderDeviceAuthStatus, ProviderKind,
-    StartProviderDeviceAuthInput, StartProviderDeviceAuthResult, Thread, WorkspaceBranch,
+    CreateThreadInput, CreateWorkspaceBranchInput, GenerateAiReviewInput, GenerateAiReviewResult,
+    ListWorkspaceBranchesInput, ListWorkspaceBranchesResult, Message, MessageRole,
+    PollProviderDeviceAuthInput, PollProviderDeviceAuthResult, ProviderConnection,
+    ProviderDeviceAuthStatus, ProviderKind, StartProviderDeviceAuthInput,
+    StartProviderDeviceAuthResult, Thread, WorkspaceBranch,
 };
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 200;
 const DEFAULT_REPOSITORIES_DIR: &str = "rovex/repos";
+const OPENAI_API_KEY_ENV: &str = "OPENAI_API_KEY";
+const ROVEX_REVIEW_MODEL_ENV: &str = "ROVEX_REVIEW_MODEL";
+const ROVEX_REVIEW_BASE_URL_ENV: &str = "ROVEX_REVIEW_BASE_URL";
+const ROVEX_REVIEW_MAX_DIFF_CHARS_ENV: &str = "ROVEX_REVIEW_MAX_DIFF_CHARS";
+const ROVEX_REVIEW_TIMEOUT_MS_ENV: &str = "ROVEX_REVIEW_TIMEOUT_MS";
+const DEFAULT_REVIEW_MODEL: &str = "gpt-4.1-mini";
+const DEFAULT_REVIEW_BASE_URL: &str = "https://api.openai.com/v1";
+const DEFAULT_REVIEW_MAX_DIFF_CHARS: usize = 120_000;
+const DEFAULT_REVIEW_TIMEOUT_MS: u64 = 120_000;
 
 struct ProviderConnectionRow {
     provider: ProviderKind,
@@ -268,6 +281,202 @@ fn parse_numstat(diff_numstat: &str) -> (i64, i64, i64) {
     }
 
     (files_changed, insertions, deletions)
+}
+
+fn parse_env_u64(name: &str, fallback: u64, min: u64) -> u64 {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value >= min)
+        .unwrap_or(fallback)
+}
+
+fn parse_env_usize(name: &str, fallback: usize, min: usize) -> usize {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value >= min)
+        .unwrap_or(fallback)
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> (String, bool) {
+    if max_chars == 0 {
+        return (String::new(), !value.is_empty());
+    }
+
+    let mut end = value.len();
+    let mut count = 0usize;
+    for (index, _) in value.char_indices() {
+        if count == max_chars {
+            end = index;
+            break;
+        }
+        count += 1;
+    }
+
+    if count < max_chars {
+        (value.to_string(), false)
+    } else {
+        (value[..end].to_string(), value[end..].chars().next().is_some())
+    }
+}
+
+fn as_non_empty_trimmed(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn snippet(value: &str, max_chars: usize) -> String {
+    truncate_chars(value, max_chars).0
+}
+
+fn extract_chat_response_text(body: &serde_json::Value) -> Option<String> {
+    let content = body
+        .get("choices")?
+        .as_array()?
+        .first()?
+        .get("message")?
+        .get("content")?;
+
+    if let Some(text) = content.as_str() {
+        let normalized = text.trim();
+        if !normalized.is_empty() {
+            return Some(normalized.to_string());
+        }
+        return None;
+    }
+
+    let mut text_parts = Vec::new();
+    for part in content.as_array()? {
+        if let Some(text) = part.as_str() {
+            if !text.trim().is_empty() {
+                text_parts.push(text.trim().to_string());
+            }
+            continue;
+        }
+
+        if let Some(text) = part.get("text").and_then(|value| value.as_str()) {
+            if !text.trim().is_empty() {
+                text_parts.push(text.trim().to_string());
+            }
+            continue;
+        }
+
+        if let Some(text) = part
+            .get("text")
+            .and_then(|value| value.get("value"))
+            .and_then(|value| value.as_str())
+        {
+            if !text.trim().is_empty() {
+                text_parts.push(text.trim().to_string());
+            }
+        }
+    }
+
+    if text_parts.is_empty() {
+        None
+    } else {
+        Some(text_parts.join("\n\n"))
+    }
+}
+
+async fn persist_thread_message(
+    state: &AppState,
+    thread_id: i64,
+    role: MessageRole,
+    content: &str,
+) -> Result<(), String> {
+    let normalized = content.trim();
+    if normalized.is_empty() {
+        return Ok(());
+    }
+
+    let conn = state.connection()?;
+    conn.execute(
+        "INSERT INTO messages (thread_id, role, content) VALUES (?1, ?2, ?3)",
+        (thread_id, role.as_str(), normalized.to_string()),
+    )
+    .await
+    .map_err(|error| format!("Failed to persist thread message: {error}"))?;
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAiChatMessage<'a> {
+    role: &'a str,
+    content: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAiChatRequest<'a> {
+    model: &'a str,
+    temperature: f32,
+    messages: Vec<OpenAiChatMessage<'a>>,
+}
+
+async fn generate_review_with_openai(
+    model: &str,
+    base_url: &str,
+    timeout_ms: u64,
+    api_key: &str,
+    prompt: &str,
+) -> Result<String, String> {
+    let system_prompt = "You are a senior code reviewer. Review the diff and provide concise, high-signal findings. Prioritize functional bugs, regressions, security risks, and missing tests. Use markdown with sections: Summary, Findings, Suggested Tests. If no issues, say that clearly.";
+
+    let request = OpenAiChatRequest {
+        model,
+        temperature: 0.2,
+        messages: vec![
+            OpenAiChatMessage {
+                role: "system",
+                content: system_prompt,
+            },
+            OpenAiChatMessage {
+                role: "user",
+                content: prompt,
+            },
+        ],
+    };
+
+    let endpoint = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+    let client = Client::builder()
+        .timeout(Duration::from_millis(timeout_ms))
+        .build()
+        .map_err(|error| format!("Failed to initialize HTTP client: {error}"))?;
+
+    let response = client
+        .post(&endpoint)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Content-Type", "application/json")
+        .json(&request)
+        .send()
+        .await
+        .map_err(|error| format!("Failed to reach AI provider: {error}"))?;
+
+    if response.status() == StatusCode::UNAUTHORIZED {
+        return Err(format!(
+            "AI provider rejected the API key. Check {OPENAI_API_KEY_ENV}."
+        ));
+    }
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "AI provider returned {status}. Response: {}",
+            snippet(body.trim(), 300)
+        ));
+    }
+
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|error| format!("Failed to parse AI provider response: {error}"))?;
+    let review = extract_chat_response_text(&body)
+        .ok_or_else(|| "AI provider returned an empty response.".to_string())?;
+    Ok(review)
 }
 
 fn to_provider_connection(connection: &ProviderConnectionRow) -> ProviderConnection {
@@ -541,6 +750,18 @@ pub async fn list_threads(
     }
 
     Ok(threads)
+}
+
+#[tauri::command]
+pub async fn delete_thread(state: State<'_, AppState>, thread_id: i64) -> Result<bool, String> {
+    let _ = load_thread_by_id(&state, thread_id).await?;
+    let conn = state.connection()?;
+
+    conn.execute("DELETE FROM threads WHERE id = ?1", [thread_id])
+        .await
+        .map_err(|error| format!("Failed to delete thread: {error}"))?;
+
+    Ok(true)
 }
 
 #[tauri::command]
@@ -890,6 +1111,99 @@ pub async fn compare_workspace_diff(
         files_changed,
         insertions,
         deletions,
+    })
+}
+
+#[tauri::command]
+pub async fn generate_ai_review(
+    state: State<'_, AppState>,
+    input: GenerateAiReviewInput,
+) -> Result<GenerateAiReviewResult, String> {
+    let _ = load_thread_by_id(&state, input.thread_id).await?;
+
+    let workspace = input.workspace.trim();
+    if workspace.is_empty() {
+        return Err("Workspace path must not be empty.".to_string());
+    }
+
+    let base_ref = input.base_ref.trim();
+    let merge_base = input.merge_base.trim();
+    let head = input.head.trim();
+    if base_ref.is_empty() || merge_base.is_empty() || head.is_empty() {
+        return Err("Comparison metadata is incomplete. Refresh diff and try again.".to_string());
+    }
+
+    let raw_diff = input.diff.trim();
+    if raw_diff.is_empty() {
+        return Err("There are no changes to review.".to_string());
+    }
+
+    let api_key = env::var(OPENAI_API_KEY_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("Missing {OPENAI_API_KEY_ENV}. Add it to .env to enable AI review."))?;
+    let model = env::var(ROVEX_REVIEW_MODEL_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_REVIEW_MODEL.to_string());
+    let base_url = env::var(ROVEX_REVIEW_BASE_URL_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_REVIEW_BASE_URL.to_string());
+    let timeout_ms = parse_env_u64(ROVEX_REVIEW_TIMEOUT_MS_ENV, DEFAULT_REVIEW_TIMEOUT_MS, 1_000);
+    let max_diff_chars = parse_env_usize(
+        ROVEX_REVIEW_MAX_DIFF_CHARS_ENV,
+        DEFAULT_REVIEW_MAX_DIFF_CHARS,
+        1_000,
+    );
+
+    let (diff_for_review, diff_truncated) = truncate_chars(raw_diff, max_diff_chars);
+    let diff_chars_total = raw_diff.chars().count();
+    let diff_chars_used = diff_for_review.chars().count();
+
+    let reviewer_goal = as_non_empty_trimmed(input.prompt.as_deref())
+        .unwrap_or_else(|| "Perform a full code review for this patch.".to_string());
+    let review_prompt = format!(
+        "Review this patch.\n\nReviewer goal: {reviewer_goal}\nWorkspace: {workspace}\nBase ref: {base_ref}\nMerge base: {merge_base}\nHead: {head}\nDiff summary: {} files changed, +{}, -{}\nDiff truncated: {} ({} of {} chars)\n\nDiff:\n```diff\n{}\n```",
+        input.files_changed,
+        input.insertions,
+        input.deletions,
+        if diff_truncated { "yes" } else { "no" },
+        diff_chars_used,
+        diff_chars_total,
+        diff_for_review
+    );
+
+    persist_thread_message(
+        &state,
+        input.thread_id,
+        MessageRole::User,
+        &format!("AI review request: {reviewer_goal}"),
+    )
+    .await?;
+
+    let review =
+        generate_review_with_openai(&model, &base_url, timeout_ms, &api_key, &review_prompt).await?;
+
+    persist_thread_message(&state, input.thread_id, MessageRole::Assistant, &review).await?;
+
+    Ok(GenerateAiReviewResult {
+        thread_id: input.thread_id,
+        workspace: workspace.to_string(),
+        base_ref: base_ref.to_string(),
+        merge_base: merge_base.to_string(),
+        head: head.to_string(),
+        files_changed: input.files_changed,
+        insertions: input.insertions,
+        deletions: input.deletions,
+        model,
+        review,
+        diff_chars_used,
+        diff_chars_total,
+        diff_truncated,
     })
 }
 

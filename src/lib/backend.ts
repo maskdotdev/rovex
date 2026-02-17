@@ -138,6 +138,35 @@ export type CreateWorkspaceBranchInput = {
   fromRef?: string | null;
 };
 
+export type GenerateAiReviewInput = {
+  threadId: number;
+  workspace: string;
+  baseRef: string;
+  mergeBase: string;
+  head: string;
+  filesChanged: number;
+  insertions: number;
+  deletions: number;
+  diff: string;
+  prompt?: string | null;
+};
+
+export type GenerateAiReviewResult = {
+  threadId: number;
+  workspace: string;
+  baseRef: string;
+  mergeBase: string;
+  head: string;
+  filesChanged: number;
+  insertions: number;
+  deletions: number;
+  model: string;
+  review: string;
+  diffCharsUsed: number;
+  diffCharsTotal: number;
+  diffTruncated: boolean;
+};
+
 export function backendHealth() {
   return invoke<BackendHealth>("backend_health");
 }
@@ -148,6 +177,10 @@ export function createThread(input: CreateThreadInput) {
 
 export function listThreads(limit?: number) {
   return invoke<Thread[]>("list_threads", { limit });
+}
+
+export function deleteThread(threadId: number) {
+  return invoke<boolean>("delete_thread", { threadId });
 }
 
 export function addThreadMessage(input: AddThreadMessageInput) {
@@ -200,4 +233,8 @@ export function checkoutWorkspaceBranch(input: CheckoutWorkspaceBranchInput) {
 
 export function createWorkspaceBranch(input: CreateWorkspaceBranchInput) {
   return invoke<CheckoutWorkspaceBranchResult>("create_workspace_branch", { input });
+}
+
+export function generateAiReview(input: GenerateAiReviewInput) {
+  return invoke<GenerateAiReviewResult>("generate_ai_review", { input });
 }

@@ -243,3 +243,36 @@ pub struct CreateWorkspaceBranchInput {
     pub branch_name: String,
     pub from_ref: Option<String>,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateAiReviewInput {
+    pub thread_id: i64,
+    pub workspace: String,
+    pub base_ref: String,
+    pub merge_base: String,
+    pub head: String,
+    pub files_changed: i64,
+    pub insertions: i64,
+    pub deletions: i64,
+    pub diff: String,
+    pub prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateAiReviewResult {
+    pub thread_id: i64,
+    pub workspace: String,
+    pub base_ref: String,
+    pub merge_base: String,
+    pub head: String,
+    pub files_changed: i64,
+    pub insertions: i64,
+    pub deletions: i64,
+    pub model: String,
+    pub review: String,
+    pub diff_chars_used: usize,
+    pub diff_chars_total: usize,
+    pub diff_truncated: bool,
+}

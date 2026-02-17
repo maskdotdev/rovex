@@ -27,6 +27,7 @@ pub fn run() {
             backend::commands::backend_health,
             backend::commands::create_thread,
             backend::commands::list_threads,
+            backend::commands::delete_thread,
             backend::commands::add_thread_message,
             backend::commands::list_thread_messages,
             backend::commands::connect_provider,
@@ -40,6 +41,7 @@ pub fn run() {
             backend::commands::list_workspace_branches,
             backend::commands::checkout_workspace_branch,
             backend::commands::create_workspace_branch,
+            backend::commands::generate_ai_review,
             backend::commands::run_code_intel_sync
         ])
         .run(tauri::generate_context!())
