@@ -1,17 +1,119 @@
-@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Sora:wght@500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap");
 
 :root {
   color-scheme: dark;
 }
 
 body {
-  font-family: "Manrope", "Avenir Next", "Segoe UI", sans-serif;
+  font-family: "DM Sans", "Avenir Next", system-ui, sans-serif;
   background:
-    radial-gradient(circle at 12% -30%, rgba(98, 131, 255, 0.25), transparent 36%),
-    radial-gradient(circle at 90% -20%, rgba(66, 193, 255, 0.14), transparent 40%),
-    linear-gradient(120deg, #04060d 0%, #070b15 55%, #070c19 100%);
+    radial-gradient(ellipse 80% 50% at 20% -12%, rgba(212, 175, 55, 0.06), transparent 60%),
+    radial-gradient(ellipse 60% 40% at 85% 110%, rgba(212, 175, 55, 0.04), transparent 50%),
+    linear-gradient(168deg, #0c0c0e 0%, #111114 40%, #0e0e11 100%);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Noise grain overlay */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
 }
 
 .app-title {
-  font-family: "Sora", "Manrope", sans-serif;
+  font-family: "DM Sans", "Avenir Next", system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 100px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* Fade-in animation for page content */
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-up {
+  animation: fadeUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Stagger delays */
+.delay-1 { animation-delay: 0.04s; }
+.delay-2 { animation-delay: 0.08s; }
+.delay-3 { animation-delay: 0.12s; }
+.delay-4 { animation-delay: 0.16s; }
+.delay-5 { animation-delay: 0.2s; }
+
+/* Subtle glow for accent elements */
+.glow-amber {
+  box-shadow:
+    0 0 0 1px rgba(212, 175, 55, 0.12),
+    0 1px 3px rgba(0, 0, 0, 0.3),
+    0 0 20px -4px rgba(212, 175, 55, 0.08);
+}
+
+/* Glass surface effect */
+.glass-surface {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.03) 0%,
+    rgba(255, 255, 255, 0.01) 100%
+  );
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+}
+
+/* Timeline dot pulse */
+@keyframes dotPulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.timeline-dot {
+  animation: dotPulse 2.5s ease-in-out infinite;
+}
+
+/* Input focus glow */
+input:focus,
+textarea:focus {
+  box-shadow:
+    0 0 0 1px rgba(212, 175, 55, 0.25),
+    0 0 12px -2px rgba(212, 175, 55, 0.1) !important;
+}
+
+/* Selection color */
+::selection {
+  background: rgba(212, 175, 55, 0.2);
+  color: #fafaf7;
 }
