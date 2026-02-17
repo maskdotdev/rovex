@@ -124,6 +124,52 @@ textarea:focus {
   gap: 0.75rem;
 }
 
+.rovex-diff-viewer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.7rem;
+}
+
+.rovex-diff-viewer-title {
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.54);
+}
+
+.rovex-diff-icon-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.rovex-diff-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 0.62rem;
+  color: rgba(255, 255, 255, 0.64);
+  background: rgba(255, 255, 255, 0.02);
+  transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+}
+
+.rovex-diff-icon-button:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.rovex-diff-icon-button.is-active {
+  border-color: rgba(212, 175, 55, 0.5);
+  color: rgba(240, 214, 130, 0.95);
+  background: rgba(212, 175, 55, 0.12);
+}
+
 .rovex-diff-file {
   display: flex;
   flex-direction: column;

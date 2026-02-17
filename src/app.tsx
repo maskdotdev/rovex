@@ -19,8 +19,10 @@ import {
   FolderOpen,
   GitBranch,
   LoaderCircle,
+  MoreHorizontal,
   Monitor,
   Palette,
+  Pencil,
   PlusCircle,
   PlugZap,
   RefreshCcw,
@@ -28,12 +30,13 @@ import {
   Send,
   Server,
   SlidersHorizontal,
+  Trash2,
   Workflow,
   X,
 } from "lucide-solid";
 import * as Popover from "@kobalte/core/popover";
 import { Button } from "@/components/button";
-import { DiffViewer } from "@/components/diff-viewer";
+import { DiffViewer, type DiffViewerTheme } from "@/components/diff-viewer";
 import {
   Sidebar,
   SidebarContent,
@@ -42,6 +45,7 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
+  SidebarMenuAction,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -60,6 +64,7 @@ import {
   connectProvider,
   createWorkspaceBranch,
   createThread,
+  deleteThread,
   disconnectProvider,
   getProviderConnection,
   listWorkspaceBranches,
@@ -105,6 +110,13 @@ type RepoReview = {
 type RepoGroup = {
   repoName: string;
   reviews: RepoReview[];
+};
+
+type DiffThemePreset = {
+  id: string;
+  label: string;
+  description: string;
+  theme: DiffViewerTheme;
 };
 
 const settingsNavItems: SettingsNavItem[] = [
@@ -165,6 +177,97 @@ const settingsNavItems: SettingsNavItem[] = [
 ];
 
 const UNKNOWN_REPO = "unknown-repo";
+const REPO_DISPLAY_NAME_STORAGE_KEY = "rovex.settings.repo-display-names";
+const DIFF_THEME_STORAGE_KEY = "rovex.settings.diff-theme";
+const DEFAULT_DIFF_THEME_ID = "pierre";
+const diffThemePresets: DiffThemePreset[] = [
+  {
+    id: "pierre",
+    label: "Pierre",
+    description: "Default diffs.com theme pair used in Rovex.",
+    theme: { dark: "pierre-dark", light: "pierre-light" },
+  },
+  {
+    id: "github",
+    label: "GitHub",
+    description: "GitHub-style syntax colors and contrast.",
+    theme: { dark: "github-dark", light: "github-light" },
+  },
+  {
+    id: "catppuccin",
+    label: "Catppuccin",
+    description: "Softer palette with reduced glare in dark mode.",
+    theme: { dark: "catppuccin-mocha", light: "catppuccin-latte" },
+  },
+  {
+    id: "gruvbox",
+    label: "Gruvbox",
+    description: "Warm, muted contrast tuned for long reading sessions.",
+    theme: { dark: "gruvbox-dark-medium", light: "gruvbox-light-medium" },
+  },
+  {
+    id: "vitesse",
+    label: "Vitesse",
+    description: "High-legibility coding theme with vibrant accents.",
+    theme: { dark: "vitesse-dark", light: "vitesse-light" },
+  },
+  {
+    id: "solarized",
+    label: "Solarized",
+    description: "Classic low-contrast palette for balanced diff scanning.",
+    theme: { dark: "solarized-dark", light: "solarized-light" },
+  },
+];
+const diffThemePreviewPatch = `diff --git a/src/components/status.ts b/src/components/status.ts
+index 4c3f8d2..f3b58a1 100644
+--- a/src/components/status.ts
++++ b/src/components/status.ts
+@@ -1,7 +1,8 @@
+ export function getStatusLabel(approved: boolean, pending: boolean) {
+-  if (approved) return "Ready";
++  if (approved) return "Ready to ship";
+   if (pending) return "Pending review";
++  const fallback = "Needs attention";
+ 
+-  return "Blocked";
++  return fallback;
+ }
+`;
+
+function getDiffThemePreset(themeId: string | null | undefined): DiffThemePreset {
+  const normalized = themeId?.trim();
+  if (!normalized) return diffThemePresets[0];
+
+  const preset = diffThemePresets.find((candidate) => candidate.id === normalized);
+  return preset ?? diffThemePresets[0];
+}
+
+function getInitialDiffThemeId(): string {
+  if (typeof window === "undefined") return DEFAULT_DIFF_THEME_ID;
+  const storedThemeId = window.localStorage.getItem(DIFF_THEME_STORAGE_KEY);
+  return getDiffThemePreset(storedThemeId).id;
+}
+
+function getInitialRepoDisplayNames(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+
+  try {
+    const raw = window.localStorage.getItem(REPO_DISPLAY_NAME_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+
+    const normalized: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === "string" && value.trim().length > 0) {
+        normalized[key] = value.trim();
+      }
+    }
+    return normalized;
+  } catch {
+    return {};
+  }
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -259,8 +362,16 @@ function App() {
 
   const [activeView, setActiveView] = createSignal<AppView>("workspace");
   const [activeSettingsTab, setActiveSettingsTab] = createSignal<SettingsTab>("connections");
+  const [selectedDiffThemeId, setSelectedDiffThemeId] = createSignal(getInitialDiffThemeId());
+  const [settingsError, setSettingsError] = createSignal<string | null>(null);
+  const selectedDiffTheme = createMemo(() => getDiffThemePreset(selectedDiffThemeId()));
 
   const repoGroups = createMemo(() => groupThreadsByRepo(threads() ?? []));
+  const [collapsedRepos, setCollapsedRepos] = createSignal<Record<string, boolean>>({});
+  const [repoDisplayNames, setRepoDisplayNames] = createSignal<Record<string, string>>(
+    getInitialRepoDisplayNames()
+  );
+  const [repoMenuOpen, setRepoMenuOpen] = createSignal<Record<string, boolean>>({});
   const [selectedThreadId, setSelectedThreadId] = createSignal<number | null>(null);
   const [providerToken, setProviderToken] = createSignal("");
   const [repositoryInput, setRepositoryInput] = createSignal("");
@@ -286,6 +397,16 @@ function App() {
   let branchSearchInputRef: HTMLInputElement | undefined;
   let branchCreateInputRef: HTMLInputElement | undefined;
   let deviceAuthSession = 0;
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(DIFF_THEME_STORAGE_KEY, selectedDiffTheme().id);
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(REPO_DISPLAY_NAME_STORAGE_KEY, JSON.stringify(repoDisplayNames()));
+  });
 
   createEffect(() => {
     const groups = repoGroups();
@@ -661,11 +782,116 @@ function App() {
     }
   };
 
+  const isRepoCollapsed = (repoName: string) => collapsedRepos()[repoName] ?? false;
+  const repoDisplayName = (repoName: string) => repoDisplayNames()[repoName] ?? repoName;
+  const isRepoMenuOpen = (repoName: string) => repoMenuOpen()[repoName] ?? false;
+
+  const toggleRepoCollapsed = (repoName: string) => {
+    setCollapsedRepos((current) => ({
+      ...current,
+      [repoName]: !(current[repoName] ?? false),
+    }));
+  };
+
+  const setRepoMenuOpenState = (repoName: string, open: boolean) => {
+    setRepoMenuOpen((current) => ({
+      ...current,
+      [repoName]: open,
+    }));
+  };
+
+  const handleCreateReviewForRepo = async (repo: RepoGroup) => {
+    clearProviderNotice();
+    const workspace = repo.reviews.find((review) => review.workspace?.trim())?.workspace?.trim();
+    if (!workspace) {
+      setProviderError(`No local workspace found for ${repo.repoName}.`);
+      return;
+    }
+
+    setProviderBusy(true);
+    try {
+      const thread = await createThread({
+        title: `Review ${repoDisplayName(repo.repoName)}`,
+        workspace,
+      });
+      await refetchThreads();
+      setSelectedThreadId(thread.id);
+      setCollapsedRepos((current) => ({ ...current, [repo.repoName]: false }));
+      setProviderStatus(`Created a new review for ${repoDisplayName(repo.repoName)}.`);
+      setRepoMenuOpenState(repo.repoName, false);
+    } catch (error) {
+      setProviderError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setProviderBusy(false);
+    }
+  };
+
+  const handleRenameRepo = (repo: RepoGroup) => {
+    const existingName = repoDisplayName(repo.repoName);
+    const nextName = window.prompt("Edit repository name", existingName)?.trim();
+    if (!nextName) {
+      setRepoMenuOpenState(repo.repoName, false);
+      return;
+    }
+
+    setRepoDisplayNames((current) => {
+      const next = { ...current };
+      if (nextName === repo.repoName) {
+        delete next[repo.repoName];
+      } else {
+        next[repo.repoName] = nextName;
+      }
+      return next;
+    });
+    setProviderStatus(`Renamed ${repo.repoName} to ${nextName}.`);
+    setRepoMenuOpenState(repo.repoName, false);
+  };
+
+  const handleRemoveRepo = async (repo: RepoGroup) => {
+    const displayName = repoDisplayName(repo.repoName);
+    const reviewCount = repo.reviews.length;
+    const confirmed = window.confirm(
+      `Remove ${displayName} and ${reviewCount} review${reviewCount === 1 ? "" : "s"} from Rovex? Local files are not deleted.`
+    );
+    if (!confirmed) {
+      setRepoMenuOpenState(repo.repoName, false);
+      return;
+    }
+
+    clearProviderNotice();
+    setProviderBusy(true);
+    try {
+      for (const review of repo.reviews) {
+        await deleteThread(review.id);
+      }
+      await refetchThreads();
+      setRepoDisplayNames((current) => {
+        const next = { ...current };
+        delete next[repo.repoName];
+        return next;
+      });
+      setCollapsedRepos((current) => {
+        const next = { ...current };
+        delete next[repo.repoName];
+        return next;
+      });
+      setProviderStatus(
+        `Removed ${displayName} with ${reviewCount} review${reviewCount === 1 ? "" : "s"}.`
+      );
+    } catch (error) {
+      setProviderError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setProviderBusy(false);
+      setRepoMenuOpenState(repo.repoName, false);
+    }
+  };
+
   const handleOpenDiffsDocs = async () => {
+    setSettingsError(null);
     try {
       await openUrl("https://diffs.com/");
     } catch (error) {
-      setCompareError(error instanceof Error ? error.message : String(error));
+      setSettingsError(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -811,11 +1037,10 @@ function App() {
                       return (
                         <button
                           type="button"
-                          class={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[14px] transition-all duration-150 ${
-                            isActive()
-                              ? "bg-white/[0.07] font-medium text-neutral-100 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]"
-                              : "text-neutral-400 hover:bg-white/[0.03] hover:text-neutral-200"
-                          }`}
+                          class={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[14px] transition-all duration-150 ${isActive()
+                            ? "bg-white/[0.07] font-medium text-neutral-100 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]"
+                            : "text-neutral-400 hover:bg-white/[0.03] hover:text-neutral-200"
+                            }`}
                           onClick={() => setActiveSettingsTab(item.id)}
                         >
                           <Icon class={`size-4 ${isActive() ? "text-amber-400/70" : "text-neutral-500"}`} />
@@ -841,12 +1066,92 @@ function App() {
                 <Show
                   when={activeSettingsTab() === "connections"}
                   fallback={
-                    <section class="animate-fade-up mt-10 max-w-3xl rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6" style={{ "animation-delay": "0.08s" }}>
-                      <p class="text-[15px] font-medium text-neutral-200">{selectedSettingsItem().label}</p>
-                      <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
-                        This section is ready for settings controls. Select Connections to manage GitHub.
-                      </p>
-                    </section>
+                    <Show
+                      when={activeSettingsTab() === "personalization"}
+                      fallback={
+                        <section class="animate-fade-up mt-10 max-w-3xl rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6" style={{ "animation-delay": "0.08s" }}>
+                          <p class="text-[15px] font-medium text-neutral-200">{selectedSettingsItem().label}</p>
+                          <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
+                            This section is ready for settings controls. Select Connections to manage GitHub.
+                          </p>
+                        </section>
+                      }
+                    >
+                      <section class="animate-fade-up mt-10 max-w-3xl rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6" style={{ "animation-delay": "0.08s" }}>
+                        <p class="text-[15px] font-medium text-neutral-200">
+                          Diff Theme
+                        </p>
+                        <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
+                          Choose which diffs.com theme preset Rovex uses when rendering code diffs.
+                        </p>
+
+                        <div class="mt-4 max-w-xl space-y-3">
+                          <label
+                            for="diff-theme-select"
+                            class="block text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500"
+                          >
+                            Preset
+                          </label>
+                          <div class="flex flex-wrap items-center gap-2.5">
+                            <select
+                              id="diff-theme-select"
+                              value={selectedDiffThemeId()}
+                              onChange={(event) => setSelectedDiffThemeId(event.currentTarget.value)}
+                              class="h-11 min-w-[13.5rem] rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 text-[14px] text-neutral-200 outline-none transition-colors hover:border-white/[0.14] focus:border-amber-500/35"
+                            >
+                              <For each={diffThemePresets}>
+                                {(preset) => (
+                                  <option value={preset.id}>
+                                    {preset.label}
+                                  </option>
+                                )}
+                              </For>
+                            </select>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              class="h-11 border-white/[0.08] px-3 text-neutral-200 hover:border-white/[0.12]"
+                              onClick={() => void handleOpenDiffsDocs()}
+                            >
+                              Browse diffs.com
+                            </Button>
+                          </div>
+                          <p class="text-[13px] leading-relaxed text-neutral-500">
+                            {selectedDiffTheme().description}
+                          </p>
+                          <p class="text-[12.5px] leading-relaxed text-neutral-500">
+                            Dark: <span class="font-mono text-neutral-300">{selectedDiffTheme().theme.dark}</span>
+                            {" "}
+                            Light: <span class="font-mono text-neutral-300">{selectedDiffTheme().theme.light}</span>
+                          </p>
+                        </div>
+
+                        <div class="mt-6">
+                          <p class="text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500">
+                            Live Preview
+                          </p>
+                          <div class="mt-2 overflow-hidden rounded-xl border border-white/[0.06] bg-[#0e1013] p-3">
+                            <div class="max-h-[16rem] overflow-y-auto pr-1">
+                              <DiffViewer
+                                patch={diffThemePreviewPatch}
+                                theme={selectedDiffTheme().theme}
+                                themeType="dark"
+                                showToolbar={false}
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <Show when={settingsError()}>
+                          {(message) => (
+                            <div class="mt-4 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
+                              {message()}
+                            </div>
+                          )}
+                        </Show>
+                      </section>
+                    </Show>
                   }
                 >
                   <div class="mt-10 max-w-3xl space-y-5">
@@ -857,7 +1162,7 @@ function App() {
                           <div class="flex items-center gap-2.5">
                             <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-white/[0.05]">
                               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" class="text-neutral-300"><title>GitHub</title>
-                                <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                                <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
                               </svg>
                             </div>
                             <p class="text-[15px] font-medium text-neutral-100">GitHub</p>
@@ -867,11 +1172,10 @@ function App() {
                           </p>
                         </div>
                         <span
-                          class={`mt-1 rounded-full border px-2.5 py-1 text-[11.5px] font-medium tracking-wide ${
-                            githubConnection()
-                              ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400/90"
-                              : "border-white/[0.06] bg-white/[0.03] text-neutral-500"
-                          }`}
+                          class={`mt-1 rounded-full border px-2.5 py-1 text-[11.5px] font-medium tracking-wide ${githubConnection()
+                            ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400/90"
+                            : "border-white/[0.06] bg-white/[0.03] text-neutral-500"
+                            }`}
                         >
                           {githubConnection() ? "Connected" : "Not connected"}
                         </span>
@@ -1123,34 +1427,96 @@ function App() {
                       {(repo) => (
                         <SidebarMenuItem>
                           <SidebarMenuButton
-                            class="h-10 rounded-xl px-3.5 text-[12px] font-semibold uppercase tracking-[0.1em] text-neutral-500 hover:bg-white/[0.03] hover:text-neutral-400"
-                            tooltip={repo.repoName}
+                            as="button"
+                            type="button"
+                            onClick={() => toggleRepoCollapsed(repo.repoName)}
+                            aria-expanded={!isRepoCollapsed(repo.repoName)}
+                            class="h-10 rounded-xl pl-3.5 pr-20 text-[12px] font-semibold uppercase tracking-[0.1em] text-neutral-500 hover:bg-white/[0.03] hover:text-neutral-400"
+                            tooltip={repoDisplayName(repo.repoName)}
                           >
-                            <div class="flex w-full items-center justify-between gap-3">
-                              <span class="truncate">{repo.repoName}</span>
-                              <span class="rounded-md border border-white/[0.06] bg-white/[0.03] px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-neutral-600">
-                                {repo.reviews.length}
-                              </span>
+                            <div class="flex w-full items-center gap-2">
+                              <ChevronRight
+                                class={`size-3.5 shrink-0 text-neutral-600 transition-transform duration-150 ${
+                                  isRepoCollapsed(repo.repoName) ? "" : "rotate-90 text-neutral-400"
+                                }`}
+                              />
+                              <span class="truncate">{repoDisplayName(repo.repoName)}</span>
                             </div>
                           </SidebarMenuButton>
-                          <SidebarMenuSub class="mt-0.5 border-white/[0.05]">
-                            <For each={repo.reviews}>
-                              {(review) => (
-                                <SidebarMenuSubItem>
-                                  <SidebarMenuSubButton
-                                    as="button"
-                                    type="button"
-                                    isActive={selectedThreadId() === review.id}
-                                    class="h-8 w-full justify-between rounded-lg text-[13px] text-neutral-500 transition-all duration-150 data-[active=true]:bg-white/[0.06] data-[active=true]:text-neutral-200 hover:text-neutral-300"
-                                    onClick={() => setSelectedThreadId(review.id)}
-                                  >
-                                    <span class="truncate">{review.title}</span>
-                                    <span class="shrink-0 text-[11px] tabular-nums text-neutral-600">{review.age}</span>
-                                  </SidebarMenuSubButton>
-                                </SidebarMenuSubItem>
-                              )}
-                            </For>
-                          </SidebarMenuSub>
+                          <SidebarMenuAction
+                            as="button"
+                            type="button"
+                            class="right-9 top-1.5 h-7 w-7 rounded-lg text-neutral-500 transition-colors hover:bg-white/[0.08] hover:text-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
+                            aria-label={`Create a new review for ${repoDisplayName(repo.repoName)}`}
+                            title={`Create a new review for ${repoDisplayName(repo.repoName)}`}
+                            disabled={providerBusy()}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void handleCreateReviewForRepo(repo);
+                            }}
+                          >
+                            <PlusCircle class="size-3.5" />
+                          </SidebarMenuAction>
+                          <Popover.Root
+                            open={isRepoMenuOpen(repo.repoName)}
+                            onOpenChange={(open) => setRepoMenuOpenState(repo.repoName, open)}
+                            placement="bottom-end"
+                            gutter={6}
+                          >
+                            <Popover.Trigger
+                              as="button"
+                              type="button"
+                              class="absolute right-2 top-1.5 z-10 flex h-7 w-7 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:bg-white/[0.08] hover:text-neutral-200"
+                              aria-label={`Open menu for ${repoDisplayName(repo.repoName)}`}
+                              title={`Open menu for ${repoDisplayName(repo.repoName)}`}
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <MoreHorizontal class="size-3.5" />
+                            </Popover.Trigger>
+                            <Popover.Portal>
+                              <Popover.Content
+                                class="z-50 w-44 rounded-xl border border-white/[0.08] bg-[#16171b] p-1.5 shadow-[0_16px_48px_rgba(0,0,0,0.45)]"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <button
+                                  type="button"
+                                  class="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] font-medium text-neutral-200 transition-colors hover:bg-white/[0.07]"
+                                  onClick={() => handleRenameRepo(repo)}
+                                >
+                                  <Pencil class="size-3.5 text-neutral-400" />
+                                  Edit name
+                                </button>
+                                <button
+                                  type="button"
+                                  class="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] font-medium text-rose-300 transition-colors hover:bg-rose-500/10"
+                                  onClick={() => void handleRemoveRepo(repo)}
+                                >
+                                  <Trash2 class="size-3.5 text-rose-300/90" />
+                                  Remove
+                                </button>
+                              </Popover.Content>
+                            </Popover.Portal>
+                          </Popover.Root>
+                          <Show when={!isRepoCollapsed(repo.repoName)}>
+                            <SidebarMenuSub class="mt-0.5 border-white/[0.05]">
+                              <For each={repo.reviews}>
+                                {(review) => (
+                                  <SidebarMenuSubItem>
+                                    <SidebarMenuSubButton
+                                      as="button"
+                                      type="button"
+                                      isActive={selectedThreadId() === review.id}
+                                      class="h-8 w-full justify-between rounded-lg text-[13px] text-neutral-500 transition-all duration-150 data-[active=true]:bg-white/[0.06] data-[active=true]:text-neutral-200 hover:text-neutral-300"
+                                      onClick={() => setSelectedThreadId(review.id)}
+                                    >
+                                      <span class="truncate">{review.title}</span>
+                                      <span class="shrink-0 text-[11px] tabular-nums text-neutral-600">{review.age}</span>
+                                    </SidebarMenuSubButton>
+                                  </SidebarMenuSubItem>
+                                )}
+                              </For>
+                            </SidebarMenuSub>
+                          </Show>
                         </SidebarMenuItem>
                       )}
                     </For>
@@ -1176,9 +1542,9 @@ function App() {
         </Sidebar>
 
         <SidebarInset class="bg-transparent p-2 md:p-3">
-          <section class="glass-surface flex h-full min-h-[calc(100svh-1rem)] flex-col rounded-2xl border border-white/[0.06] shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
+          <section class="glass-surface flex h-[calc(100svh-1.5rem)] flex-col overflow-hidden rounded-2xl border border-white/[0.06] shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
             {/* Header */}
-            <header class="border-b border-white/[0.05] px-6 py-3">
+            <header class="shrink-0 border-b border-white/[0.05] px-6 py-3">
               <div class="flex items-center justify-between gap-4">
                 <div class="flex items-center gap-3 min-w-0">
                   <SidebarTrigger class="h-8 w-8 shrink-0 rounded-lg border border-white/[0.06] text-neutral-500 transition-colors hover:bg-white/[0.04] hover:text-neutral-300" />
@@ -1187,11 +1553,13 @@ function App() {
                       {selectedReview()?.title ?? "Select a review"}
                     </h1>
                     <Show when={selectedReview()}>
-                      <div class="mt-0.5 flex items-center gap-1.5 text-[12px] text-neutral-500">
-                        <span>{selectedReview()?.repoName}</span>
-                        <ChevronRight class="size-3 text-neutral-600" />
-                        <span class="text-neutral-400">{selectedReview()?.age} ago</span>
-                      </div>
+                      {(review) => (
+                        <div class="mt-0.5 flex items-center gap-1.5 text-[12px] text-neutral-500">
+                          <span>{repoDisplayName(review().repoName)}</span>
+                          <ChevronRight class="size-3 text-neutral-600" />
+                          <span class="text-neutral-400">{review().age} ago</span>
+                        </div>
+                      )}
                     </Show>
                   </div>
                 </div>
@@ -1212,8 +1580,8 @@ function App() {
               </div>
             </header>
 
-            {/* Footer */}
-            <footer class="flex-1 px-6 py-4">
+            {/* Main content */}
+            <div class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
               <Show when={branchActionError()}>
                 {(message) => (
                   <div class="mb-3 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
@@ -1251,71 +1619,26 @@ function App() {
 
               <Show when={showDiffViewer() && compareResult()}>
                 {(result) => (
-                  <section class="mb-3 overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0f1013]">
-                    <header class="flex items-start justify-between gap-3 border-b border-white/[0.06] px-4 py-3">
-                      <div class="min-w-0">
-                        <h2 class="app-title text-[1rem] text-neutral-100">
-                          Diff vs {result().baseRef}
-                        </h2>
-                        <p class="mt-1 truncate text-[12px] text-neutral-500">
-                          {result().filesChanged} files, +{result().insertions} -{result().deletions}
-                        </p>
-                        <p class="mt-1 text-[12px] text-neutral-600">
-                          Rendered with{" "}
-                          <button
-                            type="button"
-                            class="text-amber-400/80 hover:text-amber-300"
-                            onClick={() => void handleOpenDiffsDocs()}
-                          >
-                            diffs.com
-                          </button>
-                        </p>
+                  <Show
+                    when={result().diff.trim().length > 0}
+                    fallback={
+                      <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-[14px] text-neutral-400">
+                        No differences found against {result().baseRef}.
                       </div>
-                      <div class="flex items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          class="border-white/[0.1] text-neutral-300 hover:border-white/[0.14]"
-                          onClick={() =>
-                            void handleCompareSelectedReview({
-                              baseRef: result().baseRef,
-                              fetchRemote: result().baseRef.startsWith("origin/"),
-                            })
-                          }
-                          disabled={compareBusy()}
-                        >
-                          <RefreshCcw class="mr-1.5 size-3.5" />
-                          Refresh
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          class="border-white/[0.1] text-neutral-300 hover:border-white/[0.14]"
-                          onClick={() => setShowDiffViewer(false)}
-                        >
-                          <X class="size-4" />
-                        </Button>
-                      </div>
-                    </header>
-                    <div class="max-h-[60svh] overflow-y-auto px-4 py-3">
-                      <Show
-                        when={result().diff.trim().length > 0}
-                        fallback={
-                          <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-[14px] text-neutral-400">
-                            No differences found against {result().baseRef}.
-                          </div>
-                        }
-                      >
-                        <DiffViewer patch={result().diff} />
-                      </Show>
-                    </div>
-                  </section>
+                    }
+                  >
+                    <DiffViewer
+                      patch={result().diff}
+                      theme={selectedDiffTheme().theme}
+                      themeType="dark"
+                    />
+                  </Show>
                 )}
               </Show>
+            </div>
 
-              {/* Input area */}
+            {/* Input area */}
+            <footer class="shrink-0 px-6 pb-4 pt-3">
               <form
                 class="overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.02]"
                 onSubmit={(event) => event.preventDefault()}

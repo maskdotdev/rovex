@@ -1,14 +1,40 @@
-import { FileDiff, parsePatchFiles, type FileDiffMetadata } from "@pierre/diffs";
+import {
+  FileDiff,
+  parsePatchFiles,
+  type FileDiffMetadata,
+  type FileDiffOptions,
+} from "@pierre/diffs";
+import { Columns2, Hash, PaintBucket, Rows3, WrapText } from "lucide-solid";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/tooltip";
+
+export type DiffViewerTheme = {
+  dark: string;
+  light: string;
+};
 
 type DiffViewerProps = {
   patch: string;
+  theme: DiffViewerTheme;
+  themeType?: "system" | "light" | "dark";
+  showToolbar?: boolean;
 };
 
 type DiffFileCardProps = {
   file: FileDiffMetadata;
   index: number;
+  options: DiffRenderOptions;
 };
+
+type DiffRenderOptions = Pick<
+  FileDiffOptions<undefined>,
+  | "diffStyle"
+  | "disableLineNumbers"
+  | "disableBackground"
+  | "overflow"
+  | "theme"
+  | "themeType"
+>;
 
 function DiffFileCard(props: DiffFileCardProps) {
   let visibilityAnchorRef: HTMLDivElement | undefined;
@@ -45,17 +71,16 @@ function DiffFileCard(props: DiffFileCardProps) {
     if (!shouldRender()) return;
     const container = containerRef;
     if (!container) return;
+    const options = props.options;
 
     container.replaceChildren();
 
     let instance: FileDiff | undefined;
     try {
       instance = new FileDiff({
-        diffStyle: "split",
+        ...options,
         hunkSeparators: "metadata",
         lineDiffType: "word",
-        themeType: "dark",
-        theme: { dark: "pierre-dark", light: "pierre-light" },
       });
       instance.render({ fileDiff: props.file, containerWrapper: container });
       setRenderError(null);
@@ -99,6 +124,21 @@ function DiffFileCard(props: DiffFileCardProps) {
 }
 
 export function DiffViewer(props: DiffViewerProps) {
+  const showToolbar = createMemo(() => props.showToolbar ?? true);
+  const [lineWrap, setLineWrap] = createSignal(false);
+  const [lineNumbers, setLineNumbers] = createSignal(true);
+  const [unifiedStyle, setUnifiedStyle] = createSignal(false);
+  const [disableBackground, setDisableBackground] = createSignal(false);
+
+  const renderOptions = createMemo<DiffRenderOptions>(() => ({
+    overflow: lineWrap() ? "wrap" : "scroll",
+    disableLineNumbers: !lineNumbers(),
+    diffStyle: unifiedStyle() ? "unified" : "split",
+    disableBackground: disableBackground(),
+    theme: props.theme,
+    themeType: props.themeType ?? "dark",
+  }));
+
   const parsedDiff = createMemo(() => {
     const patchText = props.patch.trim();
     if (patchText.length === 0) {
@@ -122,6 +162,10 @@ export function DiffViewer(props: DiffViewerProps) {
 
   const parseError = createMemo(() => parsedDiff().parseError);
   const files = createMemo(() => parsedDiff().files);
+  const filesLabel = createMemo(() => {
+    const count = files().length;
+    return `${count} file${count === 1 ? "" : "s"}`;
+  });
 
   return (
     <>
@@ -132,10 +176,78 @@ export function DiffViewer(props: DiffViewerProps) {
           </div>
         )}
       </Show>
+      <Show when={files().length > 0 && showToolbar()}>
+        <div class="rovex-diff-viewer-header">
+          <span class="rovex-diff-viewer-title">{filesLabel()}</span>
+          <div class="rovex-diff-icon-controls" role="toolbar" aria-label="Diff rendering options">
+            <Tooltip>
+              <TooltipTrigger>
+                <button
+                  type="button"
+                  class={`rovex-diff-icon-button ${lineWrap() ? "is-active" : ""}`}
+                  aria-label="Toggle line wrap"
+                  aria-pressed={lineWrap()}
+                  onClick={() => setLineWrap((current) => !current)}
+                >
+                  <WrapText class="size-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Line wrap</TooltipContent>
+            </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger>
+                <button
+                  type="button"
+                  class={`rovex-diff-icon-button ${lineNumbers() ? "is-active" : ""}`}
+                  aria-label="Toggle line numbers"
+                  aria-pressed={lineNumbers()}
+                  onClick={() => setLineNumbers((current) => !current)}
+                >
+                  <Hash class="size-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Line numbers</TooltipContent>
+            </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger>
+                <button
+                  type="button"
+                  class={`rovex-diff-icon-button ${unifiedStyle() ? "is-active" : ""}`}
+                  aria-label={unifiedStyle() ? "Switch to split view" : "Switch to unified view"}
+                  aria-pressed={unifiedStyle()}
+                  onClick={() => setUnifiedStyle((current) => !current)}
+                >
+                  <Show when={unifiedStyle()} fallback={<Columns2 class="size-3.5" />}>
+                    <Rows3 class="size-3.5" />
+                  </Show>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{unifiedStyle() ? "Split view" : "Unified view"}</TooltipContent>
+            </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger>
+                <button
+                  type="button"
+                  class={`rovex-diff-icon-button ${disableBackground() ? "is-active" : ""}`}
+                  aria-label="Toggle diff background"
+                  aria-pressed={disableBackground()}
+                  onClick={() => setDisableBackground((current) => !current)}
+                >
+                  <PaintBucket class="size-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Disable background</TooltipContent>
+            </Tooltip>
+          </div>
+        </div>
+      </Show>
       <div class="rovex-diff-viewer">
         <For each={files()}>
           {(file, index) => (
-            <DiffFileCard file={file} index={index()} />
+            <DiffFileCard file={file} index={index()} options={renderOptions()} />
           )}
         </For>
       </div>
