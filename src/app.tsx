@@ -1,5 +1,4 @@
 import {
-  For,
   Show,
   createEffect,
   createMemo,
@@ -10,32 +9,14 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
-import {
-  Check,
-  ChevronRight,
-  FolderOpen,
-  GitBranch,
-  LoaderCircle,
-  PlusCircle,
-  PlugZap,
-  Search,
-  Send,
-} from "lucide-solid";
-import * as Popover from "@kobalte/core/popover";
-import { Button } from "@/components/button";
-import { DiffViewer, type DiffViewerAnnotation } from "@/components/diff-viewer";
+import type { DiffViewerAnnotation } from "@/components/diff-viewer";
 import {
   SidebarInset,
   SidebarProvider,
 } from "@/components/sidebar";
-import { TextField, TextFieldInput } from "@/components/text-field";
 import {
   DIFF_THEME_STORAGE_KEY,
   REPO_DISPLAY_NAME_STORAGE_KEY,
-  diffThemePresets,
-  diffThemePreviewPatch,
-  providerOptions,
-  settingsNavItems,
 } from "@/app/constants";
 import {
   getDiffThemePreset,
@@ -46,8 +27,9 @@ import {
   repoNameFromWorkspace,
   sleep,
 } from "@/app/helpers";
-import { SettingsSidebar } from "@/app/components/settings-sidebar";
+import { SettingsView } from "@/app/components/settings-view";
 import { WorkspaceHeader } from "@/app/components/workspace-header";
+import { WorkspaceMainPane } from "@/app/components/workspace-main-pane";
 import { WorkspaceRepoSidebar } from "@/app/components/workspace-repo-sidebar";
 import type { AppView, RepoGroup, RepoReview, SettingsTab } from "@/app/types";
 import {
@@ -1126,6 +1108,14 @@ function App() {
     }
   };
 
+  const setBranchSearchInputRef = (element: HTMLInputElement | undefined) => {
+    branchSearchInputRef = element;
+  };
+
+  const setBranchCreateInputRef = (element: HTMLInputElement | undefined) => {
+    branchCreateInputRef = element;
+  };
+
   return (
     <SidebarProvider
       defaultOpen
@@ -1138,622 +1128,66 @@ function App() {
       <Show
         when={activeView() === "workspace"}
         fallback={
-          /* ── Settings View ── */
-          <div class="h-svh w-full p-2 md:p-3">
-            <section class="glass-surface flex h-[calc(100svh-1rem)] overflow-hidden rounded-2xl border border-white/[0.06] shadow-[0_20px_50px_rgba(0,0,0,0.4)] md:h-[calc(100svh-1.5rem)]">
-              <SettingsSidebar
-                activeSettingsTab={activeSettingsTab}
-                onSelectTab={setActiveSettingsTab}
-                onBack={closeSettings}
-              />
-
-              {/* Settings content */}
-              <main class="min-h-0 flex-1 overflow-y-auto px-8 py-8 md:px-12 md:py-10">
-                <div class="animate-fade-up">
-                  <h1 class="app-title text-[clamp(2rem,2.8vw,3rem)] text-neutral-100">
-                    {selectedSettingsItem().label}
-                  </h1>
-                  <p class="mt-2 max-w-lg text-[15px] leading-relaxed text-neutral-500">
-                    {selectedSettingsItem().description}
-                  </p>
-                </div>
-
-                <Show
-                  when={activeSettingsTab() === "connections"}
-                  fallback={
-                    <Show
-                      when={activeSettingsTab() === "personalization"}
-                      fallback={
-                        <Show
-                          when={activeSettingsTab() === "environments"}
-                          fallback={
-                            <section class="animate-fade-up mt-10 max-w-3xl rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6" style={{ "animation-delay": "0.08s" }}>
-                              <p class="text-[15px] font-medium text-neutral-200">{selectedSettingsItem().label}</p>
-                              <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
-                                This section is ready for settings controls. Select Connections or Environments to configure active integrations.
-                              </p>
-                            </section>
-                          }
-                        >
-                          <section class="animate-fade-up mt-10 max-w-3xl rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6" style={{ "animation-delay": "0.08s" }}>
-                            <p class="text-[15px] font-medium text-neutral-200">
-                              AI Review Provider
-                            </p>
-                            <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
-                              Configure which backend provider and model power reviews. Settings are applied immediately and persisted to <span class="font-mono text-neutral-300">.env</span>.
-                            </p>
-
-                            <div class="mt-4 rounded-xl border border-white/[0.06] bg-white/[0.015] p-4">
-                              <div class="flex flex-wrap items-center justify-between gap-2">
-                                <p class="text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500">
-                                  Active provider
-                                </p>
-                                <span
-                                  class="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[11.5px] font-medium tracking-wide text-neutral-300"
-                                >
-                                  {(aiReviewConfig()?.reviewProvider ?? "openai").toUpperCase()}
-                                </span>
-                              </div>
-                              <p class="mt-2 text-[13px] text-neutral-400">
-                                Model: <span class="font-mono text-neutral-300">{aiReviewConfig()?.reviewModel ?? "gpt-4.1-mini"}</span>
-                              </p>
-                              <Show when={aiReviewConfig()?.envFilePath}>
-                                {(envPath) => (
-                                  <p class="mt-2 text-[12px] leading-relaxed text-neutral-500">
-                                    Saved to <span class="font-mono text-neutral-400">{envPath()}</span>
-                                  </p>
-                                )}
-                              </Show>
-                            </div>
-
-                            <form class="mt-4 max-w-xl space-y-3" onSubmit={(event) => void handleSaveAiSettings(event)}>
-                              <label
-                                for="ai-review-provider-select"
-                                class="block text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500"
-                              >
-                                Review provider
-                              </label>
-                              <select
-                                id="ai-review-provider-select"
-                                value={aiReviewProviderInput()}
-                                onChange={(event) => setAiReviewProviderInput(event.currentTarget.value)}
-                                class="h-11 w-full rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 text-[14px] text-neutral-200 outline-none transition-colors hover:border-white/[0.14] focus:border-amber-500/35"
-                              >
-                                <option value="openai">openai</option>
-                                <option value="opencode">opencode</option>
-                              </select>
-
-                              <label
-                                for="ai-review-model-input"
-                                class="block text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500"
-                              >
-                                Review model
-                              </label>
-                              <TextField>
-                                <TextFieldInput
-                                  id="ai-review-model-input"
-                                  type="text"
-                                  placeholder="gpt-4.1-mini"
-                                  value={aiReviewModelInput()}
-                                  onInput={(event) => setAiReviewModelInput(event.currentTarget.value)}
-                                  class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
-                                />
-                              </TextField>
-
-                              <Show when={aiReviewProviderInput() === "opencode"}>
-                                <>
-                                  <label
-                                    for="opencode-provider-input"
-                                    class="block text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500"
-                                  >
-                                    OpenCode provider fallback
-                                  </label>
-                                  <TextField>
-                                    <TextFieldInput
-                                      id="opencode-provider-input"
-                                      type="text"
-                                      placeholder="openai"
-                                      value={aiOpencodeProviderInput()}
-                                      onInput={(event) => setAiOpencodeProviderInput(event.currentTarget.value)}
-                                      class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
-                                    />
-                                  </TextField>
-
-                                  <label
-                                    for="opencode-model-input"
-                                    class="block text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500"
-                                  >
-                                    OpenCode model override (optional)
-                                  </label>
-                                  <TextField>
-                                    <TextFieldInput
-                                      id="opencode-model-input"
-                                      type="text"
-                                      placeholder="openai/gpt-5"
-                                      value={aiOpencodeModelInput()}
-                                      onInput={(event) => setAiOpencodeModelInput(event.currentTarget.value)}
-                                      class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
-                                    />
-                                  </TextField>
-
-                                  <div class="mt-2 rounded-xl border border-white/[0.06] bg-white/[0.015] p-3">
-                                    <div class="flex items-center justify-between gap-2">
-                                      <p class="text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500">
-                                        Bundled sidecar
-                                      </p>
-                                      <span
-                                        class={`rounded-full border px-2.5 py-1 text-[11.5px] font-medium tracking-wide ${opencodeSidecarStatus()?.available
-                                          ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400/90"
-                                          : "border-rose-500/20 bg-rose-500/10 text-rose-300/90"
-                                          }`}
-                                      >
-                                        {opencodeSidecarStatus()?.available ? "Available" : "Missing"}
-                                      </span>
-                                    </div>
-                                    <Show when={opencodeSidecarStatus()?.version}>
-                                      {(version) => (
-                                        <p class="mt-2 text-[12px] text-neutral-400">
-                                          Version: <span class="font-mono text-neutral-300">{version()}</span>
-                                        </p>
-                                      )}
-                                    </Show>
-                                    <Show when={opencodeSidecarStatus()?.detail}>
-                                      {(detail) => (
-                                        <p class="mt-2 text-[12px] text-neutral-500">{detail()}</p>
-                                      )}
-                                    </Show>
-                                    <Show when={opencodeSidecarLoadError()}>
-                                      {(message) => (
-                                        <p class="mt-2 text-[12px] text-rose-300/90">{message()}</p>
-                                      )}
-                                    </Show>
-                                  </div>
-                                </>
-                              </Show>
-
-                              <div class="mt-3 flex flex-wrap items-center gap-3">
-                                <Button
-                                  type="submit"
-                                  size="sm"
-                                  disabled={aiSettingsBusy() || aiReviewModelInput().trim().length === 0}
-                                >
-                                  {aiSettingsBusy() ? "Saving..." : "Save review settings"}
-                                </Button>
-                              </div>
-                            </form>
-
-                            <p class="mt-8 text-[15px] font-medium text-neutral-200">
-                              AI Review API Key
-                            </p>
-                            <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
-                              Configure <span class="font-mono text-neutral-300">OPENAI_API_KEY</span> for OpenAI-backed models.
-                            </p>
-
-                            <div class="mt-4 rounded-xl border border-white/[0.06] bg-white/[0.015] p-4">
-                              <div class="flex flex-wrap items-center justify-between gap-2">
-                                <p class="text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500">
-                                  Current key
-                                </p>
-                                <span
-                                  class={`rounded-full border px-2.5 py-1 text-[11.5px] font-medium tracking-wide ${aiReviewConfig()?.hasApiKey
-                                    ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400/90"
-                                    : "border-white/[0.06] bg-white/[0.03] text-neutral-500"
-                                    }`}
-                                >
-                                  {aiReviewConfig()?.hasApiKey ? "Configured" : "Missing"}
-                                </span>
-                              </div>
-                              <p class="mt-2 text-[13px] text-neutral-400">
-                                <Show
-                                  when={aiReviewConfig()?.apiKeyPreview}
-                                  fallback="No API key configured yet."
-                                >
-                                  {(preview) => (
-                                    <span class="font-mono text-neutral-300">{preview()}</span>
-                                  )}
-                                </Show>
-                              </p>
-                            </div>
-
-                            <form class="mt-4" onSubmit={(event) => void handleSaveAiApiKey(event)}>
-                              <label
-                                for="openai-api-key-input"
-                                class="block text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500"
-                              >
-                                OPENAI_API_KEY
-                              </label>
-                              <TextField class="mt-2 max-w-xl">
-                                <TextFieldInput
-                                  id="openai-api-key-input"
-                                  type="password"
-                                  placeholder="sk-proj-..."
-                                  value={aiApiKeyInput()}
-                                  onInput={(event) => setAiApiKeyInput(event.currentTarget.value)}
-                                  class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
-                                />
-                              </TextField>
-                              <div class="mt-3 flex flex-wrap items-center gap-3">
-                                <Button
-                                  type="submit"
-                                  size="sm"
-                                  disabled={aiApiKeyBusy() || aiApiKeyInput().trim().length === 0}
-                                >
-                                  {aiApiKeyBusy() ? "Saving..." : "Save API key"}
-                                </Button>
-                                <span class="text-[12px] text-neutral-500">
-                                  Applied immediately for this running app and persisted to <span class="font-mono">.env</span>.
-                                </span>
-                              </div>
-                            </form>
-
-                            <Show when={aiSettingsError()}>
-                              {(message) => (
-                                <div class="mt-4 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
-                                  {message()}
-                                </div>
-                              )}
-                            </Show>
-                            <Show when={aiSettingsStatus()}>
-                              {(message) => (
-                                <div class="mt-4 rounded-xl border border-emerald-500/15 bg-emerald-500/5 px-4 py-3 text-[13px] text-emerald-300/90">
-                                  {message()}
-                                </div>
-                              )}
-                            </Show>
-                            <Show when={aiReviewConfigLoadError()}>
-                              {(message) => (
-                                <div class="mt-4 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
-                                  Unable to load AI review config: {message()}
-                                </div>
-                              )}
-                            </Show>
-                            <Show when={aiApiKeyError()}>
-                              {(message) => (
-                                <div class="mt-4 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
-                                  {message()}
-                                </div>
-                              )}
-                            </Show>
-                            <Show when={aiApiKeyStatus()}>
-                              {(message) => (
-                                <div class="mt-4 rounded-xl border border-emerald-500/15 bg-emerald-500/5 px-4 py-3 text-[13px] text-emerald-300/90">
-                                  {message()}
-                                </div>
-                              )}
-                            </Show>
-                          </section>
-                        </Show>
-                      }
-                    >
-                      <section class="animate-fade-up mt-10 max-w-3xl rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6" style={{ "animation-delay": "0.08s" }}>
-                        <p class="text-[15px] font-medium text-neutral-200">
-                          Diff Theme
-                        </p>
-                        <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
-                          Choose which diffs.com theme preset Rovex uses when rendering code diffs.
-                        </p>
-
-                        <div class="mt-4 max-w-xl space-y-3">
-                          <label
-                            for="diff-theme-select"
-                            class="block text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500"
-                          >
-                            Preset
-                          </label>
-                          <div class="flex flex-wrap items-center gap-2.5">
-                            <select
-                              id="diff-theme-select"
-                              value={selectedDiffThemeId()}
-                              onChange={(event) => setSelectedDiffThemeId(event.currentTarget.value)}
-                              class="h-11 min-w-[13.5rem] rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 text-[14px] text-neutral-200 outline-none transition-colors hover:border-white/[0.14] focus:border-amber-500/35"
-                            >
-                              <For each={diffThemePresets}>
-                                {(preset) => (
-                                  <option value={preset.id}>
-                                    {preset.label}
-                                  </option>
-                                )}
-                              </For>
-                            </select>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              class="h-11 border-white/[0.08] px-3 text-neutral-200 hover:border-white/[0.12]"
-                              onClick={() => void handleOpenDiffsDocs()}
-                            >
-                              Browse diffs.com
-                            </Button>
-                          </div>
-                          <p class="text-[13px] leading-relaxed text-neutral-500">
-                            {selectedDiffTheme().description}
-                          </p>
-                          <p class="text-[12.5px] leading-relaxed text-neutral-500">
-                            Dark: <span class="font-mono text-neutral-300">{selectedDiffTheme().theme.dark}</span>
-                            {" "}
-                            Light: <span class="font-mono text-neutral-300">{selectedDiffTheme().theme.light}</span>
-                          </p>
-                        </div>
-
-                        <div class="mt-6">
-                          <p class="text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500">
-                            Live Preview
-                          </p>
-                          <div class="mt-2 overflow-hidden rounded-xl border border-white/[0.06] bg-[#0e1013] p-3">
-                            <div class="max-h-[16rem] overflow-y-auto pr-1">
-                              <DiffViewer
-                                patch={diffThemePreviewPatch}
-                                theme={selectedDiffTheme().theme}
-                                themeId={selectedDiffTheme().id}
-                                themeType="dark"
-                                showToolbar={false}
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        <Show when={settingsError()}>
-                          {(message) => (
-                            <div class="mt-4 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
-                              {message()}
-                            </div>
-                          )}
-                        </Show>
-                      </section>
-                    </Show>
-                  }
-                >
-                  <div class="mt-10 max-w-3xl space-y-5">
-                    <section class="animate-fade-up rounded-2xl border border-white/[0.05] bg-white/[0.02] px-6 py-5" style={{ "animation-delay": "0.05s" }}>
-                      <p class="text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500">Provider</p>
-                      <div class="mt-3 inline-flex rounded-xl border border-white/[0.08] bg-white/[0.03] p-1">
-                        <For each={providerOptions}>
-                          {(option) => (
-                            <button
-                              type="button"
-                              class={`rounded-lg px-3.5 py-2 text-[13px] font-medium transition-colors ${selectedProvider() === option.id
-                                ? "bg-white/[0.1] text-neutral-100"
-                                : "text-neutral-400 hover:text-neutral-200"
-                                }`}
-                              onClick={() => setSelectedProvider(option.id)}
-                            >
-                              {option.label}
-                            </button>
-                          )}
-                        </For>
-                      </div>
-                    </section>
-
-                    {/* Provider connection card */}
-                    <section class="animate-fade-up overflow-hidden rounded-2xl border border-white/[0.05] bg-white/[0.02]" style={{ "animation-delay": "0.08s" }}>
-                      <div class="flex flex-wrap items-start justify-between gap-3 border-b border-white/[0.04] px-6 py-5">
-                        <div>
-                          <div class="flex items-center gap-2.5">
-                            <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-white/[0.05]">
-                              <PlugZap class="size-4 text-neutral-300" />
-                            </div>
-                            <p class="text-[15px] font-medium text-neutral-100">{selectedProviderOption().label}</p>
-                          </div>
-                          <p class="mt-2 text-[13.5px] leading-relaxed text-neutral-500">
-                            {selectedProviderOption().description}
-                          </p>
-                        </div>
-                        <span
-                          class={`mt-1 rounded-full border px-2.5 py-1 text-[11.5px] font-medium tracking-wide ${selectedProviderConnection()
-                            ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400/90"
-                            : "border-white/[0.06] bg-white/[0.03] text-neutral-500"
-                            }`}
-                        >
-                          {selectedProviderConnection() ? "Connected" : "Not connected"}
-                        </span>
-                      </div>
-
-                      <div class="px-6 py-5">
-                        <Show
-                          when={selectedProviderConnection()}
-                          fallback={
-                            <div class="max-w-md space-y-3">
-                              <Button
-                                type="button"
-                                size="sm"
-                                disabled={providerBusy() || deviceAuthInProgress()}
-                                onClick={() => void handleStartDeviceAuth()}
-                              >
-                                {providerBusy()
-                                  ? "Starting..."
-                                  : deviceAuthInProgress()
-                                    ? "Waiting for approval..."
-                                    : `Connect with ${selectedProviderOption().label}`}
-                              </Button>
-                              <Show when={deviceAuthInProgress() && deviceAuthUserCode()}>
-                                {(userCode) => (
-                                  <div class="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-[13px] text-amber-200/90">
-                                    Enter code <span class="font-semibold tracking-[0.08em]">{userCode()}</span> on {selectedProviderOption().label}.
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      size="sm"
-                                      class="mt-3 border-white/[0.1] text-neutral-200 hover:border-white/[0.18]"
-                                      onClick={() => void openDeviceVerificationUrl(selectedProviderOption().label)}
-                                    >
-                                      Open {selectedProviderOption().label} verification
-                                    </Button>
-                                  </div>
-                                )}
-                              </Show>
-                              <details class="rounded-xl border border-white/[0.06] bg-white/[0.015] px-4 py-3 text-[13px] text-neutral-400">
-                                <summary class="cursor-pointer font-medium text-neutral-300">
-                                  Use personal access token instead
-                                </summary>
-                                <form class="mt-3 space-y-3" onSubmit={(event) => void handleConnectProvider(event)}>
-                                  <TextField>
-                                    <TextFieldInput
-                                      type="password"
-                                      placeholder={selectedProviderOption().tokenPlaceholder}
-                                      value={providerToken()}
-                                      onInput={(event) => setProviderToken(event.currentTarget.value)}
-                                      class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
-                                    />
-                                  </TextField>
-                                  <Button
-                                    type="submit"
-                                    size="sm"
-                                    disabled={providerBusy() || providerToken().trim().length === 0}
-                                  >
-                                    {providerBusy() ? "Connecting..." : "Connect with token"}
-                                  </Button>
-                                </form>
-                              </details>
-                            </div>
-                          }
-                        >
-                          {(connection) => (
-                            <div class="flex flex-wrap items-center justify-between gap-3">
-                              <p class="text-[14px] text-neutral-400">
-                                Authenticated as <span class="font-medium text-amber-300/90">{connection().accountLogin}</span>
-                              </p>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                class="border-white/[0.08] text-neutral-300 hover:border-white/[0.12]"
-                                disabled={providerBusy()}
-                                onClick={() => void handleDisconnectProvider()}
-                              >
-                                Disconnect
-                              </Button>
-                            </div>
-                          )}
-                        </Show>
-                      </div>
-                    </section>
-
-                    {/* Clone form card */}
-                    <form
-                      class="animate-fade-up rounded-2xl border border-white/[0.05] bg-white/[0.02] px-6 py-5"
-                      style={{ "animation-delay": "0.14s" }}
-                      onSubmit={(event) => void handleCloneRepository(event)}
-                    >
-                      <p class="text-[15px] font-medium text-neutral-200">Clone repository for review</p>
-                      <p class="mt-1.5 text-[13.5px] leading-relaxed text-neutral-500">
-                        {selectedProviderOption().repositoryHint}
-                      </p>
-
-                      <TextField class="mt-4 max-w-md">
-                        <TextFieldInput
-                          placeholder={selectedProvider() === "gitlab" ? "group/subgroup/repository" : "owner/repository"}
-                          value={repositoryInput()}
-                          onInput={(event) => setRepositoryInput(event.currentTarget.value)}
-                          class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
-                        />
-                      </TextField>
-
-                      <div class="mt-3 flex max-w-xl items-center gap-2">
-                        <TextField class="min-w-0 flex-1">
-                          <TextFieldInput
-                            placeholder="Destination root (optional)"
-                            value={destinationRoot()}
-                            onInput={(event) => setDestinationRoot(event.currentTarget.value)}
-                            class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
-                          />
-                        </TextField>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          class="h-11 border-white/[0.08] px-3 text-neutral-200 hover:border-white/[0.12]"
-                          onClick={() => void handlePickDestinationRoot()}
-                        >
-                          <FolderOpen class="mr-1.5 size-4" />
-                          Browse
-                        </Button>
-                      </div>
-
-                      <Button
-                        type="submit"
-                        size="sm"
-                        class="mt-4"
-                        disabled={
-                          providerBusy() ||
-                          !selectedProviderConnection() ||
-                          repositoryInput().trim().length === 0
-                        }
-                      >
-                        {providerBusy() ? "Working..." : "Clone for review"}
-                      </Button>
-                    </form>
-
-                    {/* Local project card */}
-                    <form
-                      class="animate-fade-up rounded-2xl border border-white/[0.05] bg-white/[0.02] px-6 py-5"
-                      style={{ "animation-delay": "0.18s" }}
-                      onSubmit={(event) => void handleCreateLocalProjectThread(event)}
-                    >
-                      <p class="text-[15px] font-medium text-neutral-200">Use an existing local project</p>
-                      <p class="mt-1.5 text-[13.5px] leading-relaxed text-neutral-500">
-                        Pick any local directory and create a review thread without cloning.
-                      </p>
-
-                      <div class="mt-4 flex max-w-xl items-center gap-2">
-                        <TextField class="min-w-0 flex-1">
-                          <TextFieldInput
-                            placeholder="/path/to/local/project"
-                            value={localProjectPath()}
-                            onInput={(event) => setLocalProjectPath(event.currentTarget.value)}
-                            class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
-                          />
-                        </TextField>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          class="h-11 border-white/[0.08] px-3 text-neutral-200 hover:border-white/[0.12]"
-                          onClick={() => void handlePickLocalProject()}
-                        >
-                          <FolderOpen class="mr-1.5 size-4" />
-                          Browse
-                        </Button>
-                      </div>
-
-                      <Button
-                        type="submit"
-                        size="sm"
-                        class="mt-4"
-                        disabled={providerBusy() || localProjectPath().trim().length === 0}
-                      >
-                        {providerBusy() ? "Working..." : "Create review from local project"}
-                      </Button>
-                    </form>
-
-                    {/* Status messages */}
-                    <Show when={providerConnectionError()}>
-                      {(message) => (
-                        <div class="animate-fade-up rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
-                          Unable to load provider connection: {message()}
-                        </div>
-                      )}
-                    </Show>
-                    <Show when={providerError()}>
-                      {(message) => (
-                        <div class="animate-fade-up rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
-                          {message()}
-                        </div>
-                      )}
-                    </Show>
-                    <Show when={providerStatus()}>
-                      {(message) => (
-                        <div class="animate-fade-up rounded-xl border border-emerald-500/15 bg-emerald-500/5 px-4 py-3 text-[13px] text-emerald-300/90">
-                          {message()}
-                        </div>
-                      )}
-                    </Show>
-                  </div>
-                </Show>
-              </main>
-            </section>
-          </div>
+          <SettingsView
+            activeSettingsTab={activeSettingsTab}
+            setActiveSettingsTab={setActiveSettingsTab}
+            closeSettings={closeSettings}
+            selectedDiffThemeId={selectedDiffThemeId}
+            setSelectedDiffThemeId={setSelectedDiffThemeId}
+            selectedDiffTheme={selectedDiffTheme}
+            settingsError={settingsError}
+            handleOpenDiffsDocs={handleOpenDiffsDocs}
+            selectedProvider={selectedProvider}
+            setSelectedProvider={setSelectedProvider}
+            selectedProviderOption={selectedProviderOption}
+            selectedProviderConnection={selectedProviderConnection}
+            providerBusy={providerBusy}
+            providerToken={providerToken}
+            setProviderToken={setProviderToken}
+            providerConnectionError={providerConnectionError}
+            providerError={providerError}
+            providerStatus={providerStatus}
+            deviceAuthInProgress={deviceAuthInProgress}
+            deviceAuthUserCode={deviceAuthUserCode}
+            openDeviceVerificationUrl={openDeviceVerificationUrl}
+            handleStartDeviceAuth={handleStartDeviceAuth}
+            handleConnectProvider={handleConnectProvider}
+            handleDisconnectProvider={handleDisconnectProvider}
+            handleCloneRepository={handleCloneRepository}
+            repositoryInput={repositoryInput}
+            setRepositoryInput={setRepositoryInput}
+            destinationRoot={destinationRoot}
+            setDestinationRoot={setDestinationRoot}
+            localProjectPath={localProjectPath}
+            setLocalProjectPath={setLocalProjectPath}
+            handlePickDestinationRoot={handlePickDestinationRoot}
+            handlePickLocalProject={handlePickLocalProject}
+            handleCreateLocalProjectThread={handleCreateLocalProjectThread}
+            aiReviewConfig={aiReviewConfig}
+            aiReviewProviderInput={aiReviewProviderInput}
+            setAiReviewProviderInput={setAiReviewProviderInput}
+            aiReviewModelInput={aiReviewModelInput}
+            setAiReviewModelInput={setAiReviewModelInput}
+            aiOpencodeProviderInput={aiOpencodeProviderInput}
+            setAiOpencodeProviderInput={setAiOpencodeProviderInput}
+            aiOpencodeModelInput={aiOpencodeModelInput}
+            setAiOpencodeModelInput={setAiOpencodeModelInput}
+            aiSettingsBusy={aiSettingsBusy}
+            aiSettingsError={aiSettingsError}
+            aiSettingsStatus={aiSettingsStatus}
+            aiReviewConfigLoadError={aiReviewConfigLoadError}
+            handleSaveAiSettings={handleSaveAiSettings}
+            opencodeSidecarStatus={opencodeSidecarStatus}
+            opencodeSidecarLoadError={opencodeSidecarLoadError}
+            aiApiKeyInput={aiApiKeyInput}
+            setAiApiKeyInput={setAiApiKeyInput}
+            aiApiKeyBusy={aiApiKeyBusy}
+            aiApiKeyError={aiApiKeyError}
+            aiApiKeyStatus={aiApiKeyStatus}
+            handleSaveAiApiKey={handleSaveAiApiKey}
+          />
         }
       >
-        {/* ── Workspace View ── */}
         <WorkspaceRepoSidebar
           providerBusy={providerBusy}
           onAddLocalRepo={handleAddLocalRepoFromSidebar}
@@ -1781,359 +1215,54 @@ function App() {
               compareResult={compareResult}
               selectedBaseRef={selectedBaseRef}
             />
-
-            {/* Main content */}
-            <div class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-              <Show when={branchActionError()}>
-                {(message) => (
-                  <div class="mb-3 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
-                    {message()}
-                  </div>
-                )}
-              </Show>
-              <Show when={compareError()}>
-                {(message) => (
-                  <div class="mb-3 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
-                    {message()}
-                  </div>
-                )}
-              </Show>
-              <Show when={aiReviewError()}>
-                {(message) => (
-                  <div class="mb-3 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
-                    {message()}
-                  </div>
-                )}
-              </Show>
-              <Show when={aiStatus()}>
-                {(message) => (
-                  <div class="mb-3 rounded-xl border border-emerald-500/15 bg-emerald-500/5 px-4 py-3 text-[13px] text-emerald-300/90">
-                    {message()}
-                  </div>
-                )}
-              </Show>
-              <Show when={aiReviewBusy()}>
-                <div class="mb-3 flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-[13px] text-amber-200/90">
-                  <LoaderCircle class="size-4 animate-spin text-amber-300/90" />
-                  <span>
-                    Review is running. {aiRunElapsedSeconds()}s elapsed. Notes refresh automatically.
-                  </span>
-                </div>
-              </Show>
-
-              {/* Change summary bar */}
-              <div class="mb-3 flex items-center justify-between rounded-xl border border-white/[0.05] bg-white/[0.02] px-4 py-2.5 text-[13px]">
-                <span class="text-neutral-400">{compareSummary() ?? "No review loaded."}</span>
-                <div class="flex items-center gap-3">
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={aiReviewBusy() || compareBusy() || selectedWorkspace().length === 0}
-                    onClick={() => void handleStartAiReview()}
-                  >
-                    {aiReviewBusy()
-                      ? "Starting..."
-                      : hasReviewStarted()
-                        ? "Run review again"
-                        : "Start review"}
-                  </Button>
-                  <button
-                    type="button"
-                    class="flex items-center gap-1 font-medium text-amber-400/80 transition-colors hover:text-amber-300 disabled:cursor-not-allowed disabled:text-neutral-500"
-                    disabled={compareBusy() || selectedWorkspace().length === 0}
-                    onClick={() => void handleOpenDiffViewer()}
-                  >
-                    {compareBusy()
-                      ? "Comparing..."
-                      : compareResult()
-                        ? showDiffViewer()
-                          ? "Hide changes"
-                          : "Review changes"
-                        : `Review vs ${selectedBaseRef()}`}
-                    <ChevronRight class="size-3.5" />
-                  </button>
-                </div>
-              </div>
-
-              <Show when={showDiffViewer() && compareResult()}>
-                {(result) => (
-                  <Show
-                    when={result().diff.trim().length > 0}
-                    fallback={
-                      <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-[14px] text-neutral-400">
-                        No differences found against {result().baseRef}.
-                      </div>
-                    }
-                  >
-                    <DiffViewer
-                      patch={result().diff}
-                      theme={selectedDiffTheme().theme}
-                      themeId={selectedDiffTheme().id}
-                      themeType="dark"
-                      annotations={diffAnnotations()}
-                    />
-                  </Show>
-                )}
-              </Show>
-
-              <div class="mt-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
-                <div class="flex items-center justify-between border-b border-white/[0.05] px-4 py-2.5">
-                  <h3 class="text-[12px] font-semibold uppercase tracking-[0.1em] text-neutral-500">
-                    Chunk Reviews
-                  </h3>
-                  <span class="text-[12px] text-neutral-600">
-                    {aiChunkReviews().length} chunks • {aiFindings().length} findings{aiReviewBusy() ? " • live" : ""}
-                  </span>
-                </div>
-                <Show
-                  when={aiProgressEvents().length > 0}
-                  fallback={null}
-                >
-                  <div class="max-h-[7rem] space-y-1.5 overflow-y-auto border-b border-white/[0.05] px-4 py-2">
-                    <For each={aiProgressEvents().slice(Math.max(0, aiProgressEvents().length - 8))}>
-                      {(event) => (
-                        <p class="text-[12px] text-neutral-500">
-                          {event.message}
-                        </p>
-                      )}
-                    </For>
-                  </div>
-                </Show>
-                <Show
-                  when={aiChunkReviews().length > 0}
-                  fallback={
-                    <p class="px-4 py-4 text-[13px] text-neutral-500">
-                      Start review to analyze each diff chunk and generate inline findings.
-                    </p>
-                  }
-                >
-                  <div class="max-h-[20rem] space-y-2 overflow-y-auto px-3 py-3">
-                    <For each={aiChunkReviews()}>
-                      {(chunk) => (
-                        <div class="rounded-lg border border-white/[0.05] bg-white/[0.015] px-3 py-2.5">
-                          <div class="mb-1.5 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.08em] text-neutral-500">
-                            <span class="truncate">{chunk.filePath} • chunk {chunk.chunkIndex}</span>
-                            <span class="shrink-0 normal-case text-neutral-600">
-                              {chunk.findings.length} finding{chunk.findings.length === 1 ? "" : "s"}
-                            </span>
-                          </div>
-                          <p class="text-[13px] leading-5 text-neutral-300">{chunk.summary}</p>
-                          <Show when={chunk.findings.length > 0}>
-                            <div class="mt-2 space-y-2">
-                              <For each={chunk.findings}>
-                                {(finding) => (
-                                  <div class="rounded-md border border-amber-500/20 bg-amber-500/5 px-2.5 py-2 text-[12.5px] text-amber-100/90">
-                                    <p class="font-medium text-amber-200/90">
-                                      [{finding.severity}] {finding.title} ({finding.side}:{finding.lineNumber})
-                                    </p>
-                                    <p class="mt-1 text-amber-100/80">{finding.body}</p>
-                                  </div>
-                                )}
-                              </For>
-                            </div>
-                          </Show>
-                        </div>
-                      )}
-                    </For>
-                  </div>
-                </Show>
-                <Show when={threadMessagesLoadError()}>
-                  {(message) => (
-                    <p class="border-t border-white/[0.05] px-4 py-3 text-[12px] text-rose-300/90">
-                      Unable to refresh conversation history: {message()}
-                    </p>
-                  )}
-                </Show>
-              </div>
-            </div>
-
-            {/* Input area */}
-            <footer class="shrink-0 px-6 pb-4 pt-3">
-              <form
-                class="overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.02]"
-                onSubmit={(event) => void handleAskAiFollowUp(event)}
-              >
-                <TextField>
-                  <TextFieldInput
-                    value={aiPrompt()}
-                    onInput={(event) => setAiPrompt(event.currentTarget.value)}
-                    placeholder={
-                      hasReviewStarted()
-                        ? "Ask a follow-up question about this review..."
-                        : "Click Start review above to begin."
-                    }
-                    class="h-12 border-0 bg-transparent px-4 text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:ring-0 focus:ring-offset-0"
-                  />
-                </TextField>
-                <div class="flex items-center justify-between border-t border-white/[0.04] px-4 py-2.5">
-                  <div class="flex items-center gap-3 text-[13px]">
-                    <button type="button" class="flex h-7 w-7 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:bg-white/[0.05] hover:text-neutral-300">
-                      <PlusCircle class="size-4" />
-                    </button>
-                    <div class="flex items-center gap-1.5 rounded-lg border border-white/[0.06] bg-white/[0.03] px-2.5 py-1 text-[12px]">
-                      <span class="font-medium text-neutral-300">GPT-5.3-Codex</span>
-                      <ChevronRight class="size-3 rotate-90 text-neutral-600" />
-                    </div>
-                    <span class="text-[12px] text-neutral-600">High</span>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <Popover.Root
-                      open={branchPopoverOpen()}
-                      onOpenChange={setBranchPopoverOpen}
-                      placement="top-end"
-                      gutter={8}
-                    >
-                      <Popover.Trigger
-                        as="button"
-                        type="button"
-                        class="branch-picker-trigger"
-                        disabled={selectedWorkspace().length === 0}
-                        aria-label="Switch current branch"
-                      >
-                        <GitBranch class="size-4 text-neutral-400" />
-                        <span class="max-w-[8.75rem] truncate">
-                          {workspaceBranches.loading && !workspaceBranches()
-                            ? "Loading..."
-                            : currentWorkspaceBranch()}
-                        </span>
-                        <ChevronRight class="size-3.5 rotate-90 text-neutral-500" />
-                      </Popover.Trigger>
-                      <Popover.Portal>
-                        <Popover.Content
-                          class="branch-picker-popover"
-                          onOpenAutoFocus={(event) => event.preventDefault()}
-                        >
-                          <div class="branch-picker-search">
-                            <Search class="size-4 text-neutral-500" />
-                            <input
-                              ref={(element) => {
-                                branchSearchInputRef = element;
-                              }}
-                              value={branchSearchQuery()}
-                              onInput={(event) =>
-                                setBranchSearchQuery(event.currentTarget.value)}
-                              class="branch-picker-search-input"
-                              placeholder="Search branches"
-                            />
-                          </div>
-
-                          <p class="branch-picker-section-label">Branches</p>
-                          <div class="branch-picker-list">
-                            <Show
-                              when={!workspaceBranches.loading}
-                              fallback={
-                                <div class="branch-picker-loading">
-                                  <LoaderCircle class="size-4 animate-spin text-neutral-500" />
-                                  <span>Loading branches...</span>
-                                </div>
-                              }
-                            >
-                              <Show
-                                when={filteredWorkspaceBranches().length > 0}
-                                fallback={
-                                  <p class="px-3 py-2 text-[13px] text-neutral-500">
-                                    {workspaceBranchLoadError() ?? "No branches found."}
-                                  </p>
-                                }
-                              >
-                                <For each={filteredWorkspaceBranches()}>
-                                  {(branch) => (
-                                    <button
-                                      type="button"
-                                      class="branch-picker-item"
-                                      disabled={branchActionBusy()}
-                                      onClick={() => void handleCheckoutBranch(branch.name)}
-                                    >
-                                      <span class="flex items-center gap-3 truncate">
-                                        <GitBranch class="size-4 text-neutral-500" />
-                                        <span class="truncate">{branch.name}</span>
-                                      </span>
-                                      <Show when={branch.isCurrent}>
-                                        <Check class="size-5 text-neutral-100" />
-                                      </Show>
-                                    </button>
-                                  )}
-                                </For>
-                              </Show>
-                            </Show>
-                          </div>
-
-                          <div class="branch-picker-create-wrap">
-                            <Show
-                              when={!branchCreateMode()}
-                              fallback={
-                                <form
-                                  class="branch-picker-create-form"
-                                  onSubmit={(event) =>
-                                    void handleCreateAndCheckoutBranch(event)}
-                                >
-                                  <input
-                                    ref={(element) => {
-                                      branchCreateInputRef = element;
-                                    }}
-                                    value={newBranchName()}
-                                    onInput={(event) =>
-                                      setNewBranchName(event.currentTarget.value)}
-                                    class="branch-picker-create-input"
-                                    placeholder="feature/new-branch"
-                                  />
-                                  <div class="flex items-center gap-2">
-                                    <button
-                                      type="button"
-                                      class="branch-picker-create-cancel"
-                                      onClick={() => {
-                                        setBranchCreateMode(false);
-                                        setNewBranchName("");
-                                      }}
-                                    >
-                                      Cancel
-                                    </button>
-                                    <button
-                                      type="submit"
-                                      class="branch-picker-create-submit"
-                                      disabled={!canCreateBranch()}
-                                    >
-                                      Create
-                                    </button>
-                                  </div>
-                                </form>
-                              }
-                            >
-                              <button
-                                type="button"
-                                class="branch-picker-create-trigger"
-                                disabled={branchActionBusy()}
-                                onClick={handleStartCreateBranch}
-                              >
-                                <PlusCircle class="size-4" />
-                                <span>Create and checkout new branch...</span>
-                              </button>
-                            </Show>
-                          </div>
-                        </Popover.Content>
-                      </Popover.Portal>
-                    </Popover.Root>
-                    <Button
-                      type="submit"
-                      size="icon"
-                      disabled={
-                        aiReviewBusy() ||
-                        compareBusy() ||
-                        selectedWorkspace().length === 0 ||
-                        !hasReviewStarted() ||
-                        aiPrompt().trim().length === 0
-                      }
-                      class="h-8 w-8 rounded-xl bg-amber-500/90 text-neutral-900 shadow-[0_0_12px_rgba(212,175,55,0.15)] hover:bg-amber-400/90 disabled:bg-neutral-700 disabled:text-neutral-400"
-                    >
-                      <Send class="size-3.5" />
-                    </Button>
-                  </div>
-                </div>
-              </form>
-            </footer>
+            <WorkspaceMainPane
+              branchActionError={branchActionError}
+              compareError={compareError}
+              aiReviewError={aiReviewError}
+              aiStatus={aiStatus}
+              aiReviewBusy={aiReviewBusy}
+              aiRunElapsedSeconds={aiRunElapsedSeconds}
+              compareSummary={compareSummary}
+              compareBusy={compareBusy}
+              selectedWorkspace={selectedWorkspace}
+              handleStartAiReview={handleStartAiReview}
+              hasReviewStarted={hasReviewStarted}
+              handleOpenDiffViewer={handleOpenDiffViewer}
+              compareResult={compareResult}
+              showDiffViewer={showDiffViewer}
+              selectedBaseRef={selectedBaseRef}
+              selectedDiffTheme={selectedDiffTheme}
+              diffAnnotations={diffAnnotations}
+              aiChunkReviews={aiChunkReviews}
+              aiFindings={aiFindings}
+              aiProgressEvents={aiProgressEvents}
+              threadMessagesLoadError={threadMessagesLoadError}
+              aiPrompt={aiPrompt}
+              setAiPrompt={setAiPrompt}
+              handleAskAiFollowUp={handleAskAiFollowUp}
+              branchPopoverOpen={branchPopoverOpen}
+              setBranchPopoverOpen={setBranchPopoverOpen}
+              workspaceBranches={workspaceBranches}
+              workspaceBranchesLoading={() => workspaceBranches.loading}
+              currentWorkspaceBranch={currentWorkspaceBranch}
+              branchSearchQuery={branchSearchQuery}
+              setBranchSearchQuery={setBranchSearchQuery}
+              filteredWorkspaceBranches={filteredWorkspaceBranches}
+              branchActionBusy={branchActionBusy}
+              handleCheckoutBranch={handleCheckoutBranch}
+              workspaceBranchLoadError={workspaceBranchLoadError}
+              branchCreateMode={branchCreateMode}
+              handleCreateAndCheckoutBranch={handleCreateAndCheckoutBranch}
+              setBranchSearchInputRef={setBranchSearchInputRef}
+              setBranchCreateInputRef={setBranchCreateInputRef}
+              newBranchName={newBranchName}
+              setNewBranchName={setNewBranchName}
+              setBranchCreateMode={setBranchCreateMode}
+              canCreateBranch={canCreateBranch}
+              handleStartCreateBranch={handleStartCreateBranch}
+            />
           </section>
         </SidebarInset>
-
       </Show>
     </SidebarProvider>
   );
