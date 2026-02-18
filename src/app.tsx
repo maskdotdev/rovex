@@ -7,8 +7,6 @@ import {
   onCleanup,
 } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { open } from "@tauri-apps/plugin-dialog";
 import type { DiffViewerAnnotation } from "@/components/diff-viewer";
 import {
   SidebarInset,
@@ -24,35 +22,21 @@ import {
   getInitialRepoDisplayNames,
   groupThreadsByRepo,
   providerOption,
-  repoNameFromWorkspace,
-  sleep,
 } from "@/app/helpers";
 import { SettingsView } from "@/app/components/settings-view";
 import { WorkspaceHeader } from "@/app/components/workspace-header";
 import { WorkspaceMainPane } from "@/app/components/workspace-main-pane";
 import { WorkspaceRepoSidebar } from "@/app/components/workspace-repo-sidebar";
-import type { AppView, RepoGroup, RepoReview, SettingsTab } from "@/app/types";
+import { useProviderAndSettingsActions } from "@/app/hooks/use-provider-and-settings-actions";
+import { useReviewActions } from "@/app/hooks/use-review-actions";
+import type { AppView, RepoReview, SettingsTab } from "@/app/types";
 import {
-  checkoutWorkspaceBranch,
-  compareWorkspaceDiff,
-  cloneRepository,
-  connectProvider,
-  createWorkspaceBranch,
-  createThread,
-  deleteThread,
-  disconnectProvider,
-  generateAiFollowUp,
-  generateAiReview,
   getAiReviewConfig,
   getOpencodeSidecarStatus,
   getProviderConnection,
   listThreadMessages,
   listWorkspaceBranches,
   listThreads,
-  pollProviderDeviceAuth,
-  setAiReviewApiKey,
-  setAiReviewSettings,
-  startProviderDeviceAuth,
   type AiReviewChunk,
   type AiReviewConfig,
   type AiReviewFinding,
@@ -63,7 +47,6 @@ import {
   type OpencodeSidecarStatus,
   type ProviderConnection,
   type ProviderKind,
-  type StartProviderDeviceAuthResult,
 } from "@/lib/backend";
 import "./app.css";
 
@@ -136,7 +119,6 @@ function App() {
   const [aiProgressEvents, setAiProgressEvents] = createSignal<AiReviewProgressEvent[]>([]);
   let branchSearchInputRef: HTMLInputElement | undefined;
   let branchCreateInputRef: HTMLInputElement | undefined;
-  let deviceAuthSession = 0;
 
   createEffect(() => {
     if (typeof window === "undefined") return;
@@ -405,703 +387,120 @@ function App() {
     });
   });
 
-  const clearProviderNotice = () => {
-    setProviderError(null);
-    setProviderStatus(null);
-  };
-
-  const refetchProviderConnection = async (provider: ProviderKind) => {
-    if (provider === "github") {
-      await refetchGithubConnection();
-      return;
-    }
-    await refetchGitlabConnection();
-  };
-
-  const cancelDeviceAuthFlow = () => {
-    deviceAuthSession += 1;
-    setDeviceAuthInProgress(false);
-    setDeviceAuthUserCode(null);
-    setDeviceAuthVerificationUrl(null);
-  };
-
-  onCleanup(() => {
-    cancelDeviceAuthFlow();
+  const {
+    openSettings,
+    closeSettings,
+    openDeviceVerificationUrl,
+    handleStartDeviceAuth,
+    handleConnectProvider,
+    handleDisconnectProvider,
+    handleCloneRepository,
+    handlePickDestinationRoot,
+    handlePickLocalProject,
+    handleCreateLocalProjectThread,
+    handleAddLocalRepoFromSidebar,
+    isRepoCollapsed,
+    repoDisplayName,
+    isRepoMenuOpen,
+    toggleRepoCollapsed,
+    setRepoMenuOpenState,
+    handleCreateReviewForRepo,
+    handleRenameRepo,
+    handleRemoveRepo,
+    handleOpenDiffsDocs,
+    handleSaveAiSettings,
+    handleSaveAiApiKey,
+  } = useProviderAndSettingsActions({
+    selectedProvider,
+    setSelectedProvider,
+    providerToken,
+    setProviderToken,
+    repositoryInput,
+    setRepositoryInput,
+    destinationRoot,
+    setDestinationRoot,
+    localProjectPath,
+    setLocalProjectPath,
+    providerBusy,
+    setProviderBusy,
+    providerError,
+    setProviderError,
+    providerStatus,
+    setProviderStatus,
+    deviceAuthInProgress,
+    setDeviceAuthInProgress,
+    deviceAuthUserCode,
+    setDeviceAuthUserCode,
+    deviceAuthVerificationUrl,
+    setDeviceAuthVerificationUrl,
+    setActiveView,
+    setActiveSettingsTab,
+    refetchGithubConnection,
+    refetchGitlabConnection,
+    refetchThreads,
+    setSelectedThreadId,
+    repoDisplayNames,
+    setRepoDisplayNames,
+    collapsedRepos,
+    setCollapsedRepos,
+    repoMenuOpen,
+    setRepoMenuOpen,
+    settingsError,
+    setSettingsError,
+    aiReviewProviderInput,
+    aiReviewModelInput,
+    aiOpencodeProviderInput,
+    aiOpencodeModelInput,
+    aiSettingsBusy,
+    setAiSettingsBusy,
+    setAiSettingsError,
+    setAiSettingsStatus,
+    aiApiKeyInput,
+    setAiApiKeyInput,
+    aiApiKeyBusy,
+    setAiApiKeyBusy,
+    setAiApiKeyError,
+    setAiApiKeyStatus,
+    refetchAiReviewConfig,
+    refetchOpencodeSidecarStatus,
   });
 
-  createEffect(() => {
-    selectedProvider();
-    clearProviderNotice();
-    cancelDeviceAuthFlow();
-    setProviderToken("");
-    setRepositoryInput("");
+  const {
+    handleCheckoutBranch,
+    handleStartCreateBranch,
+    handleCreateAndCheckoutBranch,
+    handleOpenDiffViewer,
+    handleStartAiReview,
+    handleAskAiFollowUp,
+  } = useReviewActions({
+    selectedThreadId,
+    selectedWorkspace,
+    selectedBaseRef,
+    setSelectedBaseRef,
+    compareResult,
+    setCompareResult,
+    setCompareBusy,
+    setCompareError,
+    setShowDiffViewer,
+    setBranchPopoverOpen,
+    setBranchCreateMode,
+    branchSearchQuery,
+    newBranchName,
+    setNewBranchName,
+    setBranchActionBusy,
+    setBranchActionError,
+    refetchWorkspaceBranches,
+    aiPrompt,
+    setAiPrompt,
+    hasReviewStarted,
+    setAiReviewBusy,
+    setAiReviewError,
+    setAiStatus,
+    setAiChunkReviews,
+    setAiFindings,
+    setAiProgressEvents,
+    refetchThreadMessages,
   });
-
-  const openDeviceVerificationUrl = async (providerLabel: string) => {
-    const url = deviceAuthVerificationUrl();
-    if (!url) return;
-
-    try {
-      await openUrl(url);
-    } catch (error) {
-      setProviderError(
-        error instanceof Error
-          ? error.message
-          : `Failed to open ${providerLabel} verification URL.`
-      );
-    }
-  };
-
-  const pollProviderDeviceAuthFlow = async (
-    sessionId: number,
-    provider: ProviderKind,
-    flow: StartProviderDeviceAuthResult
-  ) => {
-    const label = providerOption(provider).label;
-    let intervalMs = Math.max(1, flow.interval) * 1000;
-    const expiresAt = Date.now() + Math.max(1, flow.expiresIn) * 1000;
-
-    while (sessionId === deviceAuthSession && Date.now() < expiresAt) {
-      await sleep(intervalMs);
-      if (sessionId !== deviceAuthSession) {
-        return;
-      }
-
-      try {
-        const result = await pollProviderDeviceAuth({
-          provider,
-          deviceCode: flow.deviceCode,
-        });
-        if (sessionId !== deviceAuthSession) {
-          return;
-        }
-
-        if (result.status === "complete" && result.connection) {
-          await refetchProviderConnection(provider);
-          cancelDeviceAuthFlow();
-          setProviderStatus(`Connected ${label} as ${result.connection.accountLogin}.`);
-          return;
-        }
-
-        if (result.status === "slow_down") {
-          intervalMs += 5000;
-        }
-      } catch (error) {
-        if (sessionId !== deviceAuthSession) {
-          return;
-        }
-        cancelDeviceAuthFlow();
-        setProviderError(error instanceof Error ? error.message : String(error));
-        return;
-      }
-    }
-
-    if (sessionId !== deviceAuthSession) {
-      return;
-    }
-    cancelDeviceAuthFlow();
-    setProviderError(`${label} sign-in timed out. Start again.`);
-  };
-
-  const handleStartDeviceAuth = async () => {
-    const provider = selectedProvider();
-    const selected = providerOption(provider);
-
-    clearProviderNotice();
-    cancelDeviceAuthFlow();
-    const sessionId = deviceAuthSession;
-
-    setProviderBusy(true);
-    try {
-      const flow = await startProviderDeviceAuth({ provider });
-      const verificationUrl = flow.verificationUriComplete ?? flow.verificationUri;
-
-      setDeviceAuthInProgress(true);
-      setDeviceAuthUserCode(flow.userCode);
-      setDeviceAuthVerificationUrl(verificationUrl);
-      setProviderStatus(`Enter code ${flow.userCode} in ${selected.label} to finish connecting.`);
-
-      await openDeviceVerificationUrl(selected.label);
-      void pollProviderDeviceAuthFlow(sessionId, provider, flow);
-    } catch (error) {
-      setProviderError(error instanceof Error ? error.message : String(error));
-      cancelDeviceAuthFlow();
-    } finally {
-      setProviderBusy(false);
-    }
-  };
-
-  const openSettings = (tab: SettingsTab = "connections") => {
-    setActiveSettingsTab(tab);
-    setActiveView("settings");
-  };
-
-  const closeSettings = () => {
-    setActiveView("workspace");
-  };
-
-  const handleConnectProvider = async (event: Event) => {
-    const provider = selectedProvider();
-    const selected = providerOption(provider);
-
-    event.preventDefault();
-    clearProviderNotice();
-    cancelDeviceAuthFlow();
-
-    const token = providerToken().trim();
-    if (!token) {
-      setProviderError(`Enter a ${selected.label} personal access token.`);
-      return;
-    }
-
-    setProviderBusy(true);
-    try {
-      const connection = await connectProvider({ provider, accessToken: token });
-      setProviderToken("");
-      await refetchProviderConnection(provider);
-      setProviderStatus(`Connected ${selected.label} as ${connection.accountLogin}.`);
-    } catch (error) {
-      setProviderError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setProviderBusy(false);
-    }
-  };
-
-  const handleDisconnectProvider = async () => {
-    const provider = selectedProvider();
-    const selected = providerOption(provider);
-
-    clearProviderNotice();
-    cancelDeviceAuthFlow();
-    setProviderBusy(true);
-    try {
-      await disconnectProvider(provider);
-      await refetchProviderConnection(provider);
-      setProviderStatus(`Disconnected ${selected.label}.`);
-    } catch (error) {
-      setProviderError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setProviderBusy(false);
-    }
-  };
-
-  const handleCloneRepository = async (event: Event) => {
-    const provider = selectedProvider();
-    const selected = providerOption(provider);
-
-    event.preventDefault();
-    clearProviderNotice();
-
-    const repository = repositoryInput().trim();
-    if (!repository) {
-      setProviderError(`Enter a ${selected.label} repository path or URL.`);
-      return;
-    }
-
-    setProviderBusy(true);
-    try {
-      const cloneResult = await cloneRepository({
-        provider,
-        repository,
-        destinationRoot: destinationRoot().trim() || null,
-        shallow: true,
-      });
-
-      await createThread({
-        title: `Review ${cloneResult.repository}`,
-        workspace: cloneResult.workspace,
-      });
-      await refetchThreads();
-
-      setRepositoryInput("");
-      setProviderStatus(
-        `Cloned ${cloneResult.repository} to ${cloneResult.workspace} and created a review thread.`
-      );
-    } catch (error) {
-      setProviderError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setProviderBusy(false);
-    }
-  };
-
-  const pickDirectory = async (defaultPath?: string): Promise<string | null> => {
-    try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        defaultPath: defaultPath?.trim() || undefined,
-      });
-      return typeof selected === "string" ? selected : null;
-    } catch (error) {
-      setProviderError(error instanceof Error ? error.message : String(error));
-      return null;
-    }
-  };
-
-  const handlePickDestinationRoot = async () => {
-    clearProviderNotice();
-    const selectedPath = await pickDirectory(destinationRoot());
-    if (!selectedPath) return;
-    setDestinationRoot(selectedPath);
-  };
-
-  const handlePickLocalProject = async () => {
-    clearProviderNotice();
-    const selectedPath = await pickDirectory(localProjectPath());
-    if (!selectedPath) return;
-    setLocalProjectPath(selectedPath);
-  };
-
-  const handleCreateLocalProjectThread = async (event: Event) => {
-    event.preventDefault();
-    clearProviderNotice();
-
-    const workspace = localProjectPath().trim();
-    if (!workspace) {
-      setProviderError("Select a local project directory.");
-      return;
-    }
-
-    setProviderBusy(true);
-    try {
-      const thread = await createThread({
-        title: `Review ${repoNameFromWorkspace(workspace)}`,
-        workspace,
-      });
-      await refetchThreads();
-      setSelectedThreadId(thread.id);
-      setLocalProjectPath("");
-      setProviderStatus(`Added local project ${workspace} and created a review thread.`);
-      setActiveView("workspace");
-    } catch (error) {
-      setProviderError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setProviderBusy(false);
-    }
-  };
-
-  const handleAddLocalRepoFromSidebar = async () => {
-    clearProviderNotice();
-    const selectedPath = await pickDirectory();
-    if (!selectedPath) return;
-
-    setProviderBusy(true);
-    try {
-      const thread = await createThread({
-        title: `Review ${repoNameFromWorkspace(selectedPath)}`,
-        workspace: selectedPath,
-      });
-      await refetchThreads();
-      setSelectedThreadId(thread.id);
-      setProviderStatus(`Added local project ${selectedPath} and created a review thread.`);
-    } catch (error) {
-      setProviderError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setProviderBusy(false);
-    }
-  };
-
-  const isRepoCollapsed = (repoName: string) => collapsedRepos()[repoName] ?? false;
-  const repoDisplayName = (repoName: string) => repoDisplayNames()[repoName] ?? repoName;
-  const isRepoMenuOpen = (repoName: string) => repoMenuOpen()[repoName] ?? false;
-
-  const toggleRepoCollapsed = (repoName: string) => {
-    setCollapsedRepos((current) => ({
-      ...current,
-      [repoName]: !(current[repoName] ?? false),
-    }));
-  };
-
-  const setRepoMenuOpenState = (repoName: string, open: boolean) => {
-    setRepoMenuOpen((current) => ({
-      ...current,
-      [repoName]: open,
-    }));
-  };
-
-  const handleCreateReviewForRepo = async (repo: RepoGroup) => {
-    clearProviderNotice();
-    const workspace = repo.reviews.find((review) => review.workspace?.trim())?.workspace?.trim();
-    if (!workspace) {
-      setProviderError(`No local workspace found for ${repo.repoName}.`);
-      return;
-    }
-
-    setProviderBusy(true);
-    try {
-      const thread = await createThread({
-        title: `Review ${repoDisplayName(repo.repoName)}`,
-        workspace,
-      });
-      await refetchThreads();
-      setSelectedThreadId(thread.id);
-      setCollapsedRepos((current) => ({ ...current, [repo.repoName]: false }));
-      setProviderStatus(`Created a new review for ${repoDisplayName(repo.repoName)}.`);
-      setRepoMenuOpenState(repo.repoName, false);
-    } catch (error) {
-      setProviderError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setProviderBusy(false);
-    }
-  };
-
-  const handleRenameRepo = (repo: RepoGroup) => {
-    const existingName = repoDisplayName(repo.repoName);
-    const nextName = window.prompt("Edit repository name", existingName)?.trim();
-    if (!nextName) {
-      setRepoMenuOpenState(repo.repoName, false);
-      return;
-    }
-
-    setRepoDisplayNames((current) => {
-      const next = { ...current };
-      if (nextName === repo.repoName) {
-        delete next[repo.repoName];
-      } else {
-        next[repo.repoName] = nextName;
-      }
-      return next;
-    });
-    setProviderStatus(`Renamed ${repo.repoName} to ${nextName}.`);
-    setRepoMenuOpenState(repo.repoName, false);
-  };
-
-  const handleRemoveRepo = async (repo: RepoGroup) => {
-    const displayName = repoDisplayName(repo.repoName);
-    const reviewCount = repo.reviews.length;
-    const confirmed = window.confirm(
-      `Remove ${displayName} and ${reviewCount} review${reviewCount === 1 ? "" : "s"} from Rovex? Local files are not deleted.`
-    );
-    if (!confirmed) {
-      setRepoMenuOpenState(repo.repoName, false);
-      return;
-    }
-
-    clearProviderNotice();
-    setProviderBusy(true);
-    try {
-      for (const review of repo.reviews) {
-        await deleteThread(review.id);
-      }
-      await refetchThreads();
-      setRepoDisplayNames((current) => {
-        const next = { ...current };
-        delete next[repo.repoName];
-        return next;
-      });
-      setCollapsedRepos((current) => {
-        const next = { ...current };
-        delete next[repo.repoName];
-        return next;
-      });
-      setProviderStatus(
-        `Removed ${displayName} with ${reviewCount} review${reviewCount === 1 ? "" : "s"}.`
-      );
-    } catch (error) {
-      setProviderError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setProviderBusy(false);
-      setRepoMenuOpenState(repo.repoName, false);
-    }
-  };
-
-  const handleOpenDiffsDocs = async () => {
-    setSettingsError(null);
-    try {
-      await openUrl("https://diffs.com/");
-    } catch (error) {
-      setSettingsError(error instanceof Error ? error.message : String(error));
-    }
-  };
-
-  const clearAiApiKeyNotice = () => {
-    setAiApiKeyError(null);
-    setAiApiKeyStatus(null);
-  };
-
-  const clearAiSettingsNotice = () => {
-    setAiSettingsError(null);
-    setAiSettingsStatus(null);
-  };
-
-  const handleSaveAiSettings = async (event: Event) => {
-    event.preventDefault();
-    clearAiSettingsNotice();
-
-    const provider = aiReviewProviderInput().trim().toLowerCase();
-    const model = aiReviewModelInput().trim();
-    const opencodeProvider = aiOpencodeProviderInput().trim();
-    const opencodeModel = aiOpencodeModelInput().trim();
-
-    if (provider !== "openai" && provider !== "opencode") {
-      setAiSettingsError("Provider must be openai or opencode.");
-      return;
-    }
-    if (!model) {
-      setAiSettingsError("Enter a review model.");
-      return;
-    }
-
-    setAiSettingsBusy(true);
-    try {
-      await setAiReviewSettings({
-        reviewProvider: provider,
-        reviewModel: model,
-        opencodeProvider: opencodeProvider || "openai",
-        opencodeModel: opencodeModel || null,
-        persistToEnv: true,
-      });
-      await refetchAiReviewConfig();
-      if (provider === "opencode") {
-        await refetchOpencodeSidecarStatus();
-      }
-      setAiSettingsStatus(
-        provider === "opencode"
-          ? "Saved AI review settings for bundled OpenCode provider."
-          : "Saved AI review settings."
-      );
-    } catch (error) {
-      setAiSettingsError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setAiSettingsBusy(false);
-    }
-  };
-
-  const handleSaveAiApiKey = async (event: Event) => {
-    event.preventDefault();
-    clearAiApiKeyNotice();
-
-    const apiKey = aiApiKeyInput().trim();
-    if (!apiKey) {
-      setAiApiKeyError("Enter an API key.");
-      return;
-    }
-
-    setAiApiKeyBusy(true);
-    try {
-      const config = await setAiReviewApiKey({
-        apiKey,
-        persistToEnv: true,
-      });
-      setAiApiKeyInput("");
-      await refetchAiReviewConfig();
-      setAiApiKeyStatus(
-        config.envFilePath
-          ? `Saved OPENAI_API_KEY to ${config.envFilePath}.`
-          : "Saved OPENAI_API_KEY."
-      );
-    } catch (error) {
-      setAiApiKeyError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setAiApiKeyBusy(false);
-    }
-  };
-
-  const resetComparisonView = () => {
-    setCompareError(null);
-    setCompareResult(null);
-    setShowDiffViewer(false);
-  };
-
-  const handleCheckoutBranch = async (branchName: string) => {
-    const workspace = selectedWorkspace().trim();
-    const normalizedBranchName = branchName.trim();
-    if (!workspace) {
-      setBranchActionError("Select a review with a local workspace before switching branches.");
-      return;
-    }
-    if (!normalizedBranchName) return;
-
-    setBranchActionBusy(true);
-    setBranchActionError(null);
-    try {
-      await checkoutWorkspaceBranch({
-        workspace,
-        branchName: normalizedBranchName,
-      });
-      await refetchWorkspaceBranches();
-      setBranchPopoverOpen(false);
-      setBranchCreateMode(false);
-      setNewBranchName("");
-      resetComparisonView();
-    } catch (error) {
-      setBranchActionError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBranchActionBusy(false);
-    }
-  };
-
-  const handleStartCreateBranch = () => {
-    setBranchCreateMode(true);
-    setNewBranchName(branchSearchQuery().trim());
-  };
-
-  const handleCreateAndCheckoutBranch = async (event: Event) => {
-    event.preventDefault();
-    const workspace = selectedWorkspace().trim();
-    const branchName = newBranchName().trim();
-    if (!workspace) {
-      setBranchActionError("Select a review with a local workspace before creating a branch.");
-      return;
-    }
-    if (!branchName) {
-      setBranchActionError("Branch name must not be empty.");
-      return;
-    }
-
-    setBranchActionBusy(true);
-    setBranchActionError(null);
-    try {
-      await createWorkspaceBranch({
-        workspace,
-        branchName,
-      });
-      await refetchWorkspaceBranches();
-      setBranchPopoverOpen(false);
-      setBranchCreateMode(false);
-      setNewBranchName("");
-      resetComparisonView();
-    } catch (error) {
-      setBranchActionError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBranchActionBusy(false);
-    }
-  };
-
-  const handleCompareSelectedReview = async (target: { baseRef?: string; fetchRemote?: boolean } = {}) => {
-    const baseRef = target.baseRef?.trim() || selectedBaseRef().trim() || "main";
-    const fetchRemote = target.fetchRemote ?? false;
-    setCompareError(null);
-
-    const workspace = selectedWorkspace();
-    if (!workspace) {
-      setCompareError("Select a review that has a local workspace path.");
-      return;
-    }
-
-    setCompareBusy(true);
-    try {
-      const result = await compareWorkspaceDiff({
-        workspace,
-        baseRef,
-        fetchRemote,
-      });
-      setSelectedBaseRef(result.baseRef);
-      setCompareResult(result);
-      setShowDiffViewer(true);
-    } catch (error) {
-      setCompareError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setCompareBusy(false);
-    }
-  };
-
-  const handleOpenDiffViewer = async () => {
-    if (compareResult()) {
-      setShowDiffViewer((current) => !current);
-      return;
-    }
-
-    await handleCompareSelectedReview();
-  };
-
-  const handleStartAiReview = async () => {
-    setAiReviewError(null);
-    setAiStatus(null);
-    setAiChunkReviews([]);
-    setAiFindings([]);
-    setAiProgressEvents([]);
-
-    const threadId = selectedThreadId();
-    if (threadId == null) {
-      setAiReviewError("Select a review before running AI.");
-      return;
-    }
-
-    let comparison = compareResult();
-    if (!comparison) {
-      await handleCompareSelectedReview();
-      comparison = compareResult();
-    }
-
-    if (!comparison) {
-      setAiReviewError("Load a diff before running AI review.");
-      return;
-    }
-
-    setAiReviewBusy(true);
-    setAiStatus("Starting chunked review...");
-    try {
-      const response = await generateAiReview({
-        threadId,
-        workspace: comparison.workspace,
-        baseRef: comparison.baseRef,
-        mergeBase: comparison.mergeBase,
-        head: comparison.head,
-        filesChanged: comparison.filesChanged,
-        insertions: comparison.insertions,
-        deletions: comparison.deletions,
-        diff: comparison.diff,
-        prompt: aiPrompt().trim() || null,
-      });
-      await refetchThreadMessages();
-      setAiPrompt("");
-      setAiChunkReviews(response.chunks);
-      setAiFindings(response.findings);
-      setAiStatus(
-        `Reviewed ${response.chunks.length} chunk(s) with ${response.findings.length} finding(s) using ${response.model}${response.diffTruncated ? " (truncated chunk input)." : "."}`
-      );
-    } catch (error) {
-      setAiReviewError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setAiReviewBusy(false);
-    }
-  };
-
-  const handleAskAiFollowUp = async (event: Event) => {
-    event.preventDefault();
-    setAiReviewError(null);
-    setAiStatus(null);
-
-    const threadId = selectedThreadId();
-    if (threadId == null) {
-      setAiReviewError("Select a review before asking questions.");
-      return;
-    }
-    if (!hasReviewStarted()) {
-      setAiReviewError("Start review before asking follow-up questions.");
-      return;
-    }
-
-    const workspace = selectedWorkspace().trim();
-    if (!workspace) {
-      setAiReviewError("Select a review that has a local workspace path.");
-      return;
-    }
-
-    const question = aiPrompt().trim();
-    if (!question) {
-      setAiReviewError("Type a follow-up question.");
-      return;
-    }
-
-    setAiReviewBusy(true);
-    setAiStatus("Sending follow-up question...");
-    try {
-      const response = await generateAiFollowUp({
-        threadId,
-        workspace,
-        question,
-      });
-      await refetchThreadMessages();
-      setAiPrompt("");
-      setAiStatus(`Answered with ${response.model}.`);
-    } catch (error) {
-      setAiReviewError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setAiReviewBusy(false);
-    }
-  };
 
   const setBranchSearchInputRef = (element: HTMLInputElement | undefined) => {
     branchSearchInputRef = element;
