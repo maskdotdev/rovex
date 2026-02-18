@@ -27,10 +27,8 @@ import {
   PlugZap,
   Search,
   Send,
-  Server,
   SlidersHorizontal,
   Trash2,
-  Workflow,
 } from "lucide-solid";
 import * as Popover from "@kobalte/core/popover";
 import { Button } from "@/components/button";
@@ -94,10 +92,7 @@ type SettingsTab =
   | "general"
   | "configuration"
   | "personalization"
-  | "mcpServers"
-  | "git"
   | "environments"
-  | "worktrees"
   | "archivedThreads"
   | "connections";
 
@@ -156,28 +151,10 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: Palette,
   },
   {
-    id: "mcpServers",
-    label: "MCP servers",
-    description: "Review and manage connected MCP server integrations.",
-    icon: Server,
-  },
-  {
-    id: "git",
-    label: "Git",
-    description: "Tune repository defaults and Git execution behavior.",
-    icon: GitBranch,
-  },
-  {
     id: "environments",
     label: "Environments",
     description: "Set environment-level options for local and remote contexts.",
     icon: Monitor,
-  },
-  {
-    id: "worktrees",
-    label: "Worktrees",
-    description: "Manage worktree-specific defaults and workspace policies.",
-    icon: Workflow,
   },
   {
     id: "archivedThreads",
@@ -454,6 +431,7 @@ function App() {
   const [aiReviewBusy, setAiReviewBusy] = createSignal(false);
   const [aiReviewError, setAiReviewError] = createSignal<string | null>(null);
   const [aiStatus, setAiStatus] = createSignal<string | null>(null);
+  const [aiRunElapsedSeconds, setAiRunElapsedSeconds] = createSignal(0);
   const [aiApiKeyInput, setAiApiKeyInput] = createSignal("");
   const [aiApiKeyBusy, setAiApiKeyBusy] = createSignal(false);
   const [aiApiKeyError, setAiApiKeyError] = createSignal<string | null>(null);
@@ -634,6 +612,26 @@ function App() {
   const hasReviewStarted = createMemo(() =>
     (threadMessages() ?? []).some((message) => message.role === "assistant")
   );
+
+  createEffect(() => {
+    if (!aiReviewBusy()) {
+      setAiRunElapsedSeconds(0);
+      return;
+    }
+
+    const startedAt = Date.now();
+    setAiRunElapsedSeconds(0);
+    void refetchThreadMessages();
+
+    const interval = window.setInterval(() => {
+      setAiRunElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+      void refetchThreadMessages();
+    }, 1200);
+
+    onCleanup(() => {
+      window.clearInterval(interval);
+    });
+  });
 
   const clearProviderNotice = () => {
     setProviderError(null);
@@ -1257,6 +1255,7 @@ function App() {
     }
 
     setAiReviewBusy(true);
+    setAiStatus("Starting review. Waiting for OpenCode response...");
     try {
       const response = await generateAiReview({
         threadId,
@@ -1310,6 +1309,7 @@ function App() {
     }
 
     setAiReviewBusy(true);
+    setAiStatus("Sending follow-up question...");
     try {
       const response = await generateAiFollowUp({
         threadId,
@@ -1339,8 +1339,8 @@ function App() {
         when={activeView() === "workspace"}
         fallback={
           /* ── Settings View ── */
-          <div class="w-full p-2 md:p-3">
-            <section class="glass-surface flex h-full min-h-[calc(100svh-1rem)] overflow-hidden rounded-2xl border border-white/[0.06] shadow-[0_20px_50px_rgba(0,0,0,0.4)]">
+          <div class="h-svh w-full p-2 md:p-3">
+            <section class="glass-surface flex h-[calc(100svh-1rem)] overflow-hidden rounded-2xl border border-white/[0.06] shadow-[0_20px_50px_rgba(0,0,0,0.4)] md:h-[calc(100svh-1.5rem)]">
               {/* Settings sidebar */}
               <aside class="w-[260px] shrink-0 px-3 py-5">
                 <button
@@ -1376,7 +1376,7 @@ function App() {
               </aside>
 
               {/* Settings content */}
-              <main class="flex-1 overflow-y-auto px-8 py-8 md:px-12 md:py-10">
+              <main class="min-h-0 flex-1 overflow-y-auto px-8 py-8 md:px-12 md:py-10">
                 <div class="animate-fade-up">
                   <h1 class="app-title text-[clamp(2rem,2.8vw,3rem)] text-neutral-100">
                     {selectedSettingsItem().label}
@@ -2212,6 +2212,14 @@ function App() {
                   </div>
                 )}
               </Show>
+              <Show when={aiReviewBusy()}>
+                <div class="mb-3 flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-[13px] text-amber-200/90">
+                  <LoaderCircle class="size-4 animate-spin text-amber-300/90" />
+                  <span>
+                    Review is running. {aiRunElapsedSeconds()}s elapsed. Notes refresh automatically.
+                  </span>
+                </div>
+              </Show>
 
               {/* Change summary bar */}
               <div class="mb-3 flex items-center justify-between rounded-xl border border-white/[0.05] bg-white/[0.02] px-4 py-2.5 text-[13px]">
@@ -2273,7 +2281,7 @@ function App() {
                     Review Notes
                   </h3>
                   <span class="text-[12px] text-neutral-600">
-                    {(threadMessages() ?? []).length} messages
+                    {(threadMessages() ?? []).length} messages{aiReviewBusy() ? " • live" : ""}
                   </span>
                 </div>
                 <Show when={threadMessagesLoadError()}>
