@@ -6,54 +6,50 @@ import {
   createResource,
   createSignal,
   onCleanup,
-  type Component,
 } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  Archive,
-  ArrowLeft,
   Check,
   ChevronRight,
-  CircleDot,
   FolderOpen,
   GitBranch,
   LoaderCircle,
-  MoreHorizontal,
-  Monitor,
-  Palette,
-  Pencil,
   PlusCircle,
   PlugZap,
   Search,
   Send,
-  SlidersHorizontal,
-  Trash2,
 } from "lucide-solid";
 import * as Popover from "@kobalte/core/popover";
 import { Button } from "@/components/button";
-import { DiffViewer, type DiffViewerTheme } from "@/components/diff-viewer";
+import { DiffViewer, type DiffViewerAnnotation } from "@/components/diff-viewer";
 import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarHeader,
   SidebarInset,
-  SidebarMenuAction,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
   SidebarProvider,
-  SidebarSeparator,
-  SidebarTrigger,
 } from "@/components/sidebar";
 import { TextField, TextFieldInput } from "@/components/text-field";
+import {
+  DIFF_THEME_STORAGE_KEY,
+  REPO_DISPLAY_NAME_STORAGE_KEY,
+  diffThemePresets,
+  diffThemePreviewPatch,
+  providerOptions,
+  settingsNavItems,
+} from "@/app/constants";
+import {
+  getDiffThemePreset,
+  getInitialDiffThemeId,
+  getInitialRepoDisplayNames,
+  groupThreadsByRepo,
+  providerOption,
+  repoNameFromWorkspace,
+  sleep,
+} from "@/app/helpers";
+import { SettingsSidebar } from "@/app/components/settings-sidebar";
+import { WorkspaceHeader } from "@/app/components/workspace-header";
+import { WorkspaceRepoSidebar } from "@/app/components/workspace-repo-sidebar";
+import type { AppView, RepoGroup, RepoReview, SettingsTab } from "@/app/types";
 import {
   checkoutWorkspaceBranch,
   compareWorkspaceDiff,
@@ -86,302 +82,8 @@ import {
   type ProviderConnection,
   type ProviderKind,
   type StartProviderDeviceAuthResult,
-  type Thread,
 } from "@/lib/backend";
 import "./app.css";
-
-type AppView = "workspace" | "settings";
-
-type SettingsTab =
-  | "general"
-  | "configuration"
-  | "personalization"
-  | "environments"
-  | "archivedThreads"
-  | "connections";
-
-type SettingsNavItem = {
-  id: SettingsTab;
-  label: string;
-  description: string;
-  icon: Component<{ class?: string }>;
-};
-
-type RepoReview = {
-  id: number;
-  repoName: string;
-  title: string;
-  age: string;
-  workspace: string | null;
-};
-
-type RepoGroup = {
-  repoName: string;
-  reviews: RepoReview[];
-};
-
-type DiffThemePreset = {
-  id: string;
-  label: string;
-  description: string;
-  theme: DiffViewerTheme;
-};
-
-type ProviderOption = {
-  id: ProviderKind;
-  label: string;
-  description: string;
-  repositoryHint: string;
-  tokenPlaceholder: string;
-};
-
-const settingsNavItems: SettingsNavItem[] = [
-  {
-    id: "general",
-    label: "General",
-    description: "Configure app-wide defaults and baseline behavior.",
-    icon: CircleDot,
-  },
-  {
-    id: "configuration",
-    label: "Configuration",
-    description: "Manage global settings applied to your entire Rovex workspace.",
-    icon: SlidersHorizontal,
-  },
-  {
-    id: "personalization",
-    label: "Personalization",
-    description: "Control how Rovex looks and feels for your workflow.",
-    icon: Palette,
-  },
-  {
-    id: "environments",
-    label: "Environments",
-    description: "Set environment-level options for local and remote contexts.",
-    icon: Monitor,
-  },
-  {
-    id: "archivedThreads",
-    label: "Archived threads",
-    description: "Review and restore archived review conversations.",
-    icon: Archive,
-  },
-  {
-    id: "connections",
-    label: "Connections",
-    description: "Connect providers used for cloning repositories and code review.",
-    icon: PlugZap,
-  },
-];
-
-const UNKNOWN_REPO = "unknown-repo";
-const REPO_DISPLAY_NAME_STORAGE_KEY = "rovex.settings.repo-display-names";
-const DIFF_THEME_STORAGE_KEY = "rovex.settings.diff-theme";
-const DEFAULT_DIFF_THEME_ID = "rovex";
-const diffThemePresets: DiffThemePreset[] = [
-  {
-    id: "rovex",
-    label: "Rovex",
-    description: "Amber-forward palette matched to Rovex's glass and graphite UI.",
-    theme: { dark: "rovex-dark", light: "rovex-light" },
-  },
-  {
-    id: "pierre",
-    label: "Pierre",
-    description: "Default diffs.com theme pair used in Rovex.",
-    theme: { dark: "pierre-dark", light: "pierre-light" },
-  },
-  {
-    id: "github",
-    label: "GitHub",
-    description: "GitHub-style syntax colors and contrast.",
-    theme: { dark: "github-dark", light: "github-light" },
-  },
-  {
-    id: "catppuccin",
-    label: "Catppuccin",
-    description: "Softer palette with reduced glare in dark mode.",
-    theme: { dark: "catppuccin-mocha", light: "catppuccin-latte" },
-  },
-  {
-    id: "gruvbox",
-    label: "Gruvbox",
-    description: "Warm, muted contrast tuned for long reading sessions.",
-    theme: { dark: "gruvbox-dark-medium", light: "gruvbox-light-medium" },
-  },
-  {
-    id: "vitesse",
-    label: "Vitesse",
-    description: "High-legibility coding theme with vibrant accents.",
-    theme: { dark: "vitesse-dark", light: "vitesse-light" },
-  },
-  {
-    id: "solarized",
-    label: "Solarized",
-    description: "Classic low-contrast palette for balanced diff scanning.",
-    theme: { dark: "solarized-dark", light: "solarized-light" },
-  },
-];
-const diffThemePreviewPatch = `diff --git a/src/components/status.ts b/src/components/status.ts
-index 4c3f8d2..f3b58a1 100644
---- a/src/components/status.ts
-+++ b/src/components/status.ts
-@@ -1,7 +1,8 @@
- export function getStatusLabel(approved: boolean, pending: boolean) {
--  if (approved) return "Ready";
-+  if (approved) return "Ready to ship";
-   if (pending) return "Pending review";
-+  const fallback = "Needs attention";
- 
--  return "Blocked";
-+  return fallback;
-}
-`;
-
-const providerOptions: ProviderOption[] = [
-  {
-    id: "github",
-    label: "GitHub",
-    description:
-      "Connect GitHub with one-click device auth so Rovex can clone repositories for code review.",
-    repositoryHint: "Supports owner/repo or a GitHub URL. Creates a review thread automatically.",
-    tokenPlaceholder: "GitHub personal access token",
-  },
-  {
-    id: "gitlab",
-    label: "GitLab",
-    description:
-      "Connect GitLab to clone repositories for code review, including subgroup paths.",
-    repositoryHint:
-      "Supports namespace/repo (including subgroups) or a GitLab URL. Creates a review thread automatically.",
-    tokenPlaceholder: "GitLab personal access token",
-  },
-];
-
-function providerOption(provider: ProviderKind): ProviderOption {
-  const option = providerOptions.find((candidate) => candidate.id === provider);
-  return option ?? providerOptions[0];
-}
-
-function getDiffThemePreset(themeId: string | null | undefined): DiffThemePreset {
-  const normalized = themeId?.trim();
-  if (!normalized) return diffThemePresets[0];
-
-  const preset = diffThemePresets.find((candidate) => candidate.id === normalized);
-  return preset ?? diffThemePresets[0];
-}
-
-function getInitialDiffThemeId(): string {
-  if (typeof window === "undefined") return DEFAULT_DIFF_THEME_ID;
-  const storedThemeId = window.localStorage.getItem(DIFF_THEME_STORAGE_KEY);
-  return getDiffThemePreset(storedThemeId).id;
-}
-
-function getInitialRepoDisplayNames(): Record<string, string> {
-  if (typeof window === "undefined") return {};
-
-  try {
-    const raw = window.localStorage.getItem(REPO_DISPLAY_NAME_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object") return {};
-
-    const normalized: Record<string, string> = {};
-    for (const [key, value] of Object.entries(parsed)) {
-      if (typeof value === "string" && value.trim().length > 0) {
-        normalized[key] = value.trim();
-      }
-    }
-    return normalized;
-  } catch {
-    return {};
-  }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function repoNameFromWorkspace(workspace: string | null): string {
-  const value = workspace?.trim();
-  if (!value) return UNKNOWN_REPO;
-
-  const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
-  const lastSegment = normalized.split("/").pop()?.trim();
-  return lastSegment && lastSegment.length > 0 ? lastSegment : value;
-}
-
-function formatRelativeAge(createdAt: string): string {
-  const normalized = createdAt.includes("T") ? createdAt : createdAt.replace(" ", "T");
-  const parsed = new Date(`${normalized}Z`);
-  const timestamp = Number.isNaN(parsed.getTime()) ? new Date(normalized).getTime() : parsed.getTime();
-
-  if (Number.isNaN(timestamp)) return "now";
-
-  const elapsedMs = Math.max(0, Date.now() - timestamp);
-  const minutes = Math.floor(elapsedMs / 60000);
-  if (minutes < 1) return "now";
-  if (minutes < 60) return `${minutes}m`;
-
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d`;
-
-  const weeks = Math.floor(days / 7);
-  return `${weeks}w`;
-}
-
-function groupThreadsByRepo(threads: Thread[]): RepoGroup[] {
-  const groups = new Map<string, RepoReview[]>();
-
-  for (const thread of threads) {
-    const repoName = repoNameFromWorkspace(thread.workspace);
-    const nextReview: RepoReview = {
-      id: thread.id,
-      title: thread.title,
-      repoName,
-      age: formatRelativeAge(thread.createdAt),
-      workspace: thread.workspace,
-    };
-    groups.set(repoName, [...(groups.get(repoName) ?? []), nextReview]);
-  }
-
-  return [...groups.entries()].map(([repoName, reviews]) => ({ repoName, reviews }));
-}
-
-function SidebarRow(props: {
-  label: string;
-  right?: string;
-  active?: boolean;
-  onClick?: () => void;
-}) {
-  return (
-    <SidebarMenuItem>
-      <SidebarMenuButton
-        as="button"
-        type="button"
-        onClick={props.onClick}
-        isActive={props.active}
-        class="group/row h-11 rounded-xl px-3.5 text-[14px] font-medium text-neutral-400 transition-all duration-150 data-[active=true]:bg-white/[0.06] data-[active=true]:text-neutral-100 data-[active=true]:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)] hover:bg-white/[0.04] hover:text-neutral-200"
-      >
-        <div class="flex w-full items-center justify-between gap-3">
-          <div class="flex min-w-0 items-center">
-            <span class="truncate">{props.label}</span>
-          </div>
-          <Show when={props.right}>
-            {(right) => (
-              <kbd class="shrink-0 rounded-[5px] border border-white/[0.06] bg-white/[0.03] px-1.5 py-0.5 font-sans text-[11px] text-neutral-500">
-                {right()}
-              </kbd>
-            )}
-          </Show>
-        </div>
-      </SidebarMenuButton>
-    </SidebarMenuItem>
-  );
-}
 
 function App() {
   const [threads, { refetch: refetchThreads }] = createResource(() => listThreads(200));
@@ -534,21 +236,21 @@ function App() {
     if (!result) return null;
     return `${result.filesChanged} files changed +${result.insertions} -${result.deletions} vs ${result.baseRef}`;
   });
-  const diffAnnotations = createMemo(() =>
-    aiFindings()
-      .map((finding) => {
-        const normalizedSide = finding.side === "deletions" ? "deletions" : "additions";
-        return {
-          id: finding.id,
-          filePath: finding.filePath,
-          side: normalizedSide,
-          lineNumber: finding.lineNumber,
-          title: finding.title,
-          body: finding.body,
-          severity: finding.severity,
-          chunkId: finding.chunkId,
-        };
-      })
+  const diffAnnotations = createMemo<DiffViewerAnnotation[]>(() =>
+    aiFindings().map((finding) => {
+      const normalizedSide: DiffViewerAnnotation["side"] =
+        finding.side === "deletions" ? "deletions" : "additions";
+      return {
+        id: finding.id,
+        filePath: finding.filePath,
+        side: normalizedSide,
+        lineNumber: finding.lineNumber,
+        title: finding.title,
+        body: finding.body,
+        severity: finding.severity,
+        chunkId: finding.chunkId,
+      };
+    })
   );
   const selectedWorkspace = createMemo(() => selectedReview()?.workspace?.trim() ?? "");
   const [workspaceBranches, { refetch: refetchWorkspaceBranches }] = createResource(
@@ -1439,39 +1141,11 @@ function App() {
           /* ── Settings View ── */
           <div class="h-svh w-full p-2 md:p-3">
             <section class="glass-surface flex h-[calc(100svh-1rem)] overflow-hidden rounded-2xl border border-white/[0.06] shadow-[0_20px_50px_rgba(0,0,0,0.4)] md:h-[calc(100svh-1.5rem)]">
-              {/* Settings sidebar */}
-              <aside class="w-[260px] shrink-0 px-3 py-5">
-                <button
-                  type="button"
-                  class="group mb-5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-neutral-400 transition-colors hover:bg-white/[0.04] hover:text-neutral-200"
-                  onClick={closeSettings}
-                >
-                  <ArrowLeft class="size-4 transition-transform group-hover:-translate-x-0.5" />
-                  <span class="text-[14px] font-medium">Back</span>
-                </button>
-
-                <nav class="space-y-0.5">
-                  <For each={settingsNavItems}>
-                    {(item) => {
-                      const Icon = item.icon;
-                      const isActive = () => activeSettingsTab() === item.id;
-                      return (
-                        <button
-                          type="button"
-                          class={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[14px] transition-all duration-150 ${isActive()
-                            ? "bg-white/[0.07] font-medium text-neutral-100 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]"
-                            : "text-neutral-400 hover:bg-white/[0.03] hover:text-neutral-200"
-                            }`}
-                          onClick={() => setActiveSettingsTab(item.id)}
-                        >
-                          <Icon class={`size-4 ${isActive() ? "text-amber-400/70" : "text-neutral-500"}`} />
-                          <span>{item.label}</span>
-                        </button>
-                      );
-                    }}
-                  </For>
-                </nav>
-              </aside>
+              <SettingsSidebar
+                activeSettingsTab={activeSettingsTab}
+                onSelectTab={setActiveSettingsTab}
+                onBack={closeSettings}
+              />
 
               {/* Settings content */}
               <main class="min-h-0 flex-1 overflow-y-auto px-8 py-8 md:px-12 md:py-10">
@@ -2080,205 +1754,33 @@ function App() {
         }
       >
         {/* ── Workspace View ── */}
-        <Sidebar
-          collapsible="offcanvas"
-          class="border-0 bg-transparent group-data-[side=left]:border-r-0 group-data-[side=right]:border-l-0 [&_[data-sidebar=sidebar]]:bg-transparent"
-        >
-          <SidebarHeader class="px-4 pt-5 pb-2">
-            <div class="flex items-center gap-2.5">
-              <div class="flex size-8 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.03]">
-                <GitBranch class="size-4 text-amber-300/90" />
-              </div>
-              <h2 class="app-title text-[22px] text-neutral-200">Rovex</h2>
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              class="mt-3 h-10 w-full justify-start gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 text-[13px] font-medium text-neutral-200 hover:border-white/[0.12] hover:bg-white/[0.05]"
-              disabled={providerBusy()}
-              onClick={() => void handleAddLocalRepoFromSidebar()}
-            >
-              <FolderOpen class="size-4" />
-              {providerBusy() ? "Working..." : "New Repo"}
-            </Button>
-          </SidebarHeader>
-
-          <SidebarContent class="px-2.5">
-            <SidebarGroup class="p-0">
-              <SidebarGroupLabel class="px-3.5 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-600">
-                Repositories
-              </SidebarGroupLabel>
-              <Show when={!threads.loading} fallback={
-                <div class="space-y-2 px-3.5 py-2">
-                  <div class="h-3 w-24 animate-pulse rounded bg-white/[0.04]" />
-                  <div class="h-3 w-32 animate-pulse rounded bg-white/[0.04]" />
-                </div>
-              }>
-                <Show
-                  when={repoGroups().length > 0}
-                  fallback={
-                    <p class="px-3.5 py-3 text-[13px] text-neutral-600">
-                      No reviews yet.
-                    </p>
-                  }
-                >
-                  <SidebarMenu>
-                    <For each={repoGroups()}>
-                      {(repo) => (
-                        <SidebarMenuItem>
-                          <SidebarMenuButton
-                            as="button"
-                            type="button"
-                            onClick={() => toggleRepoCollapsed(repo.repoName)}
-                            aria-expanded={!isRepoCollapsed(repo.repoName)}
-                            class="h-10 rounded-xl pl-3.5 pr-20 text-[12px] font-semibold uppercase tracking-[0.1em] text-neutral-500 hover:bg-white/[0.03] hover:text-neutral-400"
-                            tooltip={repoDisplayName(repo.repoName)}
-                          >
-                            <div class="flex w-full items-center gap-2">
-                              <ChevronRight
-                                class={`size-3.5 shrink-0 text-neutral-600 transition-transform duration-150 ${
-                                  isRepoCollapsed(repo.repoName) ? "" : "rotate-90 text-neutral-400"
-                                }`}
-                              />
-                              <span class="truncate">{repoDisplayName(repo.repoName)}</span>
-                            </div>
-                          </SidebarMenuButton>
-                          <SidebarMenuAction
-                            as="button"
-                            type="button"
-                            class="right-9 top-1.5 h-7 w-7 rounded-lg text-neutral-500 transition-colors hover:bg-white/[0.08] hover:text-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
-                            aria-label={`Create a new review for ${repoDisplayName(repo.repoName)}`}
-                            title={`Create a new review for ${repoDisplayName(repo.repoName)}`}
-                            disabled={providerBusy()}
-                            onClick={(event: MouseEvent) => {
-                              event.stopPropagation();
-                              void handleCreateReviewForRepo(repo);
-                            }}
-                          >
-                            <PlusCircle class="size-3.5" />
-                          </SidebarMenuAction>
-                          <Popover.Root
-                            open={isRepoMenuOpen(repo.repoName)}
-                            onOpenChange={(open) => setRepoMenuOpenState(repo.repoName, open)}
-                            placement="bottom-end"
-                            gutter={6}
-                          >
-                            <Popover.Trigger
-                              as="button"
-                              type="button"
-                              class="absolute right-2 top-1.5 z-10 flex h-7 w-7 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:bg-white/[0.08] hover:text-neutral-200"
-                              aria-label={`Open menu for ${repoDisplayName(repo.repoName)}`}
-                              title={`Open menu for ${repoDisplayName(repo.repoName)}`}
-                              onClick={(event) => event.stopPropagation()}
-                            >
-                              <MoreHorizontal class="size-3.5" />
-                            </Popover.Trigger>
-                            <Popover.Portal>
-                              <Popover.Content
-                                class="z-50 w-44 rounded-xl border border-white/[0.08] bg-[#16171b] p-1.5 shadow-[0_16px_48px_rgba(0,0,0,0.45)]"
-                                onClick={(event: MouseEvent) => event.stopPropagation()}
-                              >
-                                <button
-                                  type="button"
-                                  class="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] font-medium text-neutral-200 transition-colors hover:bg-white/[0.07]"
-                                  onClick={() => handleRenameRepo(repo)}
-                                >
-                                  <Pencil class="size-3.5 text-neutral-400" />
-                                  Edit name
-                                </button>
-                                <button
-                                  type="button"
-                                  class="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] font-medium text-rose-300 transition-colors hover:bg-rose-500/10"
-                                  onClick={() => void handleRemoveRepo(repo)}
-                                >
-                                  <Trash2 class="size-3.5 text-rose-300/90" />
-                                  Remove
-                                </button>
-                              </Popover.Content>
-                            </Popover.Portal>
-                          </Popover.Root>
-                          <Show when={!isRepoCollapsed(repo.repoName)}>
-                            <SidebarMenuSub class="mt-0.5 border-white/[0.05]">
-                              <For each={repo.reviews}>
-                                {(review) => (
-                                  <SidebarMenuSubItem>
-                                    <SidebarMenuSubButton
-                                      as="button"
-                                      type="button"
-                                      isActive={selectedThreadId() === review.id}
-                                      class="h-8 w-full justify-between rounded-lg text-[13px] text-neutral-500 transition-all duration-150 data-[active=true]:bg-white/[0.06] data-[active=true]:text-neutral-200 hover:text-neutral-300"
-                                      onClick={() => setSelectedThreadId(review.id)}
-                                    >
-                                      <span class="truncate">{review.title}</span>
-                                      <span class="shrink-0 text-[11px] tabular-nums text-neutral-600">{review.age}</span>
-                                    </SidebarMenuSubButton>
-                                  </SidebarMenuSubItem>
-                                )}
-                              </For>
-                            </SidebarMenuSub>
-                          </Show>
-                        </SidebarMenuItem>
-                      )}
-                    </For>
-                  </SidebarMenu>
-                </Show>
-              </Show>
-              <Show when={loadError()}>
-                {(message) => (
-                  <p class="px-3.5 pt-2 text-[12px] text-rose-400/70" title={message()}>
-                    Unable to load reviews.
-                  </p>
-                )}
-              </Show>
-            </SidebarGroup>
-          </SidebarContent>
-
-          <SidebarFooter class="px-2.5 pb-4">
-            <SidebarSeparator class="my-2 bg-white/[0.04]" />
-            <SidebarMenu>
-              <SidebarRow label="Settings" onClick={() => openSettings("connections")} />
-            </SidebarMenu>
-          </SidebarFooter>
-        </Sidebar>
+        <WorkspaceRepoSidebar
+          providerBusy={providerBusy}
+          onAddLocalRepo={handleAddLocalRepoFromSidebar}
+          threadsLoading={() => threads.loading}
+          repoGroups={repoGroups}
+          loadError={loadError}
+          repoDisplayName={repoDisplayName}
+          isRepoCollapsed={isRepoCollapsed}
+          toggleRepoCollapsed={toggleRepoCollapsed}
+          selectedThreadId={selectedThreadId}
+          onSelectThread={setSelectedThreadId}
+          onCreateReviewForRepo={handleCreateReviewForRepo}
+          isRepoMenuOpen={isRepoMenuOpen}
+          setRepoMenuOpenState={setRepoMenuOpenState}
+          onRenameRepo={handleRenameRepo}
+          onRemoveRepo={handleRemoveRepo}
+          onOpenSettings={() => openSettings("connections")}
+        />
 
         <SidebarInset class="bg-transparent p-2 md:p-3">
           <section class="glass-surface flex h-[calc(100svh-1.5rem)] flex-col overflow-hidden rounded-2xl border border-white/[0.06] shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
-            {/* Header */}
-            <header class="shrink-0 border-b border-white/[0.05] px-6 py-3">
-              <div class="flex items-center justify-between gap-4">
-                <div class="flex items-center gap-3 min-w-0">
-                  <SidebarTrigger class="h-8 w-8 shrink-0 rounded-lg border border-white/[0.06] text-neutral-500 transition-colors hover:bg-white/[0.04] hover:text-neutral-300" />
-                  <div class="min-w-0">
-                    <h1 class="app-title truncate text-[clamp(1rem,1.4vw,1.25rem)] text-neutral-100">
-                      {selectedReview()?.title ?? "Select a review"}
-                    </h1>
-                    <Show when={selectedReview()}>
-                      {(review) => (
-                        <div class="mt-0.5 flex items-center gap-1.5 text-[12px] text-neutral-500">
-                          <span>{repoDisplayName(review().repoName)}</span>
-                          <ChevronRight class="size-3 text-neutral-600" />
-                          <span class="text-neutral-400">{review().age} ago</span>
-                        </div>
-                      )}
-                    </Show>
-                  </div>
-                </div>
-                <div class="flex shrink-0 items-center gap-px rounded-lg border border-white/[0.06] bg-white/[0.02] text-[12px]">
-                  <div class="flex items-center gap-1.5 border-r border-white/[0.06] px-3 py-1.5">
-                    <span class="text-neutral-500">Base</span>
-                    <span class="font-medium text-neutral-300">{compareResult()?.baseRef ?? selectedBaseRef()}</span>
-                  </div>
-                  <div class="flex items-center gap-1.5 border-r border-white/[0.06] px-3 py-1.5">
-                    <span class="text-neutral-500">Merge</span>
-                    <span class="font-mono font-medium text-neutral-300">{compareResult()?.mergeBase ? compareResult()?.mergeBase.slice(0, 8) : "—"}</span>
-                  </div>
-                  <div class="flex items-center gap-1.5 px-3 py-1.5">
-                    <span class="text-neutral-500">Head</span>
-                    <span class="font-mono font-medium text-neutral-300">{compareResult()?.head ? compareResult()?.head.slice(0, 8) : "—"}</span>
-                  </div>
-                </div>
-              </div>
-            </header>
+            <WorkspaceHeader
+              selectedReview={selectedReview}
+              repoDisplayName={repoDisplayName}
+              compareResult={compareResult}
+              selectedBaseRef={selectedBaseRef}
+            />
 
             {/* Main content */}
             <div class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
