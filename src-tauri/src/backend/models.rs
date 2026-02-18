@@ -264,6 +264,33 @@ pub struct GenerateAiReviewInput {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AiReviewFinding {
+    pub id: String,
+    pub file_path: String,
+    pub chunk_id: String,
+    pub chunk_index: usize,
+    pub hunk_header: String,
+    pub side: String,
+    pub line_number: i64,
+    pub title: String,
+    pub body: String,
+    pub severity: String,
+    pub confidence: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiReviewChunk {
+    pub id: String,
+    pub file_path: String,
+    pub chunk_index: usize,
+    pub hunk_header: String,
+    pub summary: String,
+    pub findings: Vec<AiReviewFinding>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GenerateAiReviewResult {
     pub thread_id: i64,
     pub workspace: String,
@@ -278,6 +305,8 @@ pub struct GenerateAiReviewResult {
     pub diff_chars_used: usize,
     pub diff_chars_total: usize,
     pub diff_truncated: bool,
+    pub chunks: Vec<AiReviewChunk>,
+    pub findings: Vec<AiReviewFinding>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

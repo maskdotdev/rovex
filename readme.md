@@ -29,6 +29,7 @@ The backend lives in `src-tauri/src/backend` and is exposed through Tauri comman
    - Optional: `ROVEX_OPENCODE_PORT` (default: `4096`)
    - Optional: `ROVEX_OPENCODE_SERVER_TIMEOUT_MS` (default: `5000`)
    - Optional: `ROVEX_OPENCODE_PROVIDER` (used when `ROVEX_REVIEW_MODEL` does not include provider, default: `openai`)
+   - Optional: `ROVEX_OPENCODE_AGENT` (default: `plan`)
 
 The app reads `.env` at startup and initializes tables automatically.
 If Turso env vars are missing, the app falls back to a local libsql database instead of crashing.

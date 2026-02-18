@@ -151,6 +151,43 @@ export type GenerateAiReviewInput = {
   prompt?: string | null;
 };
 
+export type AiReviewFinding = {
+  id: string;
+  filePath: string;
+  chunkId: string;
+  chunkIndex: number;
+  hunkHeader: string;
+  side: "additions" | "deletions" | string;
+  lineNumber: number;
+  title: string;
+  body: string;
+  severity: "critical" | "high" | "medium" | "low" | string;
+  confidence: number | null;
+};
+
+export type AiReviewChunk = {
+  id: string;
+  filePath: string;
+  chunkIndex: number;
+  hunkHeader: string;
+  summary: string;
+  findings: AiReviewFinding[];
+};
+
+export type AiReviewProgressEvent = {
+  threadId: number;
+  status: "started" | "chunk-start" | "chunk-complete" | "finding" | "completed" | "failed" | string;
+  message: string;
+  totalChunks: number;
+  completedChunks: number;
+  chunkId: string | null;
+  filePath: string | null;
+  chunkIndex: number | null;
+  findingCount: number | null;
+  chunk: AiReviewChunk | null;
+  finding: AiReviewFinding | null;
+};
+
 export type GenerateAiReviewResult = {
   threadId: number;
   workspace: string;
@@ -165,6 +202,8 @@ export type GenerateAiReviewResult = {
   diffCharsUsed: number;
   diffCharsTotal: number;
   diffTruncated: boolean;
+  chunks: AiReviewChunk[];
+  findings: AiReviewFinding[];
 };
 
 export type GenerateAiFollowUpInput = {
