@@ -1,6 +1,6 @@
 use std::{
-    env, fs,
     collections::BTreeSet,
+    env, fs,
     path::{Path, PathBuf},
     process::{Command, Output},
     time::Duration,
@@ -13,16 +13,16 @@ use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 
 use super::{
     providers::{provider_client, ProviderDeviceAuthorizationPoll},
-    AddThreadMessageInput, AiReviewChunk, AiReviewConfig, AiReviewFinding, AppState,
-    BackendHealth, CheckoutWorkspaceBranchInput, CheckoutWorkspaceBranchResult, CloneRepositoryInput,
+    AddThreadMessageInput, AiReviewChunk, AiReviewConfig, AiReviewFinding, AppState, BackendHealth,
+    CheckoutWorkspaceBranchInput, CheckoutWorkspaceBranchResult, CloneRepositoryInput,
     CloneRepositoryResult, CodeIntelSyncInput, CodeIntelSyncResult, CompareWorkspaceDiffInput,
-    CompareWorkspaceDiffResult, ConnectProviderInput, CreateThreadInput, CreateWorkspaceBranchInput,
-    GenerateAiFollowUpInput, GenerateAiFollowUpResult, GenerateAiReviewInput,
-    GenerateAiReviewResult, ListWorkspaceBranchesInput, ListWorkspaceBranchesResult, Message,
-    MessageRole, OpencodeSidecarStatus, PollProviderDeviceAuthInput, PollProviderDeviceAuthResult,
-    ProviderConnection, ProviderDeviceAuthStatus, ProviderKind, SetAiReviewApiKeyInput,
-    SetAiReviewSettingsInput, StartProviderDeviceAuthInput, StartProviderDeviceAuthResult, Thread,
-    WorkspaceBranch,
+    CompareWorkspaceDiffResult, ConnectProviderInput, CreateThreadInput,
+    CreateWorkspaceBranchInput, GenerateAiFollowUpInput, GenerateAiFollowUpResult,
+    GenerateAiReviewInput, GenerateAiReviewResult, ListWorkspaceBranchesInput,
+    ListWorkspaceBranchesResult, Message, MessageRole, OpencodeSidecarStatus,
+    PollProviderDeviceAuthInput, PollProviderDeviceAuthResult, ProviderConnection,
+    ProviderDeviceAuthStatus, ProviderKind, SetAiReviewApiKeyInput, SetAiReviewSettingsInput,
+    StartProviderDeviceAuthInput, StartProviderDeviceAuthResult, Thread, WorkspaceBranch,
 };
 
 const DEFAULT_LIMIT: i64 = 50;
@@ -563,7 +563,7 @@ fn parse_diff_chunks(diff: &str) -> Vec<DiffChunk> {
 }
 
 fn merge_line_windows(line_numbers: &[i64], max_line: i64) -> Vec<(i64, i64)> {
-    let mut windows = Vec::new();
+    let mut windows: Vec<(i64, i64)> = Vec::new();
     let mut sorted_lines = line_numbers
         .iter()
         .copied()
@@ -634,7 +634,10 @@ fn format_workspace_file_context(workspace: &str, chunk: &DiffChunk) -> Option<S
         sections.push(String::new());
     }
 
-    let rendered = format!("Current workspace snapshot for {source}\n{}", sections.join("\n"));
+    let rendered = format!(
+        "Current workspace snapshot for {source}\n{}",
+        sections.join("\n")
+    );
     let (truncated, did_truncate) = truncate_chars(&rendered, MAX_CHUNK_FILE_CONTEXT_CHARS);
     Some(if did_truncate {
         format!("{truncated}\n[...truncated...]")
@@ -667,7 +670,11 @@ fn normalize_severity(value: Option<&str>) -> &'static str {
     }
 }
 
-fn resolve_line_number_for_chunk(chunk: &DiffChunk, side: &str, requested: Option<i64>) -> Option<i64> {
+fn resolve_line_number_for_chunk(
+    chunk: &DiffChunk,
+    side: &str,
+    requested: Option<i64>,
+) -> Option<i64> {
     let lines = if side == "deletions" {
         &chunk.deletion_lines
     } else {
@@ -735,7 +742,8 @@ fn build_chunk_review_prompt(
     let additions = if chunk.addition_lines.is_empty() {
         "none".to_string()
     } else {
-        chunk.addition_lines
+        chunk
+            .addition_lines
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>()
@@ -744,7 +752,8 @@ fn build_chunk_review_prompt(
     let deletions = if chunk.deletion_lines.is_empty() {
         "none".to_string()
     } else {
-        chunk.deletion_lines
+        chunk
+            .deletion_lines
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>()
@@ -804,11 +813,7 @@ fn build_chunk_review_markdown(
         for finding in &chunk.findings {
             lines.push(format!(
                 "- [{}] {} [{}:{}] {}",
-                finding.severity,
-                finding.title,
-                finding.side,
-                finding.line_number,
-                finding.body
+                finding.severity, finding.title, finding.side, finding.line_number, finding.body
             ));
         }
     }
@@ -1504,7 +1509,8 @@ async fn generate_review_with_openai(
     prompt: &str,
 ) -> Result<String, String> {
     let system_prompt = "You are a senior code reviewer. Review the diff and provide concise, high-signal findings. Prioritize functional bugs, regressions, security risks, and missing tests. Use markdown with sections: Summary, Findings, Suggested Tests. If no issues, say that clearly.";
-    generate_openai_chat_completion(model, base_url, timeout_ms, api_key, system_prompt, prompt).await
+    generate_openai_chat_completion(model, base_url, timeout_ms, api_key, system_prompt, prompt)
+        .await
 }
 
 async fn generate_chunk_with_openai(
@@ -1515,7 +1521,8 @@ async fn generate_chunk_with_openai(
     prompt: &str,
 ) -> Result<String, String> {
     let system_prompt = "You are a senior code reviewer focused on bug detection for a single diff chunk. Inspect context carefully, avoid style nits, and return strict JSON only.";
-    generate_openai_chat_completion(model, base_url, timeout_ms, api_key, system_prompt, prompt).await
+    generate_openai_chat_completion(model, base_url, timeout_ms, api_key, system_prompt, prompt)
+        .await
 }
 
 async fn wait_for_opencode_server(
@@ -2646,25 +2653,24 @@ pub async fn generate_ai_review(
     )
     .await?;
 
-    let (openai_api_key, openai_base_url): (Option<String>, Option<String>) = if review_provider
-        == ReviewProvider::OpenAi
-    {
-        let api_key = env::var(OPENAI_API_KEY_ENV)
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                format!("Missing {OPENAI_API_KEY_ENV}. Add it to .env to enable AI review.")
-            })?;
-        let base_url = env::var(ROVEX_REVIEW_BASE_URL_ENV)
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| DEFAULT_REVIEW_BASE_URL.to_string());
-        (Some(api_key), Some(base_url))
-    } else {
-        (None, None)
-    };
+    let (openai_api_key, openai_base_url): (Option<String>, Option<String>) =
+        if review_provider == ReviewProvider::OpenAi {
+            let api_key = env::var(OPENAI_API_KEY_ENV)
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    format!("Missing {OPENAI_API_KEY_ENV}. Add it to .env to enable AI review.")
+                })?;
+            let base_url = env::var(ROVEX_REVIEW_BASE_URL_ENV)
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| DEFAULT_REVIEW_BASE_URL.to_string());
+            (Some(api_key), Some(base_url))
+        } else {
+            (None, None)
+        };
 
     let total_chunks = diff_chunks.len();
     let mut chunk_reviews: Vec<AiReviewChunk> = Vec::with_capacity(total_chunks);
@@ -2679,10 +2685,7 @@ pub async fn generate_ai_review(
         &AiReviewProgressEvent {
             thread_id: input.thread_id,
             status: "started".to_string(),
-            message: format!(
-                "Started chunked review for {} chunk(s).",
-                total_chunks
-            ),
+            message: format!("Started chunked review for {} chunk(s).", total_chunks),
             total_chunks,
             completed_chunks,
             chunk_id: None,
@@ -2700,10 +2703,7 @@ pub async fn generate_ai_review(
             &AiReviewProgressEvent {
                 thread_id: input.thread_id,
                 status: "chunk-start".to_string(),
-                message: format!(
-                    "Reviewing {} chunk {}.",
-                    chunk.file_path, chunk.chunk_index
-                ),
+                message: format!("Reviewing {} chunk {}.", chunk.file_path, chunk.chunk_index),
                 total_chunks,
                 completed_chunks,
                 chunk_id: Some(chunk.id.clone()),
@@ -2715,7 +2715,8 @@ pub async fn generate_ai_review(
             },
         );
 
-        let (chunk_patch_for_review, chunk_truncated) = truncate_chars(&chunk.patch, max_diff_chars);
+        let (chunk_patch_for_review, chunk_truncated) =
+            truncate_chars(&chunk.patch, max_diff_chars);
         diff_truncated |= chunk_truncated;
         diff_chars_used += chunk_patch_for_review.chars().count();
 
@@ -2810,7 +2811,13 @@ pub async fn generate_ai_review(
                 };
 
                 let finding = AiReviewFinding {
-                    id: format!("{}:{}:{}:{}", chunk.id, side, line_number, finding_index + 1),
+                    id: format!(
+                        "{}:{}:{}:{}",
+                        chunk.id,
+                        side,
+                        line_number,
+                        finding_index + 1
+                    ),
                     file_path: chunk.file_path.clone(),
                     chunk_id: chunk.id.clone(),
                     chunk_index: chunk.chunk_index,
@@ -2820,7 +2827,9 @@ pub async fn generate_ai_review(
                     title,
                     body,
                     severity: normalize_severity(payload_finding.severity.as_deref()).to_string(),
-                    confidence: payload_finding.confidence.map(|value| value.clamp(0.0, 1.0)),
+                    confidence: payload_finding
+                        .confidence
+                        .map(|value| value.clamp(0.0, 1.0)),
                 };
                 chunk_findings.push(finding.clone());
 
@@ -2881,7 +2890,8 @@ pub async fn generate_ai_review(
         );
     }
 
-    let review = build_chunk_review_markdown(&reviewer_goal, &chunk_reviews, &findings, diff_truncated);
+    let review =
+        build_chunk_review_markdown(&reviewer_goal, &chunk_reviews, &findings, diff_truncated);
     persist_thread_message(&state, input.thread_id, MessageRole::Assistant, &review).await?;
 
     emit_ai_review_progress(

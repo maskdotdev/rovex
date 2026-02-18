@@ -2,6 +2,7 @@ import {
   FileDiff,
   parsePatchFiles,
   registerCustomCSSVariableTheme,
+  type DiffLineAnnotation,
   type FileDiffMetadata,
   type FileDiffOptions,
 } from "@pierre/diffs";
@@ -95,22 +96,43 @@ export type DiffViewerTheme = {
   light: string;
 };
 
+export type DiffViewerAnnotation = {
+  id: string;
+  filePath: string;
+  side: "additions" | "deletions";
+  lineNumber: number;
+  title: string;
+  body: string;
+  severity: "critical" | "high" | "medium" | "low" | string;
+  chunkId?: string | null;
+};
+
+type DiffViewerAnnotationMetadata = {
+  id: string;
+  title: string;
+  body: string;
+  severity: string;
+  chunkId?: string | null;
+};
+
 type DiffViewerProps = {
   patch: string;
   theme: DiffViewerTheme;
   themeId?: string;
   themeType?: "system" | "light" | "dark";
   showToolbar?: boolean;
+  annotations?: DiffViewerAnnotation[];
 };
 
 type DiffFileCardProps = {
   file: FileDiffMetadata;
   index: number;
   options: DiffRenderOptions;
+  lineAnnotations: DiffLineAnnotation<DiffViewerAnnotationMetadata>[];
 };
 
 type DiffRenderOptions = Pick<
-  FileDiffOptions<undefined>,
+  FileDiffOptions<DiffViewerAnnotationMetadata>,
   | "diffStyle"
   | "disableLineNumbers"
   | "disableBackground"
@@ -118,6 +140,7 @@ type DiffRenderOptions = Pick<
   | "theme"
   | "themeType"
   | "unsafeCSS"
+  | "renderAnnotation"
 >;
 
 const diffStickyHeaderUnsafeCSS = `
@@ -131,6 +154,40 @@ const diffStickyHeaderUnsafeCSS = `
   -webkit-backdrop-filter: blur(6px);
 }
 `;
+
+function normalizeDiffPath(path: string | null | undefined) {
+  const trimmed = path?.trim();
+  if (!trimmed) return "";
+  const normalized = trimmed.replace(/^([ab])\//, "");
+  return normalized;
+}
+
+function renderDiffAnnotation(annotation: DiffLineAnnotation<DiffViewerAnnotationMetadata>) {
+  const metadata = annotation.metadata;
+  if (!metadata) return undefined;
+
+  const root = document.createElement("div");
+  root.className = `rovex-inline-annotation is-${metadata.severity || "medium"}`;
+
+  const titleRow = document.createElement("div");
+  titleRow.className = "rovex-inline-annotation-title";
+  titleRow.textContent = metadata.title;
+  root.appendChild(titleRow);
+
+  const body = document.createElement("p");
+  body.className = "rovex-inline-annotation-body";
+  body.textContent = metadata.body;
+  root.appendChild(body);
+
+  if (metadata.chunkId) {
+    const footer = document.createElement("div");
+    footer.className = "rovex-inline-annotation-footer";
+    footer.textContent = metadata.chunkId;
+    root.appendChild(footer);
+  }
+
+  return root;
+}
 
 function DiffFileCard(props: DiffFileCardProps) {
   let visibilityAnchorRef: HTMLDivElement | undefined;
@@ -164,14 +221,18 @@ function DiffFileCard(props: DiffFileCardProps) {
 
     container.replaceChildren();
 
-    let instance: FileDiff | undefined;
+    let instance: FileDiff<DiffViewerAnnotationMetadata> | undefined;
     try {
       instance = new FileDiff({
         ...options,
         hunkSeparators: "metadata",
         lineDiffType: "word",
       });
-      instance.render({ fileDiff: props.file, containerWrapper: container });
+      instance.render({
+        fileDiff: props.file,
+        containerWrapper: container,
+        lineAnnotations: props.lineAnnotations,
+      });
       setRenderError(null);
     } catch (error) {
       setRenderError(error instanceof Error ? error.message : String(error));
@@ -226,6 +287,7 @@ export function DiffViewer(props: DiffViewerProps) {
     theme: props.theme,
     themeType: props.themeType ?? "dark",
     unsafeCSS: diffStickyHeaderUnsafeCSS,
+    renderAnnotation: renderDiffAnnotation,
   }));
 
   const parsedDiff = createMemo(() => {
@@ -251,6 +313,31 @@ export function DiffViewer(props: DiffViewerProps) {
 
   const parseError = createMemo(() => parsedDiff().parseError);
   const files = createMemo(() => parsedDiff().files);
+  const annotationsByFile = createMemo(() => {
+    const map = new Map<string, DiffLineAnnotation<DiffViewerAnnotationMetadata>[]>();
+    for (const annotation of props.annotations ?? []) {
+      const normalizedPath = normalizeDiffPath(annotation.filePath);
+      if (!normalizedPath) continue;
+      const side = annotation.side === "deletions" ? "deletions" : "additions";
+      const lineNumber = Number(annotation.lineNumber);
+      if (!Number.isFinite(lineNumber) || lineNumber <= 0) continue;
+      const entry: DiffLineAnnotation<DiffViewerAnnotationMetadata> = {
+        side,
+        lineNumber,
+        metadata: {
+          id: annotation.id,
+          title: annotation.title,
+          body: annotation.body,
+          severity: annotation.severity || "medium",
+          chunkId: annotation.chunkId,
+        },
+      };
+      const existing = map.get(normalizedPath) ?? [];
+      existing.push(entry);
+      map.set(normalizedPath, existing);
+    }
+    return map;
+  });
   const filesLabel = createMemo(() => {
     const count = files().length;
     return `${count} file${count === 1 ? "" : "s"}`;
@@ -335,9 +422,22 @@ export function DiffViewer(props: DiffViewerProps) {
       </Show>
       <div class="rovex-diff-viewer">
         <For each={files()}>
-          {(file, index) => (
-            <DiffFileCard file={file} index={index()} options={renderOptions()} />
-          )}
+          {(file, index) => {
+            const primaryPath = normalizeDiffPath(file.name);
+            const previousPath = normalizeDiffPath(file.prevName);
+            const fileAnnotations = [
+              ...(annotationsByFile().get(primaryPath) ?? []),
+              ...(annotationsByFile().get(previousPath) ?? []),
+            ];
+            return (
+              <DiffFileCard
+                file={file}
+                index={index()}
+                options={renderOptions()}
+                lineAnnotations={fileAnnotations}
+              />
+            );
+          }}
         </For>
       </div>
     </div>

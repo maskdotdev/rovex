@@ -8,6 +8,7 @@ import {
   onCleanup,
   type Component,
 } from "solid-js";
+import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -74,7 +75,10 @@ import {
   setAiReviewApiKey,
   setAiReviewSettings,
   startProviderDeviceAuth,
+  type AiReviewChunk,
   type AiReviewConfig,
+  type AiReviewFinding,
+  type AiReviewProgressEvent,
   type CompareWorkspaceDiffResult,
   type ListWorkspaceBranchesResult,
   type Message as ThreadMessage,
@@ -443,6 +447,9 @@ function App() {
   const [aiSettingsBusy, setAiSettingsBusy] = createSignal(false);
   const [aiSettingsError, setAiSettingsError] = createSignal<string | null>(null);
   const [aiSettingsStatus, setAiSettingsStatus] = createSignal<string | null>(null);
+  const [aiChunkReviews, setAiChunkReviews] = createSignal<AiReviewChunk[]>([]);
+  const [aiFindings, setAiFindings] = createSignal<AiReviewFinding[]>([]);
+  const [aiProgressEvents, setAiProgressEvents] = createSignal<AiReviewProgressEvent[]>([]);
   let branchSearchInputRef: HTMLInputElement | undefined;
   let branchCreateInputRef: HTMLInputElement | undefined;
   let deviceAuthSession = 0;
@@ -496,6 +503,9 @@ function App() {
     setAiPrompt("");
     setAiReviewError(null);
     setAiStatus(null);
+    setAiChunkReviews([]);
+    setAiFindings([]);
+    setAiProgressEvents([]);
   });
 
   createEffect(() => {
@@ -524,6 +534,22 @@ function App() {
     if (!result) return null;
     return `${result.filesChanged} files changed +${result.insertions} -${result.deletions} vs ${result.baseRef}`;
   });
+  const diffAnnotations = createMemo(() =>
+    aiFindings()
+      .map((finding) => {
+        const normalizedSide = finding.side === "deletions" ? "deletions" : "additions";
+        return {
+          id: finding.id,
+          filePath: finding.filePath,
+          side: normalizedSide,
+          lineNumber: finding.lineNumber,
+          title: finding.title,
+          body: finding.body,
+          severity: finding.severity,
+          chunkId: finding.chunkId,
+        };
+      })
+  );
   const selectedWorkspace = createMemo(() => selectedReview()?.workspace?.trim() ?? "");
   const [workspaceBranches, { refetch: refetchWorkspaceBranches }] = createResource(
     selectedWorkspace,
@@ -604,14 +630,81 @@ function App() {
     setAiOpencodeProviderInput(config.opencodeProvider || "openai");
     setAiOpencodeModelInput(config.opencodeModel ?? "");
   });
-  const visibleThreadMessages = createMemo(() => {
-    const messages = threadMessages() ?? [];
-    if (messages.length <= 12) return messages;
-    return messages.slice(messages.length - 12);
-  });
   const hasReviewStarted = createMemo(() =>
     (threadMessages() ?? []).some((message) => message.role === "assistant")
   );
+
+  createEffect(() => {
+    let active = true;
+    let stopListening: (() => void) | null = null;
+
+    void listen<AiReviewProgressEvent>("rovex://ai-review-progress", (event) => {
+      if (!active) return;
+      const payload = event.payload;
+      const selected = selectedThreadId();
+      if (selected != null && payload.threadId !== selected) return;
+
+      setAiProgressEvents((current) => {
+        const next = [...current, payload];
+        return next.length > 160 ? next.slice(next.length - 160) : next;
+      });
+
+      if (payload.status === "started") {
+        setAiReviewBusy(true);
+        setAiReviewError(null);
+        setAiStatus(payload.message);
+        setAiChunkReviews([]);
+        setAiFindings([]);
+      } else if (payload.status === "failed") {
+        setAiReviewBusy(false);
+        setAiReviewError(payload.message);
+      } else {
+        setAiStatus(payload.message);
+      }
+
+      const chunk = payload.chunk;
+      if (chunk) {
+        setAiChunkReviews((current) => {
+          const next = [...current];
+          const existingIndex = next.findIndex((candidate) => candidate.id === chunk.id);
+          if (existingIndex >= 0) {
+            next[existingIndex] = chunk;
+          } else {
+            next.push(chunk);
+          }
+          return next.sort((left, right) =>
+            left.filePath.localeCompare(right.filePath) || left.chunkIndex - right.chunkIndex
+          );
+        });
+      }
+
+      const finding = payload.finding;
+      if (finding) {
+        setAiFindings((current) => {
+          if (current.some((candidate) => candidate.id === finding.id)) {
+            return current;
+          }
+          return [...current, finding];
+        });
+      }
+
+      if (payload.status === "completed") {
+        setAiReviewBusy(false);
+        void refetchThreadMessages();
+      }
+    }).then((unlisten) => {
+      if (!active) {
+        unlisten();
+        return;
+      }
+      stopListening = unlisten;
+    });
+
+    onCleanup(() => {
+      active = false;
+      stopListening?.();
+    });
+  });
 
   createEffect(() => {
     if (!aiReviewBusy()) {
@@ -1236,6 +1329,9 @@ function App() {
   const handleStartAiReview = async () => {
     setAiReviewError(null);
     setAiStatus(null);
+    setAiChunkReviews([]);
+    setAiFindings([]);
+    setAiProgressEvents([]);
 
     const threadId = selectedThreadId();
     if (threadId == null) {
@@ -1255,7 +1351,7 @@ function App() {
     }
 
     setAiReviewBusy(true);
-    setAiStatus("Starting review. Waiting for OpenCode response...");
+    setAiStatus("Starting chunked review...");
     try {
       const response = await generateAiReview({
         threadId,
@@ -1271,8 +1367,10 @@ function App() {
       });
       await refetchThreadMessages();
       setAiPrompt("");
+      setAiChunkReviews(response.chunks);
+      setAiFindings(response.findings);
       setAiStatus(
-        `Review started with ${response.model}${response.diffTruncated ? " (truncated diff input)." : "."}`
+        `Reviewed ${response.chunks.length} chunk(s) with ${response.findings.length} finding(s) using ${response.model}${response.diffTruncated ? " (truncated chunk input)." : "."}`
       );
     } catch (error) {
       setAiReviewError(error instanceof Error ? error.message : String(error));
@@ -2270,6 +2368,7 @@ function App() {
                       theme={selectedDiffTheme().theme}
                       themeId={selectedDiffTheme().id}
                       themeType="dark"
+                      annotations={diffAnnotations()}
                     />
                   </Show>
                 )}
@@ -2278,43 +2377,70 @@ function App() {
               <div class="mt-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
                 <div class="flex items-center justify-between border-b border-white/[0.05] px-4 py-2.5">
                   <h3 class="text-[12px] font-semibold uppercase tracking-[0.1em] text-neutral-500">
-                    Review Notes
+                    Chunk Reviews
                   </h3>
                   <span class="text-[12px] text-neutral-600">
-                    {(threadMessages() ?? []).length} messages{aiReviewBusy() ? " • live" : ""}
+                    {aiChunkReviews().length} chunks • {aiFindings().length} findings{aiReviewBusy() ? " • live" : ""}
                   </span>
                 </div>
-                <Show when={threadMessagesLoadError()}>
-                  {(message) => (
-                    <p class="px-4 py-3 text-[13px] text-rose-300/90">
-                      Unable to load thread messages: {message()}
-                    </p>
-                  )}
+                <Show
+                  when={aiProgressEvents().length > 0}
+                  fallback={null}
+                >
+                  <div class="max-h-[7rem] space-y-1.5 overflow-y-auto border-b border-white/[0.05] px-4 py-2">
+                    <For each={aiProgressEvents().slice(Math.max(0, aiProgressEvents().length - 8))}>
+                      {(event) => (
+                        <p class="text-[12px] text-neutral-500">
+                          {event.message}
+                        </p>
+                      )}
+                    </For>
+                  </div>
                 </Show>
                 <Show
-                  when={visibleThreadMessages().length > 0}
+                  when={aiChunkReviews().length > 0}
                   fallback={
                     <p class="px-4 py-4 text-[13px] text-neutral-500">
-                      Start review to generate findings, then ask follow-up questions below.
+                      Start review to analyze each diff chunk and generate inline findings.
                     </p>
                   }
                 >
                   <div class="max-h-[20rem] space-y-2 overflow-y-auto px-3 py-3">
-                    <For each={visibleThreadMessages()}>
-                      {(message) => (
+                    <For each={aiChunkReviews()}>
+                      {(chunk) => (
                         <div class="rounded-lg border border-white/[0.05] bg-white/[0.015] px-3 py-2.5">
-                          <div class="mb-1.5 flex items-center gap-2 text-[11px] uppercase tracking-[0.08em] text-neutral-500">
-                            <span>{message.role}</span>
-                            <span class="text-neutral-700">•</span>
-                            <span class="normal-case text-neutral-600">{formatRelativeAge(message.createdAt)} ago</span>
+                          <div class="mb-1.5 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.08em] text-neutral-500">
+                            <span class="truncate">{chunk.filePath} • chunk {chunk.chunkIndex}</span>
+                            <span class="shrink-0 normal-case text-neutral-600">
+                              {chunk.findings.length} finding{chunk.findings.length === 1 ? "" : "s"}
+                            </span>
                           </div>
-                          <p class="whitespace-pre-wrap text-[13px] leading-5 text-neutral-200">
-                            {message.content}
-                          </p>
+                          <p class="text-[13px] leading-5 text-neutral-300">{chunk.summary}</p>
+                          <Show when={chunk.findings.length > 0}>
+                            <div class="mt-2 space-y-2">
+                              <For each={chunk.findings}>
+                                {(finding) => (
+                                  <div class="rounded-md border border-amber-500/20 bg-amber-500/5 px-2.5 py-2 text-[12.5px] text-amber-100/90">
+                                    <p class="font-medium text-amber-200/90">
+                                      [{finding.severity}] {finding.title} ({finding.side}:{finding.lineNumber})
+                                    </p>
+                                    <p class="mt-1 text-amber-100/80">{finding.body}</p>
+                                  </div>
+                                )}
+                              </For>
+                            </div>
+                          </Show>
                         </div>
                       )}
                     </For>
                   </div>
+                </Show>
+                <Show when={threadMessagesLoadError()}>
+                  {(message) => (
+                    <p class="border-t border-white/[0.05] px-4 py-3 text-[12px] text-rose-300/90">
+                      Unable to refresh conversation history: {message()}
+                    </p>
+                  )}
                 </Show>
               </div>
             </div>

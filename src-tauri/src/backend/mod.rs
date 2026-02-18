@@ -7,16 +7,15 @@ mod providers;
 
 pub use models::{
     AddThreadMessageInput, AiReviewChunk, AiReviewConfig, AiReviewFinding, BackendHealth,
-    CheckoutWorkspaceBranchInput,
-    CheckoutWorkspaceBranchResult, CloneRepositoryInput, CloneRepositoryResult, CodeIntelSyncInput,
-    CodeIntelSyncResult, CompareWorkspaceDiffInput, CompareWorkspaceDiffResult,
-    ConnectProviderInput, CreateThreadInput, CreateWorkspaceBranchInput, GenerateAiFollowUpInput,
-    GenerateAiFollowUpResult, GenerateAiReviewInput, GenerateAiReviewResult,
-    ListWorkspaceBranchesInput, ListWorkspaceBranchesResult, Message, MessageRole,
-    OpencodeSidecarStatus, PollProviderDeviceAuthInput, PollProviderDeviceAuthResult,
-    ProviderConnection, ProviderDeviceAuthStatus, ProviderKind, SetAiReviewApiKeyInput,
-    SetAiReviewSettingsInput, StartProviderDeviceAuthInput, StartProviderDeviceAuthResult, Thread,
-    WorkspaceBranch,
+    CheckoutWorkspaceBranchInput, CheckoutWorkspaceBranchResult, CloneRepositoryInput,
+    CloneRepositoryResult, CodeIntelSyncInput, CodeIntelSyncResult, CompareWorkspaceDiffInput,
+    CompareWorkspaceDiffResult, ConnectProviderInput, CreateThreadInput,
+    CreateWorkspaceBranchInput, GenerateAiFollowUpInput, GenerateAiFollowUpResult,
+    GenerateAiReviewInput, GenerateAiReviewResult, ListWorkspaceBranchesInput,
+    ListWorkspaceBranchesResult, Message, MessageRole, OpencodeSidecarStatus,
+    PollProviderDeviceAuthInput, PollProviderDeviceAuthResult, ProviderConnection,
+    ProviderDeviceAuthStatus, ProviderKind, SetAiReviewApiKeyInput, SetAiReviewSettingsInput,
+    StartProviderDeviceAuthInput, StartProviderDeviceAuthResult, Thread, WorkspaceBranch,
 };
 
 use libsql::{Connection, Database};

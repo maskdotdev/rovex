@@ -203,6 +203,51 @@ textarea:focus {
   color: rgba(255, 255, 255, 0.48);
 }
 
+.rovex-inline-annotation {
+  margin: 0.35rem 0.45rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-left-width: 3px;
+  border-radius: 0.6rem;
+  background: rgba(11, 16, 23, 0.92);
+  padding: 0.42rem 0.52rem;
+}
+
+.rovex-inline-annotation.is-critical {
+  border-left-color: rgba(255, 82, 82, 0.95);
+}
+
+.rovex-inline-annotation.is-high {
+  border-left-color: rgba(255, 140, 102, 0.95);
+}
+
+.rovex-inline-annotation.is-medium {
+  border-left-color: rgba(242, 201, 76, 0.95);
+}
+
+.rovex-inline-annotation.is-low {
+  border-left-color: rgba(116, 209, 159, 0.95);
+}
+
+.rovex-inline-annotation-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: rgba(244, 247, 255, 0.95);
+}
+
+.rovex-inline-annotation-body {
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: rgba(220, 228, 240, 0.86);
+}
+
+.rovex-inline-annotation-footer {
+  margin-top: 0.26rem;
+  font-size: 0.65rem;
+  color: rgba(168, 180, 200, 0.65);
+}
+
 .branch-picker-trigger {
   display: inline-flex;
   width: fit-content;
