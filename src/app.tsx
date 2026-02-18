@@ -270,11 +270,6 @@ function App() {
     () => !branchActionBusy() && newBranchName().trim().length > 0
   );
 
-  const selectedSettingsItem = createMemo(() => {
-    const selected = settingsNavItems.find((item) => item.id === activeSettingsTab());
-    return selected ?? settingsNavItems[0];
-  });
-
   const loadError = createMemo(() => {
     const error = threads.error;
     if (!error) return null;
