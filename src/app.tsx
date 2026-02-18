@@ -1,21 +1,14 @@
 import {
   Show,
-  createEffect,
   createMemo,
   createResource,
   createSignal,
-  onCleanup,
 } from "solid-js";
-import { listen } from "@tauri-apps/api/event";
 import type { DiffViewerAnnotation } from "@/components/diff-viewer";
 import {
   SidebarInset,
   SidebarProvider,
 } from "@/components/sidebar";
-import {
-  DIFF_THEME_STORAGE_KEY,
-  REPO_DISPLAY_NAME_STORAGE_KEY,
-} from "@/app/constants";
 import {
   getDiffThemePreset,
   getInitialDiffThemeId,
@@ -27,6 +20,7 @@ import { SettingsView } from "@/app/components/settings-view";
 import { WorkspaceHeader } from "@/app/components/workspace-header";
 import { WorkspaceMainPane } from "@/app/components/workspace-main-pane";
 import { WorkspaceRepoSidebar } from "@/app/components/workspace-repo-sidebar";
+import { useAppEffects } from "@/app/hooks/use-app-effects";
 import { useProviderAndSettingsActions } from "@/app/hooks/use-provider-and-settings-actions";
 import { useReviewActions } from "@/app/hooks/use-review-actions";
 import type { AppView, RepoReview, SettingsTab } from "@/app/types";
@@ -120,30 +114,6 @@ function App() {
   let branchSearchInputRef: HTMLInputElement | undefined;
   let branchCreateInputRef: HTMLInputElement | undefined;
 
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(DIFF_THEME_STORAGE_KEY, selectedDiffTheme().id);
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(REPO_DISPLAY_NAME_STORAGE_KEY, JSON.stringify(repoDisplayNames()));
-  });
-
-  createEffect(() => {
-    const groups = repoGroups();
-    if (groups.length === 0) {
-      setSelectedThreadId(null);
-      return;
-    }
-
-    const selected = selectedThreadId();
-    const hasSelected = groups.some((group) => group.reviews.some((review) => review.id === selected));
-    if (hasSelected) return;
-
-    setSelectedThreadId(groups[0].reviews[0]?.id ?? null);
-  });
-
   const selectedReview = createMemo<RepoReview | undefined>(() => {
     const selected = selectedThreadId();
     if (selected == null) return undefined;
@@ -154,45 +124,6 @@ function App() {
     }
 
     return undefined;
-  });
-
-  createEffect(() => {
-    selectedThreadId();
-    setCompareError(null);
-    setCompareResult(null);
-    setShowDiffViewer(false);
-    setBranchPopoverOpen(false);
-    setBranchSearchQuery("");
-    setBranchCreateMode(false);
-    setNewBranchName("");
-    setBranchActionError(null);
-    setAiPrompt("");
-    setAiReviewError(null);
-    setAiStatus(null);
-    setAiChunkReviews([]);
-    setAiFindings([]);
-    setAiProgressEvents([]);
-  });
-
-  createEffect(() => {
-    if (!branchPopoverOpen()) return;
-    setBranchSearchQuery("");
-    setBranchCreateMode(false);
-    setNewBranchName("");
-    setBranchActionError(null);
-    if (selectedWorkspace().length > 0) {
-      void refetchWorkspaceBranches();
-    }
-    queueMicrotask(() => {
-      branchSearchInputRef?.focus();
-    });
-  });
-
-  createEffect(() => {
-    if (!branchCreateMode()) return;
-    queueMicrotask(() => {
-      branchCreateInputRef?.focus();
-    });
   });
 
   const compareSummary = createMemo(() => {
@@ -283,108 +214,48 @@ function App() {
     if (!error) return null;
     return error instanceof Error ? error.message : String(error);
   });
-  createEffect(() => {
-    const config = aiReviewConfig();
-    if (!config) return;
-    setAiReviewProviderInput(config.reviewProvider || "openai");
-    setAiReviewModelInput(config.reviewModel || "gpt-4.1-mini");
-    setAiOpencodeProviderInput(config.opencodeProvider || "openai");
-    setAiOpencodeModelInput(config.opencodeModel ?? "");
-  });
   const hasReviewStarted = createMemo(() =>
     (threadMessages() ?? []).some((message) => message.role === "assistant")
   );
 
-  createEffect(() => {
-    let active = true;
-    let stopListening: (() => void) | null = null;
+  const getBranchSearchInputRef = () => branchSearchInputRef;
+  const getBranchCreateInputRef = () => branchCreateInputRef;
 
-    void listen<AiReviewProgressEvent>("rovex://ai-review-progress", (event) => {
-      if (!active) return;
-      const payload = event.payload;
-      const selected = selectedThreadId();
-      if (selected != null && payload.threadId !== selected) return;
-
-      setAiProgressEvents((current) => {
-        const next = [...current, payload];
-        return next.length > 160 ? next.slice(next.length - 160) : next;
-      });
-
-      if (payload.status === "started") {
-        setAiReviewBusy(true);
-        setAiReviewError(null);
-        setAiStatus(payload.message);
-        setAiChunkReviews([]);
-        setAiFindings([]);
-      } else if (payload.status === "failed") {
-        setAiReviewBusy(false);
-        setAiReviewError(payload.message);
-      } else {
-        setAiStatus(payload.message);
-      }
-
-      const chunk = payload.chunk;
-      if (chunk) {
-        setAiChunkReviews((current) => {
-          const next = [...current];
-          const existingIndex = next.findIndex((candidate) => candidate.id === chunk.id);
-          if (existingIndex >= 0) {
-            next[existingIndex] = chunk;
-          } else {
-            next.push(chunk);
-          }
-          return next.sort((left, right) =>
-            left.filePath.localeCompare(right.filePath) || left.chunkIndex - right.chunkIndex
-          );
-        });
-      }
-
-      const finding = payload.finding;
-      if (finding) {
-        setAiFindings((current) => {
-          if (current.some((candidate) => candidate.id === finding.id)) {
-            return current;
-          }
-          return [...current, finding];
-        });
-      }
-
-      if (payload.status === "completed") {
-        setAiReviewBusy(false);
-        void refetchThreadMessages();
-      }
-    }).then((unlisten) => {
-      if (!active) {
-        unlisten();
-        return;
-      }
-      stopListening = unlisten;
-    });
-
-    onCleanup(() => {
-      active = false;
-      stopListening?.();
-    });
-  });
-
-  createEffect(() => {
-    if (!aiReviewBusy()) {
-      setAiRunElapsedSeconds(0);
-      return;
-    }
-
-    const startedAt = Date.now();
-    setAiRunElapsedSeconds(0);
-    void refetchThreadMessages();
-
-    const interval = window.setInterval(() => {
-      setAiRunElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
-      void refetchThreadMessages();
-    }, 1200);
-
-    onCleanup(() => {
-      window.clearInterval(interval);
-    });
+  useAppEffects({
+    selectedDiffTheme,
+    repoDisplayNames,
+    repoGroups,
+    selectedThreadId,
+    setSelectedThreadId,
+    setCompareError,
+    setCompareResult,
+    setShowDiffViewer,
+    setBranchPopoverOpen,
+    setBranchSearchQuery,
+    setBranchCreateMode,
+    setNewBranchName,
+    setBranchActionError,
+    setAiPrompt,
+    setAiReviewError,
+    setAiStatus,
+    setAiChunkReviews,
+    setAiFindings,
+    setAiProgressEvents,
+    branchPopoverOpen,
+    selectedWorkspace,
+    refetchWorkspaceBranches,
+    getBranchSearchInputRef,
+    branchCreateMode,
+    getBranchCreateInputRef,
+    aiReviewConfig,
+    setAiReviewProviderInput,
+    setAiReviewModelInput,
+    setAiOpencodeProviderInput,
+    setAiOpencodeModelInput,
+    setAiReviewBusy,
+    refetchThreadMessages,
+    aiReviewBusy,
+    setAiRunElapsedSeconds,
   });
 
   const {
