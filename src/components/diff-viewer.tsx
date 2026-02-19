@@ -6,7 +6,7 @@ import {
   type FileDiffMetadata,
   type FileDiffOptions,
 } from "@pierre/diffs";
-import { ChevronDown, ChevronRight, Columns2, Hash, PaintBucket, Rows3, WrapText } from "lucide-solid";
+import { Columns2, Hash, PaintBucket, Rows3, WrapText } from "lucide-solid";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/tooltip";
 
@@ -126,7 +126,7 @@ type DiffViewerProps = {
 
 type DiffFileCardProps = {
   file: FileDiffMetadata;
-  initiallyExpanded: boolean;
+  initiallyVisible: boolean;
   fastMode: boolean;
   options: DiffRenderOptions;
   lineAnnotations: DiffLineAnnotation<DiffViewerAnnotationMetadata>[];
@@ -151,12 +151,19 @@ type DiffViewerProfileState = {
   renderedFiles: number;
 };
 
+type ParsedDiffState = {
+  files: FileDiffMetadata[];
+  parseError: string | null;
+  parseMs: number;
+};
+
 const FAST_DIFF_PATCH_BYTES_THRESHOLD = 200_000;
 const FAST_DIFF_FILE_COUNT_THRESHOLD = 20;
 const FAST_DIFF_TOTAL_LINE_THRESHOLD = 3_000;
 const FAST_DIFF_FILE_LINE_THRESHOLD = 500;
-const FAST_DIFF_DEFAULT_EXPANDED_FILES = 0;
-const DEFAULT_EXPANDED_FILES = 2;
+const HUGE_FILE_LIGHT_RENDERER_LINE_THRESHOLD = 2_000;
+const DEFAULT_INITIAL_VISIBLE_FILES = 3;
+const FAST_INITIAL_VISIBLE_FILES = 1;
 const DIFF_PROFILE_STORAGE_KEY = "rovex.profile.diff";
 const EMPTY_LINE_ANNOTATIONS: DiffLineAnnotation<DiffViewerAnnotationMetadata>[] = [];
 
@@ -240,12 +247,42 @@ function renderDiffAnnotation(annotation: DiffLineAnnotation<DiffViewerAnnotatio
   return root;
 }
 
+function renderLargeFileAsPlainUnifiedText(file: FileDiffMetadata) {
+  const lines: string[] = [];
+  lines.push(`--- ${file.prevName ?? file.name}`);
+  lines.push(`+++ ${file.name}`);
+
+  for (const hunk of file.hunks) {
+    const contextSuffix = hunk.hunkContext ? ` ${hunk.hunkContext}` : "";
+    lines.push(
+      `@@ -${hunk.deletionStart},${hunk.deletionLines} +${hunk.additionStart},${hunk.additionLines} @@${contextSuffix}`
+    );
+
+    for (const block of hunk.hunkContent) {
+      if (block.type === "context") {
+        for (const line of block.lines) {
+          lines.push(` ${line}`);
+        }
+        continue;
+      }
+      for (const line of block.deletions) {
+        lines.push(`-${line}`);
+      }
+      for (const line of block.additions) {
+        lines.push(`+${line}`);
+      }
+    }
+  }
+
+  return lines.join("\n");
+}
+
 function DiffFileCard(props: DiffFileCardProps) {
+  let visibilityAnchorRef: HTMLDivElement | undefined;
   let containerRef: HTMLDivElement | undefined;
   let instance: FileDiff<DiffViewerAnnotationMetadata> | undefined;
   let profiledInitialRender = false;
-  const [expanded, setExpanded] = createSignal(props.initiallyExpanded);
-  const [shouldRender, setShouldRender] = createSignal(props.initiallyExpanded);
+  const [shouldRender, setShouldRender] = createSignal(props.initiallyVisible);
   const [renderError, setRenderError] = createSignal<string | null>(null);
   const displayPath = createMemo(
     () => normalizeDiffPath(props.file.name) || normalizeDiffPath(props.file.prevName) || "(unknown)"
@@ -256,13 +293,51 @@ function DiffFileCard(props: DiffFileCardProps) {
   });
 
   createEffect(() => {
-    if (!shouldRender() || !expanded()) return;
+    const anchor = visibilityAnchorRef;
+    if (!anchor) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setShouldRender(true);
+        }
+      },
+      { rootMargin: props.fastMode ? "900px 0px" : "1400px 0px" }
+    );
+    observer.observe(anchor);
+    onCleanup(() => observer.disconnect());
+  });
+
+  createEffect(() => {
+    if (!shouldRender()) return;
+
     const container = containerRef;
     if (!container) return;
 
     try {
       const fileLineCount = Math.max(props.file.unifiedLineCount, props.file.splitLineCount);
+      const useHugeFileLightRenderer = fileLineCount >= HUGE_FILE_LIGHT_RENDERER_LINE_THRESHOLD;
       const useFastFileMode = props.fastMode || fileLineCount >= FAST_DIFF_FILE_LINE_THRESHOLD;
+      if (useHugeFileLightRenderer) {
+        if (instance) {
+          instance.cleanUp();
+          instance = undefined;
+        }
+
+        container.replaceChildren();
+        const pre = document.createElement("pre");
+        pre.className = "rovex-huge-diff-plain";
+        const renderStart = performance.now();
+        pre.textContent = renderLargeFileAsPlainUnifiedText(props.file);
+        container.appendChild(pre);
+        const renderMs = performance.now() - renderStart;
+        if (!profiledInitialRender) {
+          props.onRendered?.(props.file.name, renderMs);
+          profiledInitialRender = true;
+        }
+        setRenderError(null);
+        return;
+      }
+
       const fileOptions: FileDiffOptions<DiffViewerAnnotationMetadata> = {
         ...props.options,
         hunkSeparators: "metadata",
@@ -294,64 +369,38 @@ function DiffFileCard(props: DiffFileCardProps) {
     }
   });
 
-  createEffect(() => {
-    if (expanded()) return;
-    if (!instance) return;
-    instance.cleanUp();
-    instance = undefined;
-    containerRef?.replaceChildren();
-  });
-
   onCleanup(() => {
     instance?.cleanUp();
     containerRef?.replaceChildren();
   });
 
-  const handleToggleExpanded = () => {
-    const nextExpanded = !expanded();
-    setExpanded(nextExpanded);
-    if (nextExpanded && !shouldRender()) {
-      setShouldRender(true);
-    }
-  };
-
   return (
     <section class="rovex-diff-file">
-      <button
-        type="button"
-        class="mx-2 mb-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-left hover:bg-white/[0.04]"
-        aria-expanded={expanded()}
-        onClick={handleToggleExpanded}
-      >
+      <div class="flex w-full items-center justify-between px-3 py-2.5">
         <span class="flex min-w-0 items-center gap-2">
-          <Show when={expanded()} fallback={<ChevronRight class="size-3.5 text-neutral-400" />}>
-            <ChevronDown class="size-3.5 text-neutral-400" />
-          </Show>
           <span class="truncate text-[12px] text-neutral-200">{displayPath()}</span>
         </span>
         <span class="ml-2 shrink-0 text-[11px] text-neutral-400">{statsLabel()}</span>
-      </button>
-      <Show when={expanded()}>
-        <>
-          <Show when={renderError()}>
-            {(message) => (
-              <div class="mx-3 mb-3 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-[12px] text-rose-300/90">
-                Failed to render file diff: {message()}
-              </div>
-            )}
-          </Show>
-          <Show
-            when={shouldRender()}
-            fallback={
-              <div class="rovex-diff-file-placeholder">
-                Loading file diff...
-              </div>
-            }
-          >
-            <div ref={containerRef} />
-          </Show>
-        </>
-      </Show>
+      </div>
+      <div ref={visibilityAnchorRef}>
+        <Show when={renderError()}>
+          {(message) => (
+            <div class="mx-3 mb-3 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-[12px] text-rose-300/90">
+              Failed to render file diff: {message()}
+            </div>
+          )}
+        </Show>
+        <Show
+          when={shouldRender()}
+          fallback={
+            <div class="rovex-diff-file-placeholder">
+              Scroll to load this file diff.
+            </div>
+          }
+        >
+          <div ref={containerRef} />
+        </Show>
+      </div>
     </section>
   );
 }
@@ -383,10 +432,56 @@ export function DiffViewer(props: DiffViewerProps) {
     renderAnnotation: renderDiffAnnotation,
   }));
 
-  const parsedDiff = createMemo(() => {
+  const [parsedDiff, setParsedDiff] = createSignal<ParsedDiffState>({
+    files: [],
+    parseError: null,
+    parseMs: 0,
+  });
+
+  createEffect(() => {
     const patchText = props.patch.trim();
+    setParsedDiff({ files: [], parseError: null, parseMs: 0 });
     if (patchText.length === 0) {
-      return { files: [] as FileDiffMetadata[], parseError: null as string | null, parseMs: 0 };
+      return;
+    }
+
+    let disposed = false;
+
+    const finishParse = (state: ParsedDiffState) => {
+      if (disposed) return;
+      setParsedDiff(state);
+    };
+
+    if (typeof Worker !== "undefined") {
+      const worker = new Worker(new URL("./diff-parse.worker.ts", import.meta.url), {
+        type: "module",
+      });
+      worker.onmessage = (
+        event: MessageEvent<
+          | { ok: true; files: FileDiffMetadata[]; parseMs: number }
+          | { ok: false; error: string; parseMs: number }
+        >
+      ) => {
+        const payload = event.data;
+        if (payload.ok) {
+          finishParse({ files: payload.files, parseError: null, parseMs: payload.parseMs });
+        } else {
+          finishParse({ files: [], parseError: payload.error, parseMs: payload.parseMs });
+        }
+      };
+      worker.onerror = (error) => {
+        finishParse({
+          files: [],
+          parseError: error.message || "Failed to parse diff in worker.",
+          parseMs: 0,
+        });
+      };
+      worker.postMessage({ patch: patchText });
+      onCleanup(() => {
+        disposed = true;
+        worker.terminate();
+      });
+      return;
     }
 
     const parseStartedAt = performance.now();
@@ -396,18 +491,21 @@ export function DiffViewer(props: DiffViewerProps) {
       for (const patch of parsedPatches) {
         files.push(...patch.files);
       }
-      return {
+      finishParse({
         files,
-        parseError: null as string | null,
+        parseError: null,
         parseMs: performance.now() - parseStartedAt,
-      };
+      });
     } catch (error) {
-      return {
-        files: [] as FileDiffMetadata[],
+      finishParse({
+        files: [],
         parseError: error instanceof Error ? error.message : String(error),
         parseMs: performance.now() - parseStartedAt,
-      };
+      });
     }
+    onCleanup(() => {
+      disposed = true;
+    });
   });
 
   const parseError = createMemo(() => parsedDiff().parseError);
@@ -424,8 +522,8 @@ export function DiffViewer(props: DiffViewerProps) {
       files().length >= FAST_DIFF_FILE_COUNT_THRESHOLD ||
       totalLineCount() >= FAST_DIFF_TOTAL_LINE_THRESHOLD
   );
-  const initiallyExpandedCount = createMemo(() =>
-    fastMode() ? FAST_DIFF_DEFAULT_EXPANDED_FILES : DEFAULT_EXPANDED_FILES
+  const initialVisibleCount = createMemo(() =>
+    fastMode() ? FAST_INITIAL_VISIBLE_FILES : DEFAULT_INITIAL_VISIBLE_FILES
   );
   const annotationsByFile = createMemo<
     Map<string, DiffLineAnnotation<DiffViewerAnnotationMetadata>[]>
@@ -511,6 +609,11 @@ export function DiffViewer(props: DiffViewerProps) {
             Failed to render diff: {message()}
           </div>
         )}
+      </Show>
+      <Show when={!parseError() && props.patch.trim().length > 0 && files().length === 0}>
+        <div class="mb-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-[12px] text-neutral-400">
+          Parsing diff...
+        </div>
       </Show>
       <Show when={files().length > 0 && showToolbar()}>
         <div class="rovex-diff-viewer-header">
@@ -612,7 +715,7 @@ export function DiffViewer(props: DiffViewerProps) {
             return (
               <DiffFileCard
                 file={file}
-                initiallyExpanded={index() < initiallyExpandedCount()}
+                initiallyVisible={index() < initialVisibleCount()}
                 fastMode={fastMode()}
                 options={renderOptions()}
                 lineAnnotations={fileAnnotations}

@@ -203,6 +203,17 @@ textarea:focus {
   color: rgba(255, 255, 255, 0.48);
 }
 
+.rovex-huge-diff-plain {
+  margin: 0;
+  padding: 0.9rem 1rem 1rem;
+  white-space: pre;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(226, 232, 240, 0.9);
+}
+
 .rovex-inline-annotation {
   margin: 0.35rem 0.45rem;
   border: 1px solid rgba(255, 255, 255, 0.12);
