@@ -30,6 +30,7 @@ export type RepoReview = {
 export type RepoGroup = {
   repoName: string;
   reviews: RepoReview[];
+  workspace: string | null;
 };
 
 export type DiffThemePreset = {

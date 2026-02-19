@@ -10,12 +10,13 @@ import {
   pollProviderDeviceAuth,
   setAiReviewApiKey,
   setAiReviewSettings,
+  startAppServerAccountLogin,
   startProviderDeviceAuth,
   type ProviderKind,
   type StartProviderDeviceAuthResult,
 } from "@/lib/backend";
 import { providerOption, repoNameFromWorkspace, sleep } from "@/app/helpers";
-import type { AppView, RepoGroup, SettingsTab } from "@/app/types";
+import type { AppView, RepoGroup, RepoReview, SettingsTab } from "@/app/types";
 
 type UseProviderAndSettingsActionsArgs = {
   selectedProvider: Accessor<ProviderKind>;
@@ -46,6 +47,8 @@ type UseProviderAndSettingsActionsArgs = {
   refetchGitlabConnection: () => unknown;
   refetchThreads: () => unknown;
   setSelectedThreadId: Setter<number | null>;
+  knownRepoWorkspaces: Accessor<Record<string, string>>;
+  setKnownRepoWorkspaces: Setter<Record<string, string>>;
   repoDisplayNames: Accessor<Record<string, string>>;
   setRepoDisplayNames: Setter<Record<string, string>>;
   collapsedRepos: Accessor<Record<string, boolean>>;
@@ -62,6 +65,10 @@ type UseProviderAndSettingsActionsArgs = {
   setAiSettingsBusy: Setter<boolean>;
   setAiSettingsError: Setter<string | null>;
   setAiSettingsStatus: Setter<string | null>;
+  appServerAuthBusy: Accessor<boolean>;
+  setAppServerAuthBusy: Setter<boolean>;
+  setAppServerAuthError: Setter<string | null>;
+  setAppServerAuthStatus: Setter<string | null>;
   aiApiKeyInput: Accessor<string>;
   setAiApiKeyInput: Setter<string>;
   aiApiKeyBusy: Accessor<boolean>;
@@ -392,7 +399,10 @@ export function useProviderAndSettingsActions(args: UseProviderAndSettingsAction
 
   const handleCreateReviewForRepo = async (repo: RepoGroup) => {
     clearProviderNotice();
-    const workspace = repo.reviews.find((review) => review.workspace?.trim())?.workspace?.trim();
+    const workspace =
+      repo.reviews.find((review) => review.workspace?.trim())?.workspace?.trim() ??
+      repo.workspace?.trim() ??
+      args.knownRepoWorkspaces()[repo.repoName]?.trim();
     if (!workspace) {
       args.setProviderError(`No local workspace found for ${repo.repoName}.`);
       return;
@@ -426,11 +436,7 @@ export function useProviderAndSettingsActions(args: UseProviderAndSettingsAction
 
     args.setRepoDisplayNames((current) => {
       const next = { ...current };
-      if (nextName === repo.repoName) {
-        delete next[repo.repoName];
-      } else {
-        next[repo.repoName] = nextName;
-      }
+      next[repo.repoName] = nextName;
       return next;
     });
     args.setProviderStatus(`Renamed ${repo.repoName} to ${nextName}.`);
@@ -465,6 +471,11 @@ export function useProviderAndSettingsActions(args: UseProviderAndSettingsAction
         delete next[repo.repoName];
         return next;
       });
+      args.setKnownRepoWorkspaces((current) => {
+        const next = { ...current };
+        delete next[repo.repoName];
+        return next;
+      });
       args.setProviderStatus(
         `Removed ${displayName} with ${reviewCount} review${reviewCount === 1 ? "" : "s"}.`
       );
@@ -473,6 +484,41 @@ export function useProviderAndSettingsActions(args: UseProviderAndSettingsAction
     } finally {
       args.setProviderBusy(false);
       setRepoMenuOpenState(repo.repoName, false);
+    }
+  };
+
+  const handleRemoveReview = async (repo: RepoGroup, review: RepoReview) => {
+    const displayName = repoDisplayName(repo.repoName);
+    const reviewTitle = review.title?.trim() || "Untitled review";
+    const workspace = review.workspace?.trim() || repo.workspace?.trim() || null;
+    const confirmed = window.confirm(
+      `Remove review "${reviewTitle}" from ${displayName}? Local files are not deleted.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    clearProviderNotice();
+    args.setProviderBusy(true);
+    try {
+      if (workspace) {
+        args.setKnownRepoWorkspaces((current) =>
+          current[repo.repoName] === workspace
+            ? current
+            : {
+                ...current,
+                [repo.repoName]: workspace,
+              }
+        );
+      }
+      await deleteThread(review.id);
+      await args.refetchThreads();
+
+      args.setProviderStatus(`Removed review "${reviewTitle}" from ${displayName}.`);
+    } catch (error) {
+      args.setProviderError(error instanceof Error ? error.message : String(error));
+    } finally {
+      args.setProviderBusy(false);
     }
   };
 
@@ -494,6 +540,18 @@ export function useProviderAndSettingsActions(args: UseProviderAndSettingsAction
     args.setAiSettingsError(null);
     args.setAiSettingsStatus(null);
   };
+
+  const clearAppServerAuthNotice = () => {
+    args.setAppServerAuthError(null);
+    args.setAppServerAuthStatus(null);
+  };
+
+  createEffect(() => {
+    const provider = args.aiReviewProviderInput().trim().toLowerCase();
+    if (provider !== "app-server") {
+      clearAppServerAuthNotice();
+    }
+  });
 
   const handleSaveAiSettings = async (event: Event) => {
     event.preventDefault();
@@ -537,6 +595,37 @@ export function useProviderAndSettingsActions(args: UseProviderAndSettingsAction
       args.setAiSettingsError(error instanceof Error ? error.message : String(error));
     } finally {
       args.setAiSettingsBusy(false);
+    }
+  };
+
+  const handleSwitchAppServerAccount = async () => {
+    if (args.appServerAuthBusy()) return;
+    clearAppServerAuthNotice();
+    args.setAppServerAuthBusy(true);
+    try {
+      const login = await startAppServerAccountLogin();
+      await openUrl(login.authUrl);
+      args.setAppServerAuthStatus(
+        "Opened Codex sign-in in your browser. Finish login, then refresh account status."
+      );
+    } catch (error) {
+      args.setAppServerAuthError(error instanceof Error ? error.message : String(error));
+    } finally {
+      args.setAppServerAuthBusy(false);
+    }
+  };
+
+  const handleRefreshAppServerAccountStatus = async () => {
+    if (args.appServerAuthBusy()) return;
+    clearAppServerAuthNotice();
+    args.setAppServerAuthBusy(true);
+    try {
+      await args.refetchAppServerAccountStatus();
+      args.setAppServerAuthStatus("Refreshed Codex account status.");
+    } catch (error) {
+      args.setAppServerAuthError(error instanceof Error ? error.message : String(error));
+    } finally {
+      args.setAppServerAuthBusy(false);
     }
   };
 
@@ -590,8 +679,11 @@ export function useProviderAndSettingsActions(args: UseProviderAndSettingsAction
     handleCreateReviewForRepo,
     handleRenameRepo,
     handleRemoveRepo,
+    handleRemoveReview,
     handleOpenDiffsDocs,
     handleSaveAiSettings,
+    handleSwitchAppServerAccount,
+    handleRefreshAppServerAccountStatus,
     handleSaveAiApiKey,
   };
 }

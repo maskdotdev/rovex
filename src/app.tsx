@@ -4,6 +4,7 @@ import {
   createMemo,
   createResource,
   createSignal,
+  onCleanup,
 } from "solid-js";
 import type { DiffViewerAnnotation } from "@/components/diff-viewer";
 import {
@@ -12,12 +13,15 @@ import {
 } from "@/components/sidebar";
 import {
   ACCOUNT_EMAIL_MASK_STORAGE_KEY,
+  REVIEW_SIDEBAR_COLLAPSED_STORAGE_KEY,
 } from "@/app/constants";
 import {
   getDiffThemePreset,
   getInitialDiffThemeId,
+  getInitialKnownRepoWorkspaces,
   getInitialMaskAccountEmail,
   getInitialRepoDisplayNames,
+  getInitialReviewSidebarCollapsed,
   groupThreadsByRepo,
   providerOption,
 } from "@/app/helpers";
@@ -70,6 +74,9 @@ function App() {
   const [activeSettingsTab, setActiveSettingsTab] = createSignal<SettingsTab>("connections");
   const [selectedDiffThemeId, setSelectedDiffThemeId] = createSignal(getInitialDiffThemeId());
   const [maskAccountEmail, setMaskAccountEmail] = createSignal(getInitialMaskAccountEmail());
+  const [reviewSidebarCollapsed, setReviewSidebarCollapsed] = createSignal(
+    getInitialReviewSidebarCollapsed()
+  );
   const [settingsError, setSettingsError] = createSignal<string | null>(null);
   const [selectedProvider, setSelectedProvider] = createSignal<ProviderKind>("github");
   const selectedDiffTheme = createMemo(() => getDiffThemePreset(selectedDiffThemeId()));
@@ -78,7 +85,10 @@ function App() {
     selectedProvider() === "github" ? githubConnection() : gitlabConnection()
   );
 
-  const repoGroups = createMemo(() => groupThreadsByRepo(threads() ?? []));
+  const [knownRepoWorkspaces, setKnownRepoWorkspaces] = createSignal<Record<string, string>>(
+    getInitialKnownRepoWorkspaces()
+  );
+  const repoGroups = createMemo(() => groupThreadsByRepo(threads() ?? [], knownRepoWorkspaces()));
   const [collapsedRepos, setCollapsedRepos] = createSignal<Record<string, boolean>>({});
   const [repoDisplayNames, setRepoDisplayNames] = createSignal<Record<string, string>>(
     getInitialRepoDisplayNames()
@@ -108,6 +118,7 @@ function App() {
   const [branchActionError, setBranchActionError] = createSignal<string | null>(null);
   const [aiPrompt, setAiPrompt] = createSignal("");
   const [aiReviewBusy, setAiReviewBusy] = createSignal(false);
+  const [aiFollowUpBusy, setAiFollowUpBusy] = createSignal(false);
   const [aiReviewError, setAiReviewError] = createSignal<string | null>(null);
   const [aiStatus, setAiStatus] = createSignal<string | null>(null);
   const [aiRunElapsedSeconds, setAiRunElapsedSeconds] = createSignal(0);
@@ -122,6 +133,9 @@ function App() {
   const [aiSettingsBusy, setAiSettingsBusy] = createSignal(false);
   const [aiSettingsError, setAiSettingsError] = createSignal<string | null>(null);
   const [aiSettingsStatus, setAiSettingsStatus] = createSignal<string | null>(null);
+  const [appServerAuthBusy, setAppServerAuthBusy] = createSignal(false);
+  const [appServerAuthError, setAppServerAuthError] = createSignal<string | null>(null);
+  const [appServerAuthStatus, setAppServerAuthStatus] = createSignal<string | null>(null);
   const [aiChunkReviews, setAiChunkReviews] = createSignal<AiReviewChunk[]>([]);
   const [aiFindings, setAiFindings] = createSignal<AiReviewFinding[]>([]);
   const [aiProgressEvents, setAiProgressEvents] = createSignal<AiReviewProgressEvent[]>([]);
@@ -130,7 +144,8 @@ function App() {
   );
   const [reviewRuns, setReviewRuns] = createSignal<ReviewRun[]>([]);
   const [selectedRunId, setSelectedRunId] = createSignal<string | null>(null);
-  const [reviewWorkbenchTab, setReviewWorkbenchTab] = createSignal<ReviewWorkbenchTab>("suggestions");
+  const [reviewWorkbenchTab, setReviewWorkbenchTab] =
+    createSignal<ReviewWorkbenchTab>("description");
   let branchSearchInputRef: HTMLInputElement | undefined;
   let branchCreateInputRef: HTMLInputElement | undefined;
 
@@ -249,12 +264,36 @@ function App() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(ACCOUNT_EMAIL_MASK_STORAGE_KEY, maskAccountEmail() ? "1" : "0");
   });
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      REVIEW_SIDEBAR_COLLAPSED_STORAGE_KEY,
+      reviewSidebarCollapsed() ? "1" : "0"
+    );
+  });
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key.toLowerCase() === "b" &&
+        (event.metaKey || event.ctrlKey) &&
+        event.shiftKey
+      ) {
+        event.preventDefault();
+        setReviewSidebarCollapsed((collapsed) => !collapsed);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", handleKeyDown));
+  });
 
   const getBranchSearchInputRef = () => branchSearchInputRef;
   const getBranchCreateInputRef = () => branchCreateInputRef;
 
   useAppEffects({
     selectedDiffTheme,
+    knownRepoWorkspaces,
+    setKnownRepoWorkspaces,
     repoDisplayNames,
     repoGroups,
     selectedThreadId,
@@ -268,6 +307,7 @@ function App() {
     setNewBranchName,
     setBranchActionError,
     setAiPrompt,
+    setAiFollowUpBusy,
     setAiReviewError,
     setAiStatus,
     setAiChunkReviews,
@@ -315,8 +355,11 @@ function App() {
     handleCreateReviewForRepo,
     handleRenameRepo,
     handleRemoveRepo,
+    handleRemoveReview,
     handleOpenDiffsDocs,
     handleSaveAiSettings,
+    handleSwitchAppServerAccount,
+    handleRefreshAppServerAccountStatus,
     handleSaveAiApiKey,
   } = useProviderAndSettingsActions({
     selectedProvider,
@@ -347,6 +390,8 @@ function App() {
     refetchGitlabConnection,
     refetchThreads,
     setSelectedThreadId,
+    knownRepoWorkspaces,
+    setKnownRepoWorkspaces,
     repoDisplayNames,
     setRepoDisplayNames,
     collapsedRepos,
@@ -363,6 +408,10 @@ function App() {
     setAiSettingsBusy,
     setAiSettingsError,
     setAiSettingsStatus,
+    appServerAuthBusy,
+    setAppServerAuthBusy,
+    setAppServerAuthError,
+    setAppServerAuthStatus,
     aiApiKeyInput,
     setAiApiKeyInput,
     aiApiKeyBusy,
@@ -402,8 +451,8 @@ function App() {
     refetchWorkspaceBranches,
     aiPrompt,
     setAiPrompt,
-    hasReviewStarted,
     setAiReviewBusy,
+    setAiFollowUpBusy,
     setAiReviewError,
     setAiStatus,
     setAiChunkReviews,
@@ -486,6 +535,13 @@ function App() {
             aiSettingsStatus={aiSettingsStatus}
             aiReviewConfigLoadError={aiReviewConfigLoadError}
             handleSaveAiSettings={handleSaveAiSettings}
+            appServerAccountStatus={appServerAccountStatus}
+            appServerAccountLoadError={appServerAccountLoadError}
+            appServerAuthBusy={appServerAuthBusy}
+            appServerAuthError={appServerAuthError}
+            appServerAuthStatus={appServerAuthStatus}
+            handleSwitchAppServerAccount={handleSwitchAppServerAccount}
+            handleRefreshAppServerAccountStatus={handleRefreshAppServerAccountStatus}
             maskAccountEmail={maskAccountEmail}
             setMaskAccountEmail={setMaskAccountEmail}
             opencodeSidecarStatus={opencodeSidecarStatus}
@@ -515,6 +571,7 @@ function App() {
           setRepoMenuOpenState={setRepoMenuOpenState}
           onRenameRepo={handleRenameRepo}
           onRemoveRepo={handleRemoveRepo}
+          onRemoveReview={handleRemoveReview}
           onOpenSettings={() => openSettings("connections")}
           appServerAccountStatus={appServerAccountStatus}
           appServerAccountLoadError={appServerAccountLoadError}
@@ -528,6 +585,10 @@ function App() {
               repoDisplayName={repoDisplayName}
               compareResult={compareResult}
               selectedBaseRef={selectedBaseRef}
+              reviewSidebarCollapsed={reviewSidebarCollapsed}
+              toggleReviewSidebar={() =>
+                setReviewSidebarCollapsed((collapsed) => !collapsed)
+              }
             />
             <WorkspaceMainPane
               branchActionError={branchActionError}
@@ -554,6 +615,7 @@ function App() {
           </section>
         </SidebarInset>
         <WorkspaceReviewSidebar
+          reviewSidebarCollapsed={reviewSidebarCollapsed}
           activeReviewScope={activeReviewScope}
           setActiveReviewScope={setActiveReviewScope}
           aiChunkReviews={aiChunkReviews}
@@ -570,9 +632,9 @@ function App() {
           setAiPrompt={setAiPrompt}
           handleAskAiFollowUp={handleAskAiFollowUp}
           aiReviewBusy={aiReviewBusy}
+          aiFollowUpBusy={aiFollowUpBusy}
           compareBusy={compareBusy}
           selectedWorkspace={selectedWorkspace}
-          hasReviewStarted={hasReviewStarted}
           branchPopoverOpen={branchPopoverOpen}
           setBranchPopoverOpen={setBranchPopoverOpen}
           workspaceBranches={workspaceBranches}

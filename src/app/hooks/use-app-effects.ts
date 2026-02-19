@@ -2,6 +2,7 @@ import { createEffect, onCleanup, type Accessor, type Setter } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
 import {
   DIFF_THEME_STORAGE_KEY,
+  KNOWN_REPO_WORKSPACES_STORAGE_KEY,
   REPO_DISPLAY_NAME_STORAGE_KEY,
 } from "@/app/constants";
 import type { DiffThemePreset, RepoGroup } from "@/app/types";
@@ -17,6 +18,8 @@ import type { ReviewRun, ReviewWorkbenchTab } from "@/app/review-types";
 
 type UseAppEffectsArgs = {
   selectedDiffTheme: Accessor<DiffThemePreset>;
+  knownRepoWorkspaces: Accessor<Record<string, string>>;
+  setKnownRepoWorkspaces: Setter<Record<string, string>>;
   repoDisplayNames: Accessor<Record<string, string>>;
   repoGroups: Accessor<RepoGroup[]>;
   selectedThreadId: Accessor<number | null>;
@@ -66,7 +69,33 @@ export function useAppEffects(args: UseAppEffectsArgs) {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      KNOWN_REPO_WORKSPACES_STORAGE_KEY,
+      JSON.stringify(args.knownRepoWorkspaces())
+    );
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
     window.localStorage.setItem(REPO_DISPLAY_NAME_STORAGE_KEY, JSON.stringify(args.repoDisplayNames()));
+  });
+
+  createEffect(() => {
+    const groups = args.repoGroups();
+    args.setKnownRepoWorkspaces((current) => {
+      let changed = false;
+      const next = { ...current };
+
+      for (const group of groups) {
+        const workspace = group.workspace?.trim();
+        if (!workspace) continue;
+        if (next[group.repoName] === workspace) continue;
+        next[group.repoName] = workspace;
+        changed = true;
+      }
+
+      return changed ? next : current;
+    });
   });
 
   createEffect(() => {
@@ -80,7 +109,8 @@ export function useAppEffects(args: UseAppEffectsArgs) {
     const hasSelected = groups.some((group) => group.reviews.some((review) => review.id === selected));
     if (hasSelected) return;
 
-    args.setSelectedThreadId(groups[0].reviews[0]?.id ?? null);
+    const firstReview = groups.find((group) => group.reviews.length > 0)?.reviews[0];
+    args.setSelectedThreadId(firstReview?.id ?? null);
   });
 
   createEffect(() => {

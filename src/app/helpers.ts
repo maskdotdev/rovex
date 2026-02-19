@@ -3,7 +3,9 @@ import {
   ACCOUNT_EMAIL_MASK_STORAGE_KEY,
   DEFAULT_DIFF_THEME_ID,
   DIFF_THEME_STORAGE_KEY,
+  KNOWN_REPO_WORKSPACES_STORAGE_KEY,
   REPO_DISPLAY_NAME_STORAGE_KEY,
+  REVIEW_SIDEBAR_COLLAPSED_STORAGE_KEY,
   UNKNOWN_REPO,
   diffThemePresets,
   providerOptions,
@@ -50,9 +52,38 @@ export function getInitialRepoDisplayNames(): Record<string, string> {
   }
 }
 
+export function getInitialKnownRepoWorkspaces(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+
+  try {
+    const raw = window.localStorage.getItem(KNOWN_REPO_WORKSPACES_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+
+    const normalized: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === "string" && value.trim().length > 0) {
+        normalized[key] = value.trim();
+      }
+    }
+    return normalized;
+  } catch {
+    return {};
+  }
+}
+
 export function getInitialMaskAccountEmail(): boolean {
   if (typeof window === "undefined") return false;
   const raw = window.localStorage.getItem(ACCOUNT_EMAIL_MASK_STORAGE_KEY);
+  if (!raw) return false;
+  const normalized = raw.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+export function getInitialReviewSidebarCollapsed(): boolean {
+  if (typeof window === "undefined") return false;
+  const raw = window.localStorage.getItem(REVIEW_SIDEBAR_COLLAPSED_STORAGE_KEY);
   if (!raw) return false;
   const normalized = raw.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
@@ -93,11 +124,15 @@ export function formatRelativeAge(createdAt: string): string {
   return `${weeks}w`;
 }
 
-export function groupThreadsByRepo(threads: Thread[]): RepoGroup[] {
-  const groups = new Map<string, RepoReview[]>();
+export function groupThreadsByRepo(
+  threads: Thread[],
+  knownRepoWorkspaces: Record<string, string> = {}
+): RepoGroup[] {
+  const groups = new Map<string, RepoGroup>();
 
   for (const thread of threads) {
     const repoName = repoNameFromWorkspace(thread.workspace);
+    const workspace = thread.workspace?.trim() || knownRepoWorkspaces[repoName] || null;
     const nextReview: RepoReview = {
       id: thread.id,
       title: thread.title,
@@ -105,8 +140,35 @@ export function groupThreadsByRepo(threads: Thread[]): RepoGroup[] {
       age: formatRelativeAge(thread.createdAt),
       workspace: thread.workspace,
     };
-    groups.set(repoName, [...(groups.get(repoName) ?? []), nextReview]);
+
+    const current = groups.get(repoName);
+    if (current) {
+      groups.set(repoName, {
+        repoName,
+        reviews: [...current.reviews, nextReview],
+        workspace: current.workspace ?? workspace,
+      });
+      continue;
+    }
+
+    groups.set(repoName, {
+      repoName,
+      reviews: [nextReview],
+      workspace,
+    });
   }
 
-  return [...groups.entries()].map(([repoName, reviews]) => ({ repoName, reviews }));
+  for (const [repoName, workspace] of Object.entries(knownRepoWorkspaces)) {
+    if (groups.has(repoName)) continue;
+    const normalizedWorkspace = workspace.trim();
+    if (!normalizedWorkspace) continue;
+
+    groups.set(repoName, {
+      repoName,
+      reviews: [],
+      workspace: normalizedWorkspace,
+    });
+  }
+
+  return [...groups.values()];
 }
