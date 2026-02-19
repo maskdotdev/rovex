@@ -271,10 +271,6 @@ function App() {
     if (!error) return null;
     return error instanceof Error ? error.message : String(error);
   });
-  const hasReviewStarted = createMemo(() =>
-    (threadMessages() ?? []).some((message) => message.role === "assistant")
-  );
-
   createEffect(() => {
     const runs = persistedReviewRuns();
     if (!runs) return;
@@ -477,8 +473,6 @@ function App() {
     handleCheckoutBranch,
     handleStartCreateBranch,
     handleCreateAndCheckoutBranch,
-    handleOpenDiffViewer,
-    handleStartAiReview,
     handleStartAiReviewOnFullDiff,
     handleCancelAiReviewRun,
     handleAskAiFollowUp,
@@ -655,12 +649,8 @@ function App() {
               compareSummary={compareSummary}
               compareBusy={compareBusy}
               selectedWorkspace={selectedWorkspace}
-              handleStartAiReview={handleStartAiReview}
-              hasReviewStarted={hasReviewStarted}
-              handleOpenDiffViewer={handleOpenDiffViewer}
               compareResult={compareResult}
               showDiffViewer={showDiffViewer}
-              selectedBaseRef={selectedBaseRef}
               activeReviewScope={activeReviewScope}
               setActiveReviewScope={setActiveReviewScope}
               selectedDiffTheme={selectedDiffTheme}
