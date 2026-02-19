@@ -27,7 +27,7 @@ import type {
   WorkspaceBranch,
 } from "@/lib/backend";
 
-type WorkspaceReviewSidebarProps = {
+export type WorkspaceReviewSidebarModel = {
   reviewSidebarCollapsed?: Accessor<boolean>;
   activeReviewScope: Accessor<ReviewScope>;
   setActiveReviewScope: Setter<ReviewScope>;
@@ -72,6 +72,10 @@ type WorkspaceReviewSidebarProps = {
   handleStartCreateBranch: () => void;
 };
 
+type WorkspaceReviewSidebarProps = {
+  model: WorkspaceReviewSidebarModel;
+};
+
 function severityRank(severity: string) {
   switch ((severity || "").toLowerCase()) {
     case "critical":
@@ -95,13 +99,14 @@ function formatRunTime(timestamp: number) {
 }
 
 export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
-  const isCollapsed = createMemo(() => props.reviewSidebarCollapsed?.() ?? false);
-  const isFollowUpBusy = createMemo(() => props.aiFollowUpBusy?.() ?? props.aiReviewBusy());
+  const model = props.model;
+  const isCollapsed = createMemo(() => model.reviewSidebarCollapsed?.() ?? false);
+  const isFollowUpBusy = createMemo(() => model.aiFollowUpBusy?.() ?? model.aiReviewBusy());
 
   const selectedRun = createMemo<ReviewRun | null>(() => {
-    const runs = props.reviewRuns();
+    const runs = model.reviewRuns();
     if (runs.length === 0) return null;
-    const selectedId = props.selectedRunId();
+    const selectedId = model.selectedRunId();
     if (selectedId) {
       const found = runs.find((run) => run.id === selectedId);
       if (found) return found;
@@ -109,10 +114,10 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
     return runs[0] ?? null;
   });
 
-  const visibleChunkReviews = createMemo(() => selectedRun()?.chunks ?? props.aiChunkReviews());
-  const visibleFindings = createMemo(() => selectedRun()?.findings ?? props.aiFindings());
+  const visibleChunkReviews = createMemo(() => selectedRun()?.chunks ?? model.aiChunkReviews());
+  const visibleFindings = createMemo(() => selectedRun()?.findings ?? model.aiFindings());
   const visibleProgressEvents = createMemo(
-    () => selectedRun()?.progressEvents ?? props.aiProgressEvents()
+    () => selectedRun()?.progressEvents ?? model.aiProgressEvents()
   );
 
   const sortedVisibleFindings = createMemo(() =>
@@ -145,24 +150,24 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
       return "Run review to scan this diff for issues.";
     }
     const run = selectedRun();
-    if (run?.status === "running" || props.aiReviewBusy()) {
+    if (run?.status === "running" || model.aiReviewBusy()) {
       return "Scanning files for issues. New findings will stream here in real time.";
     }
     return "No issues found for this run.";
   });
 
   createEffect(() => {
-    const runs = props.reviewRuns();
+    const runs = model.reviewRuns();
     if (runs.length === 0) {
-      if (props.selectedRunId() !== null) {
-        props.setSelectedRunId(null);
+      if (model.selectedRunId() !== null) {
+        model.setSelectedRunId(null);
       }
       return;
     }
 
-    const selectedId = props.selectedRunId();
+    const selectedId = model.selectedRunId();
     if (!selectedId || !runs.some((run) => run.id === selectedId)) {
-      props.setSelectedRunId(runs[0].id);
+      model.setSelectedRunId(runs[0].id);
     }
   });
 
@@ -188,8 +193,8 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                 <button
                   type="button"
                   role="tab"
-                  class={`review-tab-trigger ${props.reviewWorkbenchTab() === tab.id ? "is-active" : ""}`}
-                  onClick={() => props.setReviewWorkbenchTab(tab.id)}
+                  class={`review-tab-trigger ${model.reviewWorkbenchTab() === tab.id ? "is-active" : ""}`}
+                  onClick={() => model.setReviewWorkbenchTab(tab.id)}
                 >
                   {tab.label}
                 </button>
@@ -198,7 +203,7 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
           </div>
 
           <div class="review-right-content">
-            <Show when={props.reviewWorkbenchTab() === "description"}>
+            <Show when={model.reviewWorkbenchTab() === "description"}>
               <Show
                 when={selectedRun()}
                 fallback={<p class="review-empty-state">Run AI review to build a chunked description of the active scope.</p>}
@@ -226,7 +231,7 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                             <button
                               type="button"
                               class="review-inline-action"
-                              onClick={() => void props.handleCancelAiReviewRun(run().id)}
+                              onClick={() => void model.handleCancelAiReviewRun(run().id)}
                             >
                               Cancel
                             </button>
@@ -284,11 +289,11 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                                     type="button"
                                     class="review-inline-action"
                                     onClick={() => {
-                                      props.setActiveReviewScope({
+                                      model.setActiveReviewScope({
                                         kind: "file",
                                         filePath: normalizeDiffPath(chunk.filePath),
                                       });
-                                      props.setReviewWorkbenchTab("issues");
+                                      model.setReviewWorkbenchTab("issues");
                                     }}
                                   >
                                     View issues
@@ -298,8 +303,8 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                                   type="button"
                                   class="review-inline-action"
                                   onClick={() => {
-                                    props.setReviewWorkbenchTab("chat");
-                                    props.setAiPrompt(
+                                    model.setReviewWorkbenchTab("chat");
+                                    model.setAiPrompt(
                                       `Explain this chunk and highlight risky changes: ${chunk.filePath} chunk ${chunk.chunkIndex}`
                                     );
                                   }}
@@ -313,18 +318,18 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                       </div>
                     </Show>
 
-                    <Show when={props.reviewRuns().length > 1}>
+                    <Show when={model.reviewRuns().length > 1}>
                       <div class="mt-3 border-t border-white/[0.06] pt-3">
                         <p class="mb-2 text-[10px] uppercase tracking-[0.08em] text-neutral-500">
                           Recent runs
                         </p>
                         <div class="space-y-2">
-                          <For each={props.reviewRuns().slice(0, 6)}>
+                          <For each={model.reviewRuns().slice(0, 6)}>
                             {(historyRun) => (
                               <button
                                 type="button"
-                                class={`review-run-row ${props.selectedRunId() === historyRun.id ? "is-active" : ""}`}
-                                onClick={() => props.setSelectedRunId(historyRun.id)}
+                                class={`review-run-row ${model.selectedRunId() === historyRun.id ? "is-active" : ""}`}
+                                onClick={() => model.setSelectedRunId(historyRun.id)}
                               >
                                 <div class="mb-1 flex items-center justify-between gap-2">
                                   <p class="truncate text-[12px] text-neutral-200">{historyRun.scopeLabel}</p>
@@ -346,7 +351,7 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
               </Show>
             </Show>
 
-            <Show when={props.reviewWorkbenchTab() === "issues"}>
+            <Show when={model.reviewWorkbenchTab() === "issues"}>
               <div class="mb-2 flex items-center justify-between text-[12px] text-neutral-500">
                 <span>
                   {visibleChunkReviews().length} chunks • {visibleFindings().length} findings
@@ -393,7 +398,7 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                             type="button"
                             class="review-inline-action"
                             onClick={() => {
-                              props.setActiveReviewScope({
+                              model.setActiveReviewScope({
                                 kind: "file",
                                 filePath: normalizeDiffPath(finding.filePath),
                               });
@@ -405,8 +410,8 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                             type="button"
                             class="review-inline-action"
                             onClick={() => {
-                              props.setReviewWorkbenchTab("chat");
-                              props.setAiPrompt(
+                              model.setReviewWorkbenchTab("chat");
+                              model.setAiPrompt(
                                 `Explain this issue and propose a fix: [${finding.severity}] ${finding.title} at ${finding.filePath}:${finding.lineNumber}`
                               );
                             }}
@@ -421,17 +426,17 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
               </Show>
             </Show>
 
-            <Show when={props.reviewWorkbenchTab() === "chat"}>
+            <Show when={model.reviewWorkbenchTab() === "chat"}>
               <div class="mb-3 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-[12px] text-neutral-400">
-                Active scope: <span class="text-neutral-300">{getReviewScopeLabel(props.activeReviewScope())}</span>
+                Active scope: <span class="text-neutral-300">{getReviewScopeLabel(model.activeReviewScope())}</span>
               </div>
-              <Show when={props.aiReviewBusy()}>
+              <Show when={model.aiReviewBusy()}>
                 <p class="mb-3 text-[12px] text-neutral-500">
                   Issue scan is running. Chat stays available while findings stream in.
                 </p>
               </Show>
               <div class="mb-3 max-h-[15rem] space-y-2 overflow-y-auto rounded-lg border border-white/[0.05] bg-white/[0.015] p-2.5">
-                <For each={(props.threadMessages() ?? []).slice(-14)}>
+                <For each={(model.threadMessages() ?? []).slice(-14)}>
                   {(message) => (
                     <div
                       class={`rounded-md px-2.5 py-2 text-[12.5px] leading-5 ${message.role === "assistant" ? "bg-emerald-500/8 text-emerald-100/85" : "bg-white/[0.035] text-neutral-300"}`}
@@ -441,13 +446,13 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                     </div>
                   )}
                 </For>
-                <Show when={(props.threadMessages() ?? []).length === 0}>
+                <Show when={(model.threadMessages() ?? []).length === 0}>
                   <p class="px-1 py-1 text-[12px] text-neutral-500">
                     No conversation yet. Ask about the active diff scope to get started.
                   </p>
                 </Show>
               </div>
-              <Show when={props.threadMessagesLoadError()}>
+              <Show when={model.threadMessagesLoadError()}>
                 {(message) => (
                   <p class="mb-2 text-[12px] text-rose-300/90">
                     Unable to refresh conversation history: {message()}
@@ -457,14 +462,14 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
 
               <form
                 class="overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.02]"
-                onSubmit={(event) => void props.handleAskAiFollowUp(event)}
+                onSubmit={(event) => void model.handleAskAiFollowUp(event)}
               >
                 <TextField>
                   <TextFieldInput
-                    value={props.aiPrompt()}
-                    onInput={(event) => props.setAiPrompt(event.currentTarget.value)}
+                    value={model.aiPrompt()}
+                    onInput={(event) => model.setAiPrompt(event.currentTarget.value)}
                     placeholder={
-                      props.aiReviewBusy()
+                      model.aiReviewBusy()
                         ? "Ask while scanning: explain risks, fixes, or design intent..."
                         : "Ask about this diff, findings, or implementation choices..."
                     }
@@ -474,8 +479,8 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                 <div class="flex items-center justify-between border-t border-white/[0.04] px-4 py-2.5">
                   <div class="flex items-center gap-2">
                     <Popover.Root
-                      open={props.branchPopoverOpen()}
-                      onOpenChange={props.setBranchPopoverOpen}
+                      open={model.branchPopoverOpen()}
+                      onOpenChange={model.setBranchPopoverOpen}
                       placement="top-start"
                       gutter={8}
                     >
@@ -483,14 +488,14 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                         as="button"
                         type="button"
                         class="branch-picker-trigger"
-                        disabled={props.selectedWorkspace().length === 0}
+                        disabled={model.selectedWorkspace().length === 0}
                         aria-label="Switch current branch"
                       >
                         <GitBranch class="size-4 text-neutral-400" />
                         <span class="max-w-[8.75rem] truncate">
-                          {props.workspaceBranchesLoading() && !props.workspaceBranches()
+                          {model.workspaceBranchesLoading() && !model.workspaceBranches()
                             ? "Loading..."
-                            : props.currentWorkspaceBranch()}
+                            : model.currentWorkspaceBranch()}
                         </span>
                         <ChevronRight class="size-3.5 rotate-90 text-neutral-500" />
                       </Popover.Trigger>
@@ -503,10 +508,10 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                             <Search class="size-4 text-neutral-500" />
                             <input
                               ref={(element) => {
-                                props.setBranchSearchInputRef(element);
+                                model.setBranchSearchInputRef(element);
                               }}
-                              value={props.branchSearchQuery()}
-                              onInput={(event) => props.setBranchSearchQuery(event.currentTarget.value)}
+                              value={model.branchSearchQuery()}
+                              onInput={(event) => model.setBranchSearchQuery(event.currentTarget.value)}
                               class="branch-picker-search-input"
                               placeholder="Search branches"
                             />
@@ -515,7 +520,7 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                           <p class="branch-picker-section-label">Branches</p>
                           <div class="branch-picker-list">
                             <Show
-                              when={!props.workspaceBranchesLoading()}
+                              when={!model.workspaceBranchesLoading()}
                               fallback={
                                 <div class="branch-picker-loading">
                                   <LoaderCircle class="size-4 animate-spin text-neutral-500" />
@@ -524,20 +529,20 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                               }
                             >
                               <Show
-                                when={props.filteredWorkspaceBranches().length > 0}
+                                when={model.filteredWorkspaceBranches().length > 0}
                                 fallback={
                                   <p class="px-3 py-2 text-[13px] text-neutral-500">
-                                    {props.workspaceBranchLoadError() ?? "No branches found."}
+                                    {model.workspaceBranchLoadError() ?? "No branches found."}
                                   </p>
                                 }
                               >
-                                <For each={props.filteredWorkspaceBranches()}>
+                                <For each={model.filteredWorkspaceBranches()}>
                                   {(branch) => (
                                     <button
                                       type="button"
                                       class="branch-picker-item"
-                                      disabled={props.branchActionBusy()}
-                                      onClick={() => void props.handleCheckoutBranch(branch.name)}
+                                      disabled={model.branchActionBusy()}
+                                      onClick={() => void model.handleCheckoutBranch(branch.name)}
                                     >
                                       <span class="flex items-center gap-3 truncate">
                                         <GitBranch class="size-4 text-neutral-500" />
@@ -555,18 +560,18 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
 
                           <div class="branch-picker-create-wrap">
                             <Show
-                              when={!props.branchCreateMode()}
+                              when={!model.branchCreateMode()}
                               fallback={
                                 <form
                                   class="branch-picker-create-form"
-                                  onSubmit={(event) => void props.handleCreateAndCheckoutBranch(event)}
+                                  onSubmit={(event) => void model.handleCreateAndCheckoutBranch(event)}
                                 >
                                   <input
                                     ref={(element) => {
-                                      props.setBranchCreateInputRef(element);
+                                      model.setBranchCreateInputRef(element);
                                     }}
-                                    value={props.newBranchName()}
-                                    onInput={(event) => props.setNewBranchName(event.currentTarget.value)}
+                                    value={model.newBranchName()}
+                                    onInput={(event) => model.setNewBranchName(event.currentTarget.value)}
                                     class="branch-picker-create-input"
                                     placeholder="feature/new-branch"
                                   />
@@ -575,8 +580,8 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                                       type="button"
                                       class="branch-picker-create-cancel"
                                       onClick={() => {
-                                        props.setBranchCreateMode(false);
-                                        props.setNewBranchName("");
+                                        model.setBranchCreateMode(false);
+                                        model.setNewBranchName("");
                                       }}
                                     >
                                       Cancel
@@ -584,7 +589,7 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                                     <button
                                       type="submit"
                                       class="branch-picker-create-submit"
-                                      disabled={!props.canCreateBranch()}
+                                      disabled={!model.canCreateBranch()}
                                     >
                                       Create
                                     </button>
@@ -595,8 +600,8 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                               <button
                                 type="button"
                                 class="branch-picker-create-trigger"
-                                disabled={props.branchActionBusy()}
-                                onClick={props.handleStartCreateBranch}
+                                disabled={model.branchActionBusy()}
+                                onClick={model.handleStartCreateBranch}
                               >
                                 <PlusCircle class="size-4" />
                                 <span>Create and checkout new branch...</span>
@@ -612,9 +617,9 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                     size="icon"
                     disabled={
                       isFollowUpBusy() ||
-                      props.compareBusy() ||
-                      props.selectedWorkspace().length === 0 ||
-                      props.aiPrompt().trim().length === 0
+                      model.compareBusy() ||
+                      model.selectedWorkspace().length === 0 ||
+                      model.aiPrompt().trim().length === 0
                     }
                     class="h-8 w-8 rounded-xl bg-amber-500/90 text-neutral-900 shadow-[0_0_12px_rgba(212,175,55,0.15)] hover:bg-amber-400/90 disabled:bg-neutral-700 disabled:text-neutral-400"
                   >

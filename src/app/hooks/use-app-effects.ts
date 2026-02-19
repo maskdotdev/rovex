@@ -1,16 +1,20 @@
 import { createEffect, onCleanup, type Accessor, type Setter } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
 import {
+  ACCOUNT_EMAIL_MASK_STORAGE_KEY,
   DIFF_THEME_STORAGE_KEY,
   KNOWN_REPO_WORKSPACES_STORAGE_KEY,
+  REPO_REVIEW_DEFAULTS_STORAGE_KEY,
   REPO_DISPLAY_NAME_STORAGE_KEY,
+  REVIEW_SIDEBAR_COLLAPSED_STORAGE_KEY,
 } from "@/app/constants";
-import type { DiffThemePreset, RepoGroup } from "@/app/types";
+import type { DiffThemePreset, RepoGroup, RepoReviewDefaults } from "@/app/types";
 import type {
   AiReviewChunk,
   AiReviewConfig,
   AiReviewFinding,
   AiReviewProgressEvent,
+  AiReviewRun as PersistedAiReviewRun,
   CompareWorkspaceDiffResult,
 } from "@/lib/backend";
 import { createFullReviewScope, type ReviewScope } from "@/app/review-scope";
@@ -51,6 +55,7 @@ type UseAppEffectsArgs = {
   setAiOpencodeProviderInput: Setter<string>;
   setAiOpencodeModelInput: Setter<string>;
   setAiReviewBusy: Setter<boolean>;
+  persistedReviewRuns: Accessor<PersistedAiReviewRun[] | undefined>;
   refetchThreadMessages: () => unknown;
   refetchAiReviewRuns?: () => unknown;
   aiReviewBusy: Accessor<boolean>;
@@ -60,6 +65,11 @@ type UseAppEffectsArgs = {
   selectedRunId: Accessor<string | null>;
   setSelectedRunId: Setter<string | null>;
   setReviewWorkbenchTab: Setter<ReviewWorkbenchTab>;
+  maskAccountEmail: Accessor<boolean>;
+  reviewSidebarCollapsed: Accessor<boolean>;
+  setReviewSidebarCollapsed: Setter<boolean>;
+  reviewDefaultsByRepo: Accessor<Record<string, RepoReviewDefaults>>;
+  handleCompareSelectedReview: () => void | Promise<void>;
 };
 
 export function useAppEffects(args: UseAppEffectsArgs) {
@@ -115,6 +125,66 @@ export function useAppEffects(args: UseAppEffectsArgs) {
   });
 
   createEffect(() => {
+    const runs = args.persistedReviewRuns();
+    if (!runs) return;
+    args.setReviewRuns(
+      runs.map((run) => ({
+        id: run.runId,
+        status: run.status as ReviewRun["status"],
+        scope: createFullReviewScope(),
+        scopeLabel: run.scopeLabel?.trim() || "AI review run",
+        startedAt: Date.parse(run.startedAt ?? run.createdAt) || Date.now(),
+        endedAt: run.endedAt ? Date.parse(run.endedAt) || Date.now() : null,
+        model: run.model,
+        diffTruncated: run.diffTruncated,
+        error: run.error,
+        progressEvents: run.progressEvents,
+        chunks: run.chunks,
+        findings: run.findings,
+      }))
+    );
+    const hasActiveRun = runs.some((run) => run.status === "queued" || run.status === "running");
+    args.setAiReviewBusy(hasActiveRun);
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(ACCOUNT_EMAIL_MASK_STORAGE_KEY, args.maskAccountEmail() ? "1" : "0");
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      REVIEW_SIDEBAR_COLLAPSED_STORAGE_KEY,
+      args.reviewSidebarCollapsed() ? "1" : "0"
+    );
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      REPO_REVIEW_DEFAULTS_STORAGE_KEY,
+      JSON.stringify(args.reviewDefaultsByRepo())
+    );
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key.toLowerCase() === "b" &&
+        (event.metaKey || event.ctrlKey) &&
+        event.shiftKey
+      ) {
+        event.preventDefault();
+        args.setReviewSidebarCollapsed((collapsed) => !collapsed);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", handleKeyDown));
+  });
+
+  createEffect(() => {
     args.selectedThreadId();
     args.setCompareError(null);
     args.setCompareResult(null);
@@ -156,6 +226,16 @@ export function useAppEffects(args: UseAppEffectsArgs) {
     queueMicrotask(() => {
       args.getBranchCreateInputRef()?.focus();
     });
+  });
+
+  createEffect(() => {
+    const threadId = args.selectedThreadId();
+    if (threadId == null) return;
+
+    const workspace = args.selectedWorkspace().trim();
+    if (!workspace) return;
+
+    void args.handleCompareSelectedReview();
   });
 
   createEffect(() => {

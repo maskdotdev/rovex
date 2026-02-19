@@ -21,153 +21,178 @@ import {
 import type { ReviewRun, ReviewWorkbenchTab } from "@/app/review-types";
 
 type UseReviewActionsArgs = {
-  selectedThreadId: Accessor<number | null>;
-  selectedWorkspace: Accessor<string>;
-  selectedBaseRef: Accessor<string>;
-  setSelectedBaseRef: Setter<string>;
-  compareResult: Accessor<CompareWorkspaceDiffResult | null>;
-  setCompareResult: Setter<CompareWorkspaceDiffResult | null>;
-  setCompareBusy: Setter<boolean>;
-  setCompareError: Setter<string | null>;
-  setShowDiffViewer: Setter<boolean>;
-  setBranchPopoverOpen: Setter<boolean>;
-  setBranchCreateMode: Setter<boolean>;
-  branchSearchQuery: Accessor<string>;
-  newBranchName: Accessor<string>;
-  setNewBranchName: Setter<string>;
-  setBranchActionBusy: Setter<boolean>;
-  setBranchActionError: Setter<string | null>;
-  refetchWorkspaceBranches: () => unknown;
-  aiPrompt: Accessor<string>;
-  setAiPrompt: Setter<string>;
-  hasReviewStarted?: Accessor<boolean>;
-  setAiReviewBusy: Setter<boolean>;
-  setAiFollowUpBusy?: Setter<boolean>;
-  setAiReviewError: Setter<string | null>;
-  setAiStatus: Setter<string | null>;
-  setAiChunkReviews: Setter<AiReviewChunk[]>;
-  setAiFindings: Setter<AiReviewFinding[]>;
-  setAiProgressEvents: Setter<AiReviewProgressEvent[]>;
-  refetchThreadMessages: () => unknown;
-  refetchAiReviewRuns?: () => unknown;
-  activeReviewScope: Accessor<ReviewScope>;
-  setActiveReviewScope: Setter<ReviewScope>;
-  setReviewRuns: Setter<ReviewRun[]>;
-  setSelectedRunId: Setter<string | null>;
-  setReviewWorkbenchTab: Setter<ReviewWorkbenchTab>;
+  selection: {
+    selectedThreadId: Accessor<number | null>;
+    selectedWorkspace: Accessor<string>;
+    selectedBaseRef: Accessor<string>;
+    setSelectedBaseRef: Setter<string>;
+  };
+  compare: {
+    compareResult: Accessor<CompareWorkspaceDiffResult | null>;
+    setCompareResult: Setter<CompareWorkspaceDiffResult | null>;
+    setCompareBusy: Setter<boolean>;
+    setCompareError: Setter<string | null>;
+    setShowDiffViewer: Setter<boolean>;
+  };
+  branch: {
+    setBranchPopoverOpen: Setter<boolean>;
+    setBranchCreateMode: Setter<boolean>;
+    branchSearchQuery: Accessor<string>;
+    newBranchName: Accessor<string>;
+    setNewBranchName: Setter<string>;
+    setBranchActionBusy: Setter<boolean>;
+    setBranchActionError: Setter<string | null>;
+    refetchWorkspaceBranches: () => unknown;
+  };
+  ai: {
+    prompt: Accessor<string>;
+    setPrompt: Setter<string>;
+    setAiReviewBusy: Setter<boolean>;
+    setAiFollowUpBusy?: Setter<boolean>;
+    setAiReviewError: Setter<string | null>;
+    setAiStatus: Setter<string | null>;
+    setAiChunkReviews: Setter<AiReviewChunk[]>;
+    setAiFindings: Setter<AiReviewFinding[]>;
+    setAiProgressEvents: Setter<AiReviewProgressEvent[]>;
+    refetchThreadMessages: () => unknown;
+    refetchAiReviewRuns?: () => unknown;
+  };
+  review: {
+    activeReviewScope: Accessor<ReviewScope>;
+    setActiveReviewScope: Setter<ReviewScope>;
+    setReviewRuns: Setter<ReviewRun[]>;
+    setSelectedRunId: Setter<string | null>;
+    setReviewWorkbenchTab: Setter<ReviewWorkbenchTab>;
+  };
 };
 
 export function useReviewActions(args: UseReviewActionsArgs) {
+  const { selection, compare, branch, ai, review } = args;
+  let compareRequestSequence = 0;
+
   const setFollowUpBusy = (value: boolean) => {
-    if (args.setAiFollowUpBusy) {
-      args.setAiFollowUpBusy(value);
+    if (ai.setAiFollowUpBusy) {
+      ai.setAiFollowUpBusy(value);
       return;
     }
-    args.setAiReviewBusy(value);
+    ai.setAiReviewBusy(value);
   };
 
   const resetComparisonView = () => {
-    args.setCompareError(null);
-    args.setCompareResult(null);
-    args.setShowDiffViewer(false);
+    compare.setCompareError(null);
+    compare.setCompareResult(null);
+    compare.setShowDiffViewer(false);
   };
 
   const handleCheckoutBranch = async (branchName: string) => {
-    const workspace = args.selectedWorkspace().trim();
+    const workspace = selection.selectedWorkspace().trim();
     const normalizedBranchName = branchName.trim();
     if (!workspace) {
-      args.setBranchActionError("Select a review with a local workspace before switching branches.");
+      branch.setBranchActionError("Select a review with a local workspace before switching branches.");
       return;
     }
     if (!normalizedBranchName) return;
 
-    args.setBranchActionBusy(true);
-    args.setBranchActionError(null);
+    branch.setBranchActionBusy(true);
+    branch.setBranchActionError(null);
     try {
       await checkoutWorkspaceBranch({
         workspace,
         branchName: normalizedBranchName,
       });
-      await args.refetchWorkspaceBranches();
-      args.setBranchPopoverOpen(false);
-      args.setBranchCreateMode(false);
-      args.setNewBranchName("");
+      await branch.refetchWorkspaceBranches();
+      branch.setBranchPopoverOpen(false);
+      branch.setBranchCreateMode(false);
+      branch.setNewBranchName("");
       resetComparisonView();
     } catch (error) {
-      args.setBranchActionError(error instanceof Error ? error.message : String(error));
+      branch.setBranchActionError(error instanceof Error ? error.message : String(error));
     } finally {
-      args.setBranchActionBusy(false);
+      branch.setBranchActionBusy(false);
     }
   };
 
   const handleStartCreateBranch = () => {
-    args.setBranchCreateMode(true);
-    args.setNewBranchName(args.branchSearchQuery().trim());
+    branch.setBranchCreateMode(true);
+    branch.setNewBranchName(branch.branchSearchQuery().trim());
   };
 
   const handleCreateAndCheckoutBranch = async (event: Event) => {
     event.preventDefault();
-    const workspace = args.selectedWorkspace().trim();
-    const branchName = args.newBranchName().trim();
+    const workspace = selection.selectedWorkspace().trim();
+    const branchName = branch.newBranchName().trim();
     if (!workspace) {
-      args.setBranchActionError("Select a review with a local workspace before creating a branch.");
+      branch.setBranchActionError("Select a review with a local workspace before creating a branch.");
       return;
     }
     if (!branchName) {
-      args.setBranchActionError("Branch name must not be empty.");
+      branch.setBranchActionError("Branch name must not be empty.");
       return;
     }
 
-    args.setBranchActionBusy(true);
-    args.setBranchActionError(null);
+    branch.setBranchActionBusy(true);
+    branch.setBranchActionError(null);
     try {
       await createWorkspaceBranch({
         workspace,
         branchName,
       });
-      await args.refetchWorkspaceBranches();
-      args.setBranchPopoverOpen(false);
-      args.setBranchCreateMode(false);
-      args.setNewBranchName("");
+      await branch.refetchWorkspaceBranches();
+      branch.setBranchPopoverOpen(false);
+      branch.setBranchCreateMode(false);
+      branch.setNewBranchName("");
       resetComparisonView();
     } catch (error) {
-      args.setBranchActionError(error instanceof Error ? error.message : String(error));
+      branch.setBranchActionError(error instanceof Error ? error.message : String(error));
     } finally {
-      args.setBranchActionBusy(false);
+      branch.setBranchActionBusy(false);
     }
   };
 
   const handleCompareSelectedReview = async (target: { baseRef?: string; fetchRemote?: boolean } = {}) => {
-    const baseRef = target.baseRef?.trim() || args.selectedBaseRef().trim() || "origin/main";
+    const requestSequence = ++compareRequestSequence;
+    const threadIdAtStart = selection.selectedThreadId();
+    const baseRef = target.baseRef?.trim() || selection.selectedBaseRef().trim() || "origin/main";
     const fetchRemote = target.fetchRemote ?? baseRef.startsWith("origin/");
-    args.setCompareError(null);
+    compare.setCompareError(null);
 
-    const workspace = args.selectedWorkspace();
+    const workspace = selection.selectedWorkspace().trim();
     if (!workspace) {
-      args.setCompareError("Select a review that has a local workspace path.");
+      compare.setCompareError("Select a review that has a local workspace path.");
       return;
     }
 
-    args.setCompareBusy(true);
+    compare.setCompareBusy(true);
     try {
       const result = await compareWorkspaceDiff({
         workspace,
         baseRef,
         fetchRemote,
       });
-      args.setSelectedBaseRef(result.baseRef);
-      args.setCompareResult(result);
-      args.setShowDiffViewer(true);
+      if (requestSequence !== compareRequestSequence) {
+        return;
+      }
+      if (threadIdAtStart !== selection.selectedThreadId()) {
+        return;
+      }
+      selection.setSelectedBaseRef(result.baseRef);
+      compare.setCompareResult(result);
+      compare.setShowDiffViewer(true);
     } catch (error) {
-      args.setCompareError(error instanceof Error ? error.message : String(error));
+      if (requestSequence !== compareRequestSequence) {
+        return;
+      }
+      compare.setCompareError(error instanceof Error ? error.message : String(error));
     } finally {
-      args.setCompareBusy(false);
+      if (requestSequence === compareRequestSequence) {
+        compare.setCompareBusy(false);
+      }
     }
   };
 
   const handleOpenDiffViewer = async () => {
-    if (args.compareResult()) {
-      args.setShowDiffViewer((current) => !current);
+    if (compare.compareResult()) {
+      compare.setShowDiffViewer((current) => !current);
       return;
     }
 
@@ -175,40 +200,40 @@ export function useReviewActions(args: UseReviewActionsArgs) {
   };
 
   const handleStartAiReview = async (scopeOverride?: ReviewScope) => {
-    args.setAiReviewError(null);
-    args.setAiStatus(null);
-    args.setAiChunkReviews([]);
-    args.setAiFindings([]);
-    args.setAiProgressEvents([]);
+    ai.setAiReviewError(null);
+    ai.setAiStatus(null);
+    ai.setAiChunkReviews([]);
+    ai.setAiFindings([]);
+    ai.setAiProgressEvents([]);
 
-    const threadId = args.selectedThreadId();
+    const threadId = selection.selectedThreadId();
     if (threadId == null) {
-      args.setAiReviewError("Select a review before running AI.");
+      ai.setAiReviewError("Select a review before running AI.");
       return;
     }
 
-    let comparison = args.compareResult();
+    let comparison = compare.compareResult();
     if (!comparison) {
       await handleCompareSelectedReview();
-      comparison = args.compareResult();
+      comparison = compare.compareResult();
     }
 
     if (!comparison) {
-      args.setAiReviewError("Load a diff before running AI review.");
+      ai.setAiReviewError("Load a diff before running AI review.");
       return;
     }
 
-    const scope = scopeOverride ?? args.activeReviewScope();
+    const scope = scopeOverride ?? review.activeReviewScope();
     const scopedDiff = buildScopedDiff(comparison.diff, scope);
     if (!scopedDiff) {
-      args.setAiReviewError("No changes found in the selected scope.");
+      ai.setAiReviewError("No changes found in the selected scope.");
       return;
     }
 
     const optimisticRunId = `run-pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const runLabel = getReviewScopeLabel(scope);
     const startedAt = Date.now();
-    args.setReviewRuns((current) => [
+    review.setReviewRuns((current) => [
       {
         id: optimisticRunId,
         status: "queued",
@@ -225,12 +250,12 @@ export function useReviewActions(args: UseReviewActionsArgs) {
       },
       ...current,
     ]);
-    args.setSelectedRunId(optimisticRunId);
-    args.setActiveReviewScope(scope);
-    args.setReviewWorkbenchTab("issues");
+    review.setSelectedRunId(optimisticRunId);
+    review.setActiveReviewScope(scope);
+    review.setReviewWorkbenchTab("issues");
 
-    args.setAiReviewBusy(false);
-    args.setAiStatus(`Queueing review on ${runLabel}...`);
+    ai.setAiReviewBusy(false);
+    ai.setAiStatus(`Queueing review on ${runLabel}...`);
     try {
       const response = await startAiReviewRun({
         threadId,
@@ -242,11 +267,11 @@ export function useReviewActions(args: UseReviewActionsArgs) {
         insertions: scopedDiff.insertions,
         deletions: scopedDiff.deletions,
         diff: scopedDiff.diff,
-        prompt: args.aiPrompt().trim() || null,
+        prompt: ai.prompt().trim() || null,
         scopeLabel: runLabel,
       });
-      args.setAiPrompt("");
-      args.setReviewRuns((current) =>
+      ai.setPrompt("");
+      review.setReviewRuns((current) =>
         current.map((run) =>
           run.id !== optimisticRunId
             ? run
@@ -258,13 +283,13 @@ export function useReviewActions(args: UseReviewActionsArgs) {
               }
         )
       );
-      args.setSelectedRunId(response.run.runId);
-      args.setAiStatus(`Review queued on ${runLabel}.`);
-      await args.refetchAiReviewRuns?.();
+      review.setSelectedRunId(response.run.runId);
+      ai.setAiStatus(`Review queued on ${runLabel}.`);
+      await ai.refetchAiReviewRuns?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      args.setAiReviewError(message);
-      args.setReviewRuns((current) =>
+      ai.setAiReviewError(message);
+      review.setReviewRuns((current) =>
         current.map((run) =>
           run.id !== optimisticRunId
             ? run
@@ -273,7 +298,7 @@ export function useReviewActions(args: UseReviewActionsArgs) {
                 status: "failed",
                 endedAt: Date.now(),
                 error: message,
-          }
+              }
         )
       );
     }
@@ -289,7 +314,7 @@ export function useReviewActions(args: UseReviewActionsArgs) {
 
     try {
       const response = await cancelAiReviewRun({ runId: normalizedRunId });
-      args.setReviewRuns((current) =>
+      review.setReviewRuns((current) =>
         current.map((run) =>
           run.id !== normalizedRunId
             ? run
@@ -301,57 +326,57 @@ export function useReviewActions(args: UseReviewActionsArgs) {
               }
         )
       );
-      await args.refetchAiReviewRuns?.();
+      await ai.refetchAiReviewRuns?.();
       if (response.canceled) {
-        args.setAiStatus(
+        ai.setAiStatus(
           response.status === "canceled"
             ? "Review run canceled."
             : "Cancel request sent for running review."
         );
       }
     } catch (error) {
-      args.setAiReviewError(error instanceof Error ? error.message : String(error));
+      ai.setAiReviewError(error instanceof Error ? error.message : String(error));
     }
   };
 
   const handleAskAiFollowUp = async (event: Event) => {
     event.preventDefault();
-    args.setAiReviewError(null);
-    args.setAiStatus(null);
+    ai.setAiReviewError(null);
+    ai.setAiStatus(null);
 
-    const threadId = args.selectedThreadId();
+    const threadId = selection.selectedThreadId();
     if (threadId == null) {
-      args.setAiReviewError("Select a review before asking questions.");
+      ai.setAiReviewError("Select a review before asking questions.");
       return;
     }
 
-    const workspace = args.selectedWorkspace().trim();
+    const workspace = selection.selectedWorkspace().trim();
     if (!workspace) {
-      args.setAiReviewError("Select a review that has a local workspace path.");
+      ai.setAiReviewError("Select a review that has a local workspace path.");
       return;
     }
 
-    const question = args.aiPrompt().trim();
+    const question = ai.prompt().trim();
     if (!question) {
-      args.setAiReviewError("Type a follow-up question.");
+      ai.setAiReviewError("Type a follow-up question.");
       return;
     }
 
-    const scopedQuestion = `${question}\n\n[Review context]\n${getReviewScopeContext(args.activeReviewScope())}`;
+    const scopedQuestion = `${question}\n\n[Review context]\n${getReviewScopeContext(review.activeReviewScope())}`;
 
     setFollowUpBusy(true);
-    args.setAiStatus("Sending follow-up question...");
+    ai.setAiStatus("Sending follow-up question...");
     try {
       const response = await generateAiFollowUp({
         threadId,
         workspace,
         question: scopedQuestion,
       });
-      await args.refetchThreadMessages();
-      args.setAiPrompt("");
-      args.setAiStatus(`Answered with ${response.model}.`);
+      await ai.refetchThreadMessages();
+      ai.setPrompt("");
+      ai.setAiStatus(`Answered with ${response.model}.`);
     } catch (error) {
-      args.setAiReviewError(error instanceof Error ? error.message : String(error));
+      ai.setAiReviewError(error instanceof Error ? error.message : String(error));
     } finally {
       setFollowUpBusy(false);
     }

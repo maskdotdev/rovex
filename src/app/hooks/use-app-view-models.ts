@@ -1,0 +1,199 @@
+import type { SettingsViewModel } from "@/app/components/settings-view";
+import type { WorkspaceViewModel } from "@/app/components/workspace-view";
+import type { useAppState } from "@/app/hooks/use-app-state";
+import type { useProviderAndSettingsActions } from "@/app/hooks/use-provider-and-settings-actions";
+import type { useReviewActions } from "@/app/hooks/use-review-actions";
+
+type AppState = ReturnType<typeof useAppState>;
+type ProviderActions = ReturnType<typeof useProviderAndSettingsActions>;
+type ReviewActions = ReturnType<typeof useReviewActions>;
+
+type BuildAppViewModelsArgs = {
+  state: AppState;
+  providerActions: ProviderActions;
+  reviewActions: Pick<
+    ReviewActions,
+    | "handleCheckoutBranch"
+    | "handleStartCreateBranch"
+    | "handleCreateAndCheckoutBranch"
+    | "handleStartAiReviewOnFullDiff"
+    | "handleCancelAiReviewRun"
+    | "handleAskAiFollowUp"
+  >;
+};
+
+export function buildAppViewModels(args: BuildAppViewModelsArgs) {
+  const s = args.state;
+  const p = args.providerActions;
+  const r = args.reviewActions;
+
+  const settingsViewModel: SettingsViewModel = {
+    activeSettingsTab: s.activeSettingsTab,
+    setActiveSettingsTab: s.setActiveSettingsTab,
+    closeSettings: p.closeSettings,
+    selectedDiffThemeId: s.selectedDiffThemeId,
+    setSelectedDiffThemeId: s.setSelectedDiffThemeId,
+    selectedDiffTheme: s.selectedDiffTheme,
+    settingsError: s.settingsError,
+    handleOpenDiffsDocs: p.handleOpenDiffsDocs,
+    selectedProvider: s.selectedProvider,
+    setSelectedProvider: s.setSelectedProvider,
+    selectedProviderOption: s.selectedProviderOption,
+    selectedProviderConnection: s.selectedProviderConnection,
+    providerBusy: s.providerBusy,
+    providerToken: s.providerToken,
+    setProviderToken: s.setProviderToken,
+    providerConnectionError: s.providerConnectionError,
+    providerError: s.providerError,
+    providerStatus: s.providerStatus,
+    deviceAuthInProgress: s.deviceAuthInProgress,
+    deviceAuthUserCode: s.deviceAuthUserCode,
+    openDeviceVerificationUrl: p.openDeviceVerificationUrl,
+    handleStartDeviceAuth: p.handleStartDeviceAuth,
+    handleConnectProvider: p.handleConnectProvider,
+    handleDisconnectProvider: p.handleDisconnectProvider,
+    handleCloneRepository: p.handleCloneRepository,
+    repositoryInput: s.repositoryInput,
+    setRepositoryInput: s.setRepositoryInput,
+    destinationRoot: s.destinationRoot,
+    setDestinationRoot: s.setDestinationRoot,
+    localProjectPath: s.localProjectPath,
+    setLocalProjectPath: s.setLocalProjectPath,
+    handlePickDestinationRoot: p.handlePickDestinationRoot,
+    handlePickLocalProject: p.handlePickLocalProject,
+    handleCreateLocalProjectThread: p.handleCreateLocalProjectThread,
+    aiReviewConfig: s.aiReviewConfig,
+    aiReviewProviderInput: s.aiReviewProviderInput,
+    setAiReviewProviderInput: s.setAiReviewProviderInput,
+    aiReviewModelInput: s.aiReviewModelInput,
+    setAiReviewModelInput: s.setAiReviewModelInput,
+    aiOpencodeProviderInput: s.aiOpencodeProviderInput,
+    setAiOpencodeProviderInput: s.setAiOpencodeProviderInput,
+    aiOpencodeModelInput: s.aiOpencodeModelInput,
+    setAiOpencodeModelInput: s.setAiOpencodeModelInput,
+    aiSettingsBusy: s.aiSettingsBusy,
+    aiSettingsError: s.aiSettingsError,
+    aiSettingsStatus: s.aiSettingsStatus,
+    aiReviewConfigLoadError: s.aiReviewConfigLoadError,
+    handleSaveAiSettings: p.handleSaveAiSettings,
+    appServerAccountStatus: s.appServerAccountStatus,
+    appServerAccountLoadError: s.appServerAccountLoadError,
+    appServerAuthBusy: s.appServerAuthBusy,
+    appServerAuthError: s.appServerAuthError,
+    appServerAuthStatus: s.appServerAuthStatus,
+    handleSwitchAppServerAccount: p.handleSwitchAppServerAccount,
+    handleRefreshAppServerAccountStatus: p.handleRefreshAppServerAccountStatus,
+    maskAccountEmail: s.maskAccountEmail,
+    setMaskAccountEmail: s.setMaskAccountEmail,
+    opencodeSidecarStatus: s.opencodeSidecarStatus,
+    opencodeSidecarLoadError: s.opencodeSidecarLoadError,
+    aiApiKeyInput: s.aiApiKeyInput,
+    setAiApiKeyInput: s.setAiApiKeyInput,
+    aiApiKeyBusy: s.aiApiKeyBusy,
+    aiApiKeyError: s.aiApiKeyError,
+    aiApiKeyStatus: s.aiApiKeyStatus,
+    handleSaveAiApiKey: p.handleSaveAiApiKey,
+  };
+
+  const workspaceViewModel: WorkspaceViewModel = {
+    repoSidebar: {
+      providerBusy: s.providerBusy,
+      onAddLocalRepo: p.handleAddLocalRepoFromSidebar,
+      threadsLoading: () => s.threads.loading,
+      repoGroups: s.repoGroups,
+      loadError: s.loadError,
+      repoDisplayName: p.repoDisplayName,
+      isRepoCollapsed: p.isRepoCollapsed,
+      toggleRepoCollapsed: p.toggleRepoCollapsed,
+      selectedThreadId: s.selectedThreadId,
+      onSelectThread: s.setSelectedThreadId,
+      onCreateReviewForRepo: p.handleCreateReviewForRepo,
+      selectedBaseRef: s.selectedBaseRef,
+      reviewDefaultsByRepo: s.reviewDefaultsByRepo,
+      isRepoMenuOpen: p.isRepoMenuOpen,
+      setRepoMenuOpenState: p.setRepoMenuOpenState,
+      onRenameRepo: p.handleRenameRepo,
+      onRemoveRepo: p.handleRemoveRepo,
+      onRemoveReview: p.handleRemoveReview,
+      onOpenSettings: () => p.openSettings("connections"),
+      onSwitchAccount: p.handleSwitchAppServerAccount,
+      appServerAccountStatus: s.appServerAccountStatus,
+      appServerAccountLoadError: s.appServerAccountLoadError,
+      maskAccountEmail: s.maskAccountEmail,
+    },
+    header: {
+      selectedReview: s.selectedReview,
+      repoDisplayName: p.repoDisplayName,
+      compareResult: s.compareResult,
+      selectedBaseRef: s.selectedBaseRef,
+      reviewSidebarCollapsed: s.reviewSidebarCollapsed,
+      toggleReviewSidebar: () => s.setReviewSidebarCollapsed((collapsed) => !collapsed),
+    },
+    mainPane: {
+      branchActionError: s.branchActionError,
+      compareError: s.compareError,
+      aiReviewError: s.aiReviewError,
+      aiStatus: s.aiStatus,
+      aiReviewBusy: s.aiReviewBusy,
+      aiRunElapsedSeconds: s.aiRunElapsedSeconds,
+      compareSummary: s.compareSummary,
+      compareBusy: s.compareBusy,
+      selectedWorkspace: s.selectedWorkspace,
+      compareResult: s.compareResult,
+      showDiffViewer: s.showDiffViewer,
+      activeReviewScope: s.activeReviewScope,
+      setActiveReviewScope: s.setActiveReviewScope,
+      selectedDiffTheme: s.selectedDiffTheme,
+      diffAnnotations: s.diffAnnotations,
+      handleStartAiReviewOnFullDiff: r.handleStartAiReviewOnFullDiff,
+    },
+    reviewSidebar: {
+      reviewSidebarCollapsed: s.reviewSidebarCollapsed,
+      activeReviewScope: s.activeReviewScope,
+      setActiveReviewScope: s.setActiveReviewScope,
+      aiChunkReviews: s.aiChunkReviews,
+      aiFindings: s.aiFindings,
+      aiProgressEvents: s.aiProgressEvents,
+      reviewRuns: s.reviewRuns,
+      selectedRunId: s.selectedRunId,
+      setSelectedRunId: s.setSelectedRunId,
+      reviewWorkbenchTab: s.reviewWorkbenchTab,
+      setReviewWorkbenchTab: s.setReviewWorkbenchTab,
+      threadMessagesLoadError: s.threadMessagesLoadError,
+      threadMessages: s.threadMessages,
+      aiPrompt: s.aiPrompt,
+      setAiPrompt: s.setAiPrompt,
+      handleAskAiFollowUp: r.handleAskAiFollowUp,
+      handleCancelAiReviewRun: r.handleCancelAiReviewRun,
+      aiReviewBusy: s.aiReviewBusy,
+      aiFollowUpBusy: s.aiFollowUpBusy,
+      compareBusy: s.compareBusy,
+      selectedWorkspace: s.selectedWorkspace,
+      branchPopoverOpen: s.branchPopoverOpen,
+      setBranchPopoverOpen: s.setBranchPopoverOpen,
+      workspaceBranches: s.workspaceBranches,
+      workspaceBranchesLoading: () => s.workspaceBranches.loading,
+      currentWorkspaceBranch: s.currentWorkspaceBranch,
+      branchSearchQuery: s.branchSearchQuery,
+      setBranchSearchQuery: s.setBranchSearchQuery,
+      filteredWorkspaceBranches: s.filteredWorkspaceBranches,
+      branchActionBusy: s.branchActionBusy,
+      handleCheckoutBranch: r.handleCheckoutBranch,
+      workspaceBranchLoadError: s.workspaceBranchLoadError,
+      branchCreateMode: s.branchCreateMode,
+      handleCreateAndCheckoutBranch: r.handleCreateAndCheckoutBranch,
+      setBranchSearchInputRef: s.setBranchSearchInputRef,
+      setBranchCreateInputRef: s.setBranchCreateInputRef,
+      newBranchName: s.newBranchName,
+      setNewBranchName: s.setNewBranchName,
+      setBranchCreateMode: s.setBranchCreateMode,
+      canCreateBranch: s.canCreateBranch,
+      handleStartCreateBranch: r.handleStartCreateBranch,
+    },
+  };
+
+  return {
+    settingsViewModel,
+    workspaceViewModel,
+  };
+}

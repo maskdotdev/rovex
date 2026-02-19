@@ -39,7 +39,7 @@ import {
 import type { RepoGroup, RepoReview, RepoReviewDefaults } from "@/app/types";
 import { listWorkspaceBranches, type AppServerAccountStatus } from "@/lib/backend";
 
-type WorkspaceRepoSidebarProps = {
+export type WorkspaceRepoSidebarModel = {
   providerBusy: Accessor<boolean>;
   onAddLocalRepo: () => void | Promise<void>;
   threadsLoading: Accessor<boolean>;
@@ -68,7 +68,13 @@ type WorkspaceRepoSidebarProps = {
   maskAccountEmail: Accessor<boolean>;
 };
 
+type WorkspaceRepoSidebarProps = {
+  model: WorkspaceRepoSidebarModel;
+};
+
 export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
+  const model = props.model;
+
   const formatQuotaResetTime = (unixSeconds: number | null | undefined) => {
     if (!unixSeconds || unixSeconds <= 0) {
       return "Unknown";
@@ -92,18 +98,18 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
   };
 
   const accountEmailLabel = createMemo(() => {
-    const email = props.appServerAccountStatus()?.email?.trim();
+    const email = model.appServerAccountStatus()?.email?.trim();
     if (!email) {
       return "Not signed in";
     }
-    if (props.maskAccountEmail()) {
+    if (model.maskAccountEmail()) {
       return "Hidden";
     }
     return email;
   });
 
   const accountTypeLabel = createMemo(() => {
-    const rawType = props.appServerAccountStatus()?.accountType?.trim() ?? "";
+    const rawType = model.appServerAccountStatus()?.accountType?.trim() ?? "";
     if (!rawType) {
       return "Personal account";
     }
@@ -111,7 +117,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
   });
 
   const usageWindows = createMemo(() => {
-    const rateLimits = props.appServerAccountStatus()?.rateLimits;
+    const rateLimits = model.appServerAccountStatus()?.rateLimits;
     const primary = rateLimits?.primary ?? null;
     const secondary = rateLimits?.secondary ?? null;
     const windows = [primary, secondary].filter((value): value is NonNullable<typeof value> => Boolean(value));
@@ -221,13 +227,13 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
   const activeReviewDefaults = createMemo<RepoReviewDefaults | null>(() => {
     const repo = reviewDraftRepo();
     if (!repo) return null;
-    return props.reviewDefaultsByRepo()[repo.repoName] ?? null;
+    return model.reviewDefaultsByRepo()[repo.repoName] ?? null;
   });
 
   const reviewSheetRepoLabel = createMemo(() => {
     const repo = reviewDraftRepo();
     if (!repo) return "repository";
-    return props.repoDisplayName(repo.repoName);
+    return model.repoDisplayName(repo.repoName);
   });
 
   const loadReviewBaseRefSuggestions = async (
@@ -316,8 +322,8 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
   };
 
   const openCreateReviewSheet = (repo: RepoGroup) => {
-    const defaults = props.reviewDefaultsByRepo()[repo.repoName];
-    const selectedBaseRef = props.selectedBaseRef().trim();
+    const defaults = model.reviewDefaultsByRepo()[repo.repoName];
+    const selectedBaseRef = model.selectedBaseRef().trim();
     const savedBaseRef = defaults?.baseRef?.trim() || "";
     const savedReviewBranch = defaults?.reviewBranch?.trim() || "";
     const fallbackBaseRef = savedBaseRef || selectedBaseRef || "origin/main";
@@ -374,7 +380,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
     const reviewBranch = reviewBranchInput().trim() || reviewCurrentBranch()?.trim() || "";
 
     setReviewDraftError(null);
-    const success = await props.onCreateReviewForRepo(repo, {
+    const success = await model.onCreateReviewForRepo(repo, {
       baseRef,
       reviewBranch: reviewBranch || undefined,
     });
@@ -391,7 +397,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
     if (!repo || !defaults) return;
 
     setReviewDraftError(null);
-    const success = await props.onCreateReviewForRepo(repo, defaults);
+    const success = await model.onCreateReviewForRepo(repo, defaults);
     if (success) {
       closeCreateReviewSheet();
     } else {
@@ -409,16 +415,16 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
 
   const handleOpenSettingsFromMenu = () => {
     setAccountMenuOpen(false);
-    props.onOpenSettings();
+    model.onOpenSettings();
   };
 
   const handleSwitchAccountFromMenu = async () => {
     setAccountMenuOpen(false);
-    if (props.onSwitchAccount) {
-      await props.onSwitchAccount();
+    if (model.onSwitchAccount) {
+      await model.onSwitchAccount();
       return;
     }
-    props.onOpenSettings();
+    model.onOpenSettings();
   };
 
   return (
@@ -438,11 +444,11 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
           type="button"
           size="sm"
           class="mt-3 h-10 w-full justify-start gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 text-[13px] font-medium text-neutral-200 hover:border-white/[0.12] hover:bg-white/[0.05]"
-          disabled={props.providerBusy()}
-          onClick={() => void props.onAddLocalRepo()}
+          disabled={model.providerBusy()}
+          onClick={() => void model.onAddLocalRepo()}
         >
           <FolderOpen class="size-4" />
-          {props.providerBusy() ? "Working..." : "New Repo"}
+          {model.providerBusy() ? "Working..." : "New Repo"}
         </Button>
       </SidebarHeader>
 
@@ -452,7 +458,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
             Repositories
           </SidebarGroupLabel>
           <Show
-            when={!props.threadsLoading()}
+            when={!model.threadsLoading()}
             fallback={
               <div class="space-y-2 px-3.5 py-2">
                 <div class="h-3 w-24 animate-pulse rounded bg-white/[0.04]" />
@@ -461,7 +467,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
             }
           >
             <Show
-              when={props.repoGroups().length > 0}
+              when={model.repoGroups().length > 0}
               fallback={
                 <p class="px-3.5 py-3 text-[13px] text-neutral-600">
                   No reviews yet.
@@ -469,33 +475,33 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
               }
             >
               <SidebarMenu>
-                <For each={props.repoGroups()}>
+                <For each={model.repoGroups()}>
                   {(repo) => (
                     <SidebarMenuItem>
                       <SidebarMenuButton
                         as="button"
                         type="button"
-                        onClick={() => props.toggleRepoCollapsed(repo.repoName)}
-                        aria-expanded={!props.isRepoCollapsed(repo.repoName)}
+                        onClick={() => model.toggleRepoCollapsed(repo.repoName)}
+                        aria-expanded={!model.isRepoCollapsed(repo.repoName)}
                         class="h-10 rounded-xl pl-3.5 pr-20 text-[12px] font-semibold uppercase tracking-[0.1em] text-neutral-500 hover:bg-white/[0.03] hover:text-neutral-400"
-                        tooltip={props.repoDisplayName(repo.repoName)}
+                        tooltip={model.repoDisplayName(repo.repoName)}
                       >
                         <div class="flex w-full items-center gap-2">
                           <ChevronRight
                             class={`size-3.5 shrink-0 text-neutral-600 transition-transform duration-150 ${
-                              props.isRepoCollapsed(repo.repoName) ? "" : "rotate-90 text-neutral-400"
+                              model.isRepoCollapsed(repo.repoName) ? "" : "rotate-90 text-neutral-400"
                             }`}
                           />
-                          <span class="truncate">{props.repoDisplayName(repo.repoName)}</span>
+                          <span class="truncate">{model.repoDisplayName(repo.repoName)}</span>
                         </div>
                       </SidebarMenuButton>
                         <SidebarMenuAction
                           as="button"
                           type="button"
                           class="right-9 top-1.5 h-7 w-7 rounded-lg text-neutral-500 transition-colors hover:bg-white/[0.08] hover:text-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
-                          aria-label={`Create a new review for ${props.repoDisplayName(repo.repoName)}`}
-                          title={`Create a new review for ${props.repoDisplayName(repo.repoName)}`}
-                          disabled={props.providerBusy()}
+                          aria-label={`Create a new review for ${model.repoDisplayName(repo.repoName)}`}
+                          title={`Create a new review for ${model.repoDisplayName(repo.repoName)}`}
+                          disabled={model.providerBusy()}
                           onClick={(event: MouseEvent) => {
                             event.stopPropagation();
                             openCreateReviewSheet(repo);
@@ -504,8 +510,8 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                           <PlusCircle class="size-3.5" />
                         </SidebarMenuAction>
                       <Popover.Root
-                        open={props.isRepoMenuOpen(repo.repoName)}
-                        onOpenChange={(open) => props.setRepoMenuOpenState(repo.repoName, open)}
+                        open={model.isRepoMenuOpen(repo.repoName)}
+                        onOpenChange={(open) => model.setRepoMenuOpenState(repo.repoName, open)}
                         placement="bottom-end"
                         gutter={6}
                       >
@@ -513,8 +519,8 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                           as="button"
                           type="button"
                           class="absolute right-2 top-1.5 z-10 flex h-7 w-7 items-center justify-center rounded-lg text-neutral-500 outline-none ring-sidebar-ring transition-colors hover:bg-white/[0.08] hover:text-neutral-200 focus-visible:outline-none focus-visible:ring-2"
-                          aria-label={`Open menu for ${props.repoDisplayName(repo.repoName)}`}
-                          title={`Open menu for ${props.repoDisplayName(repo.repoName)}`}
+                          aria-label={`Open menu for ${model.repoDisplayName(repo.repoName)}`}
+                          title={`Open menu for ${model.repoDisplayName(repo.repoName)}`}
                           onClick={(event) => event.stopPropagation()}
                         >
                           <MoreHorizontal class="size-3.5" />
@@ -527,7 +533,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                             <button
                               type="button"
                               class="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] font-medium text-neutral-200 transition-colors hover:bg-white/[0.07]"
-                              onClick={() => props.onRenameRepo(repo)}
+                              onClick={() => model.onRenameRepo(repo)}
                             >
                               <Pencil class="size-3.5 text-neutral-400" />
                               Edit name
@@ -535,7 +541,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                             <button
                               type="button"
                               class="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] font-medium text-rose-300 transition-colors hover:bg-rose-500/10"
-                              onClick={() => void props.onRemoveRepo(repo)}
+                              onClick={() => void model.onRemoveRepo(repo)}
                             >
                               <Trash2 class="size-3.5 text-rose-300/90" />
                               Remove
@@ -543,7 +549,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                           </Popover.Content>
                         </Popover.Portal>
                       </Popover.Root>
-                      <Show when={!props.isRepoCollapsed(repo.repoName)}>
+                      <Show when={!model.isRepoCollapsed(repo.repoName)}>
                         <SidebarMenuSub class="mt-0.5 border-white/[0.05] pr-0">
                           <For each={repo.reviews}>
                             {(review) => (
@@ -551,9 +557,9 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                                 <SidebarMenuSubButton
                                   as="button"
                                   type="button"
-                                  isActive={props.selectedThreadId() === review.id}
+                                  isActive={model.selectedThreadId() === review.id}
                                   class="h-8 w-full justify-between rounded-lg text-[13px] text-neutral-500 transition-all duration-150 data-[active=true]:bg-white/[0.06] data-[active=true]:text-neutral-200 hover:text-neutral-300"
-                                  onClick={() => props.onSelectThread(review.id)}
+                                  onClick={() => model.onSelectThread(review.id)}
                                 >
                                   <span class="truncate pr-2">{review.title}</span>
                                   <span class="shrink-0 text-[11px] tabular-nums text-neutral-600 transition-opacity duration-150 group-hover/review-item:opacity-0 group-focus-within/review-item:opacity-0">
@@ -565,10 +571,10 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                                   class="absolute right-1 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-neutral-600 opacity-0 transition-all pointer-events-none group-hover/review-item:pointer-events-auto group-hover/review-item:opacity-100 group-focus-within/review-item:pointer-events-auto group-focus-within/review-item:opacity-100 hover:bg-rose-500/10 hover:text-rose-300"
                                   aria-label={`Remove review ${review.title}`}
                                   title={`Remove review ${review.title}`}
-                                  disabled={props.providerBusy()}
+                                  disabled={model.providerBusy()}
                                   onClick={(event: MouseEvent) => {
                                     event.stopPropagation();
-                                    void props.onRemoveReview(repo, review);
+                                    void model.onRemoveReview(repo, review);
                                   }}
                                 >
                                   <Trash2 class="size-3.5" />
@@ -584,7 +590,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
               </SidebarMenu>
             </Show>
           </Show>
-          <Show when={props.loadError()}>
+          <Show when={model.loadError()}>
             {(message) => (
               <p class="px-3.5 pt-2 text-[12px] text-rose-400/70" title={message()}>
                 Unable to load reviews.
@@ -621,7 +627,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                 <p class="text-[13.5px] text-neutral-400">{accountTypeLabel()}</p>
               </div>
               <div class="mt-0.5 px-1.5 text-[11.5px] text-neutral-500">
-                Plan: <span class="font-medium text-neutral-300">{props.appServerAccountStatus()?.planType ?? "Unknown"}</span>
+                Plan: <span class="font-medium text-neutral-300">{model.appServerAccountStatus()?.planType ?? "Unknown"}</span>
               </div>
 
               <div class="my-2 h-px bg-white/[0.08]" />
@@ -706,7 +712,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                       );
                     }}
                   </Show>
-                  <Show when={props.appServerAccountStatus()?.detail}>
+                  <Show when={model.appServerAccountStatus()?.detail}>
                     {(detail) => (
                       <p class="px-2 text-[11px] leading-relaxed text-neutral-500">{detail()}</p>
                     )}
@@ -733,7 +739,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                 <span class="text-[13.5px] font-medium">Log out</span>
               </button>
 
-              <Show when={props.appServerAccountLoadError()}>
+              <Show when={model.appServerAccountLoadError()}>
                 {(error) => (
                   <p class="mt-1.5 px-2 text-[11px] text-rose-300/90">{error()}</p>
                 )}
@@ -1047,7 +1053,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                         type="button"
                         variant="outline"
                         class="w-full sm:w-auto"
-                        disabled={props.providerBusy()}
+                        disabled={model.providerBusy()}
                         onClick={() => void handleQuickReviewFromSheet()}
                       >
                         Quick review
@@ -1056,9 +1062,9 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                     <Button
                       type="submit"
                       class="w-full sm:w-auto"
-                      disabled={props.providerBusy()}
+                      disabled={model.providerBusy()}
                     >
-                      {props.providerBusy() ? "Creating..." : "Start review"}
+                      {model.providerBusy() ? "Creating..." : "Start review"}
                     </Button>
                   </div>
                 </form>

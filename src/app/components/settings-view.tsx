@@ -19,7 +19,7 @@ import type {
   ProviderKind,
 } from "@/lib/backend";
 
-type SettingsViewProps = {
+export type SettingsViewModel = {
   activeSettingsTab: Accessor<SettingsTab>;
   setActiveSettingsTab: Setter<SettingsTab>;
   closeSettings: () => void;
@@ -85,6 +85,10 @@ type SettingsViewProps = {
   aiApiKeyError: Accessor<string | null>;
   aiApiKeyStatus: Accessor<string | null>;
   handleSaveAiApiKey: (event: Event) => void | Promise<void>;
+};
+
+type SettingsViewProps = {
+  model: SettingsViewModel;
 };
 
 export function SettingsView(props: SettingsViewProps) {
@@ -154,7 +158,7 @@ export function SettingsView(props: SettingsViewProps) {
     aiApiKeyError,
     aiApiKeyStatus,
     handleSaveAiApiKey,
-  } = props;
+  } = props.model;
 
   const selectedSettingsItem = createMemo(() => {
     const selected = settingsNavItems.find((item) => item.id === activeSettingsTab());

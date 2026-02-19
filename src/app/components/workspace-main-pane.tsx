@@ -10,7 +10,7 @@ import {
 import type { DiffThemePreset } from "@/app/types";
 import type { CompareWorkspaceDiffResult } from "@/lib/backend";
 
-type WorkspaceMainPaneProps = {
+export type WorkspaceMainPaneModel = {
   branchActionError: Accessor<string | null>;
   compareError: Accessor<string | null>;
   aiReviewError: Accessor<string | null>;
@@ -29,70 +29,76 @@ type WorkspaceMainPaneProps = {
   diffAnnotations: Accessor<DiffViewerAnnotation[]>;
 };
 
+type WorkspaceMainPaneProps = {
+  model: WorkspaceMainPaneModel;
+};
+
 export function WorkspaceMainPane(props: WorkspaceMainPaneProps) {
+  const model = props.model;
+
   createEffect(() => {
-    const result = props.compareResult();
-    const scope = props.activeReviewScope();
+    const result = model.compareResult();
+    const scope = model.activeReviewScope();
 
     if (!result) {
       if (scope.kind !== "full") {
-        props.setActiveReviewScope(createFullReviewScope());
+        model.setActiveReviewScope(createFullReviewScope());
       }
       return;
     }
 
     if (!scopeExistsInPatch(scope, result.diff)) {
-      props.setActiveReviewScope(createFullReviewScope());
+      model.setActiveReviewScope(createFullReviewScope());
     }
   });
 
   return (
     <div class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-      <Show when={props.branchActionError()}>
+      <Show when={model.branchActionError()}>
         {(message) => (
           <div class="mb-3 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
             {message()}
           </div>
         )}
       </Show>
-      <Show when={props.compareError()}>
+      <Show when={model.compareError()}>
         {(message) => (
           <div class="mb-3 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
             {message()}
           </div>
         )}
       </Show>
-      <Show when={props.aiReviewError()}>
+      <Show when={model.aiReviewError()}>
         {(message) => (
           <div class="mb-3 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
             {message()}
           </div>
         )}
       </Show>
-      <Show when={props.aiStatus()}>
+      <Show when={model.aiStatus()}>
         {(message) => (
           <div class="mb-3 rounded-xl border border-emerald-500/15 bg-emerald-500/5 px-4 py-3 text-[13px] text-emerald-300/90">
             {message()}
           </div>
         )}
       </Show>
-      <Show when={props.aiReviewBusy()}>
+      <Show when={model.aiReviewBusy()}>
         <div class="mb-3 flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-[13px] text-amber-200/90">
           <LoaderCircle class="size-4 animate-spin text-amber-300/90" />
           <span>
-            Review is running. {props.aiRunElapsedSeconds()}s elapsed. Description and issues update live.
+            Review is running. {model.aiRunElapsedSeconds()}s elapsed. Description and issues update live.
           </span>
         </div>
       </Show>
 
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/[0.05] bg-white/[0.02] px-4 py-2.5 text-[13px]">
-        <span class="text-neutral-400">{props.compareSummary() ?? "No review loaded."}</span>
+        <span class="text-neutral-400">{model.compareSummary() ?? "No review loaded."}</span>
         <div class="flex flex-wrap items-center gap-2">
           <Button
             type="button"
             size="sm"
-            disabled={props.compareBusy() || props.selectedWorkspace().length === 0}
-            onClick={() => void props.handleStartAiReviewOnFullDiff()}
+            disabled={model.compareBusy() || model.selectedWorkspace().length === 0}
+            onClick={() => void model.handleStartAiReviewOnFullDiff()}
           >
             Start review
           </Button>
@@ -100,7 +106,7 @@ export function WorkspaceMainPane(props: WorkspaceMainPaneProps) {
       </div>
 
       <Show
-        when={props.showDiffViewer() && props.compareResult()}
+        when={model.showDiffViewer() && model.compareResult()}
         fallback={
           <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4 text-[14px] text-neutral-400">
             Start review to load changes.
@@ -119,10 +125,10 @@ export function WorkspaceMainPane(props: WorkspaceMainPaneProps) {
             >
               <DiffViewer
                 patch={result().diff}
-                theme={props.selectedDiffTheme().theme}
-                themeId={props.selectedDiffTheme().id}
+                theme={model.selectedDiffTheme().theme}
+                themeId={model.selectedDiffTheme().id}
                 themeType="dark"
-                annotations={props.diffAnnotations()}
+                annotations={model.diffAnnotations()}
               />
             </Show>
           </>
