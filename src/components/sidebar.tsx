@@ -115,7 +115,11 @@ const SidebarProvider: Component<SidebarProviderProps> = (rawProps) => {
   // Adds a keyboard shortcut to toggle the sidebar.
   createEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === SIDEBAR_KEYBOARD_SHORTCUT && (event.metaKey || event.ctrlKey)) {
+      if (
+        event.key === SIDEBAR_KEYBOARD_SHORTCUT &&
+        (event.metaKey || event.ctrlKey) &&
+        !event.shiftKey
+      ) {
         event.preventDefault()
         toggleSidebar()
       }
