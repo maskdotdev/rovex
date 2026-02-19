@@ -23,6 +23,7 @@ export type WorkspaceMainPaneModel = {
   handleStartAiReviewOnFullDiff: () => void | Promise<void>;
   compareResult: Accessor<CompareWorkspaceDiffResult | null>;
   showDiffViewer: Accessor<boolean>;
+  setShowDiffViewer: Setter<boolean>;
   activeReviewScope: Accessor<ReviewScope>;
   setActiveReviewScope: Setter<ReviewScope>;
   selectedDiffTheme: Accessor<DiffThemePreset>;
@@ -94,6 +95,16 @@ export function WorkspaceMainPane(props: WorkspaceMainPaneProps) {
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/[0.05] bg-white/[0.02] px-4 py-2.5 text-[13px]">
         <span class="text-neutral-400">{model.compareSummary() ?? "No review loaded."}</span>
         <div class="flex flex-wrap items-center gap-2">
+          <Show when={model.compareResult()}>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => model.setShowDiffViewer((current) => !current)}
+            >
+              {model.showDiffViewer() ? "Hide changes" : "Show changes"}
+            </Button>
+          </Show>
           <Button
             type="button"
             size="sm"
@@ -108,9 +119,18 @@ export function WorkspaceMainPane(props: WorkspaceMainPaneProps) {
       <Show
         when={model.showDiffViewer() && model.compareResult()}
         fallback={
-          <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4 text-[14px] text-neutral-400">
-            Start review to load changes.
-          </div>
+          <Show
+            when={model.compareResult()}
+            fallback={
+              <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4 text-[14px] text-neutral-400">
+                Start review to load changes.
+              </div>
+            }
+          >
+            <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4 text-[14px] text-neutral-400">
+              Changes are hidden. Use "Show changes" to expand the diff viewer.
+            </div>
+          </Show>
         }
       >
         {(result) => (

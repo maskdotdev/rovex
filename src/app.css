@@ -122,6 +122,8 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* Stronger add/remove contrast for the custom Rovex diff theme. */
@@ -191,6 +193,30 @@ textarea:focus {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 0.8rem;
   background: rgba(255, 255, 255, 0.02);
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.rovex-diff-file-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.52rem;
+  background: rgba(255, 255, 255, 0.02);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0.24rem 0.42rem;
+  transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+}
+
+.rovex-diff-file-toggle:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .rovex-diff-file-placeholder {
@@ -201,17 +227,6 @@ textarea:focus {
   padding: 0.9rem;
   font-size: 0.78rem;
   color: rgba(255, 255, 255, 0.48);
-}
-
-.rovex-huge-diff-plain {
-  margin: 0;
-  padding: 0.9rem 1rem 1rem;
-  white-space: pre;
-  overflow: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.45;
-  color: rgba(226, 232, 240, 0.9);
 }
 
 .rovex-inline-annotation {
@@ -460,8 +475,11 @@ textarea:focus {
 }
 
 .review-diff-pane {
+  min-width: 0;
+  max-width: 100%;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding-right: 0.2rem;
 }
 

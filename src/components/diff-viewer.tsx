@@ -6,7 +6,15 @@ import {
   type FileDiffMetadata,
   type FileDiffOptions,
 } from "@pierre/diffs";
-import { Columns2, Hash, PaintBucket, Rows3, WrapText } from "lucide-solid";
+import {
+  ChevronDown,
+  ChevronRight,
+  Columns2,
+  Hash,
+  PaintBucket,
+  Rows3,
+  WrapText,
+} from "lucide-solid";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/tooltip";
 
@@ -161,7 +169,7 @@ const FAST_DIFF_PATCH_BYTES_THRESHOLD = 200_000;
 const FAST_DIFF_FILE_COUNT_THRESHOLD = 20;
 const FAST_DIFF_TOTAL_LINE_THRESHOLD = 3_000;
 const FAST_DIFF_FILE_LINE_THRESHOLD = 500;
-const HUGE_FILE_LIGHT_RENDERER_LINE_THRESHOLD = 2_000;
+const HUGE_FILE_FAST_PATH_LINE_THRESHOLD = 2_000;
 const DEFAULT_INITIAL_VISIBLE_FILES = 3;
 const FAST_INITIAL_VISIBLE_FILES = 1;
 const DIFF_PROFILE_STORAGE_KEY = "rovex.profile.diff";
@@ -247,42 +255,13 @@ function renderDiffAnnotation(annotation: DiffLineAnnotation<DiffViewerAnnotatio
   return root;
 }
 
-function renderLargeFileAsPlainUnifiedText(file: FileDiffMetadata) {
-  const lines: string[] = [];
-  lines.push(`--- ${file.prevName ?? file.name}`);
-  lines.push(`+++ ${file.name}`);
-
-  for (const hunk of file.hunks) {
-    const contextSuffix = hunk.hunkContext ? ` ${hunk.hunkContext}` : "";
-    lines.push(
-      `@@ -${hunk.deletionStart},${hunk.deletionLines} +${hunk.additionStart},${hunk.additionLines} @@${contextSuffix}`
-    );
-
-    for (const block of hunk.hunkContent) {
-      if (block.type === "context") {
-        for (const line of block.lines) {
-          lines.push(` ${line}`);
-        }
-        continue;
-      }
-      for (const line of block.deletions) {
-        lines.push(`-${line}`);
-      }
-      for (const line of block.additions) {
-        lines.push(`+${line}`);
-      }
-    }
-  }
-
-  return lines.join("\n");
-}
-
 function DiffFileCard(props: DiffFileCardProps) {
   let visibilityAnchorRef: HTMLDivElement | undefined;
   let containerRef: HTMLDivElement | undefined;
   let instance: FileDiff<DiffViewerAnnotationMetadata> | undefined;
   let profiledInitialRender = false;
   const [shouldRender, setShouldRender] = createSignal(props.initiallyVisible);
+  const [collapsed, setCollapsed] = createSignal(false);
   const [renderError, setRenderError] = createSignal<string | null>(null);
   const displayPath = createMemo(
     () => normalizeDiffPath(props.file.name) || normalizeDiffPath(props.file.prevName) || "(unknown)"
@@ -308,42 +287,25 @@ function DiffFileCard(props: DiffFileCardProps) {
   });
 
   createEffect(() => {
-    if (!shouldRender()) return;
+    if (!shouldRender() || collapsed()) return;
 
     const container = containerRef;
     if (!container) return;
 
     try {
       const fileLineCount = Math.max(props.file.unifiedLineCount, props.file.splitLineCount);
-      const useHugeFileLightRenderer = fileLineCount >= HUGE_FILE_LIGHT_RENDERER_LINE_THRESHOLD;
-      const useFastFileMode = props.fastMode || fileLineCount >= FAST_DIFF_FILE_LINE_THRESHOLD;
-      if (useHugeFileLightRenderer) {
-        if (instance) {
-          instance.cleanUp();
-          instance = undefined;
-        }
-
-        container.replaceChildren();
-        const pre = document.createElement("pre");
-        pre.className = "rovex-huge-diff-plain";
-        const renderStart = performance.now();
-        pre.textContent = renderLargeFileAsPlainUnifiedText(props.file);
-        container.appendChild(pre);
-        const renderMs = performance.now() - renderStart;
-        if (!profiledInitialRender) {
-          props.onRendered?.(props.file.name, renderMs);
-          profiledInitialRender = true;
-        }
-        setRenderError(null);
-        return;
-      }
+      const useHugeFileFastPath = fileLineCount >= HUGE_FILE_FAST_PATH_LINE_THRESHOLD;
+      const useFastFileMode =
+        props.fastMode || fileLineCount >= FAST_DIFF_FILE_LINE_THRESHOLD || useHugeFileFastPath;
 
       const fileOptions: FileDiffOptions<DiffViewerAnnotationMetadata> = {
         ...props.options,
-        hunkSeparators: "metadata",
+        hunkSeparators: useHugeFileFastPath ? "simple" : "metadata",
+        diffStyle: useHugeFileFastPath ? "unified" : props.options.diffStyle,
+        disableLineNumbers: useHugeFileFastPath ? true : props.options.disableLineNumbers,
         lineDiffType: useFastFileMode ? "none" : "word",
-        maxLineDiffLength: useFastFileMode ? 120 : 280,
-        tokenizeMaxLineLength: useFastFileMode ? 280 : 900,
+        maxLineDiffLength: useHugeFileFastPath ? 60 : useFastFileMode ? 120 : 280,
+        tokenizeMaxLineLength: useHugeFileFastPath ? 120 : useFastFileMode ? 280 : 900,
       };
       if (!instance) {
         container.replaceChildren();
@@ -353,10 +315,13 @@ function DiffFileCard(props: DiffFileCardProps) {
       }
 
       const renderStart = performance.now();
+      const fileDiff = useHugeFileFastPath
+        ? ({ ...props.file, lang: "text" } as FileDiffMetadata)
+        : props.file;
       instance.render({
-        fileDiff: props.file,
+        fileDiff,
         containerWrapper: container,
-        lineAnnotations: props.lineAnnotations,
+        lineAnnotations: useHugeFileFastPath ? EMPTY_LINE_ANNOTATIONS : props.lineAnnotations,
       });
       const renderMs = performance.now() - renderStart;
       if (!profiledInitialRender) {
@@ -380,25 +345,47 @@ function DiffFileCard(props: DiffFileCardProps) {
         <span class="flex min-w-0 items-center gap-2">
           <span class="truncate text-[12px] text-neutral-200">{displayPath()}</span>
         </span>
-        <span class="ml-2 shrink-0 text-[11px] text-neutral-400">{statsLabel()}</span>
+        <span class="ml-2 flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            class="rovex-diff-file-toggle"
+            aria-expanded={!collapsed()}
+            onClick={() => setCollapsed((current) => !current)}
+          >
+            <Show when={collapsed()} fallback={<ChevronDown class="size-3.5" />}>
+              <ChevronRight class="size-3.5" />
+            </Show>
+            <span>{collapsed() ? "Expand" : "Collapse"}</span>
+          </button>
+          <span class="text-[11px] text-neutral-400">{statsLabel()}</span>
+        </span>
       </div>
       <div ref={visibilityAnchorRef}>
-        <Show when={renderError()}>
-          {(message) => (
-            <div class="mx-3 mb-3 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-[12px] text-rose-300/90">
-              Failed to render file diff: {message()}
-            </div>
-          )}
-        </Show>
         <Show
-          when={shouldRender()}
+          when={!collapsed()}
           fallback={
             <div class="rovex-diff-file-placeholder">
-              Scroll to load this file diff.
+              File diff collapsed.
             </div>
           }
         >
-          <div ref={containerRef} />
+          <Show when={renderError()}>
+            {(message) => (
+              <div class="mx-3 mb-3 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-[12px] text-rose-300/90">
+                Failed to render file diff: {message()}
+              </div>
+            )}
+          </Show>
+          <Show
+            when={shouldRender()}
+            fallback={
+              <div class="rovex-diff-file-placeholder">
+                Scroll to load this file diff.
+              </div>
+            }
+          >
+            <div ref={containerRef} />
+          </Show>
         </Show>
       </div>
     </section>

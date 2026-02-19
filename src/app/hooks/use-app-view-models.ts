@@ -144,6 +144,7 @@ function buildWorkspaceViewModel(
     selectedWorkspace: s.selectedWorkspace,
     compareResult: s.compareResult,
     showDiffViewer: s.showDiffViewer,
+    setShowDiffViewer: s.setShowDiffViewer,
     activeReviewScope: s.activeReviewScope,
     setActiveReviewScope: s.setActiveReviewScope,
     selectedDiffTheme: s.selectedDiffTheme,
