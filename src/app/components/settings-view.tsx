@@ -12,6 +12,7 @@ import {
 import { SettingsSidebar } from "@/app/components/settings-sidebar";
 import type { DiffThemePreset, ProviderOption, SettingsTab } from "@/app/types";
 import type {
+  AppServerAccountStatus,
   AiReviewConfig,
   OpencodeSidecarStatus,
   ProviderConnection,
@@ -67,6 +68,13 @@ type SettingsViewProps = {
   aiSettingsStatus: Accessor<string | null>;
   aiReviewConfigLoadError: Accessor<string | null>;
   handleSaveAiSettings: (event: Event) => void | Promise<void>;
+  appServerAccountStatus: Accessor<AppServerAccountStatus | undefined>;
+  appServerAccountLoadError: Accessor<string | null>;
+  appServerAuthBusy: Accessor<boolean>;
+  appServerAuthError: Accessor<string | null>;
+  appServerAuthStatus: Accessor<string | null>;
+  handleSwitchAppServerAccount: () => void | Promise<void>;
+  handleRefreshAppServerAccountStatus: () => void | Promise<void>;
   maskAccountEmail: Accessor<boolean>;
   setMaskAccountEmail: Setter<boolean>;
   opencodeSidecarStatus: Accessor<OpencodeSidecarStatus | undefined>;
@@ -129,6 +137,13 @@ export function SettingsView(props: SettingsViewProps) {
     aiSettingsStatus,
     aiReviewConfigLoadError,
     handleSaveAiSettings,
+    appServerAccountStatus,
+    appServerAccountLoadError,
+    appServerAuthBusy,
+    appServerAuthError,
+    appServerAuthStatus,
+    handleSwitchAppServerAccount,
+    handleRefreshAppServerAccountStatus,
     maskAccountEmail,
     setMaskAccountEmail,
     opencodeSidecarStatus,
@@ -189,7 +204,7 @@ export function SettingsView(props: SettingsViewProps) {
                               <section class="animate-fade-up mt-10 max-w-3xl rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6" style={{ "animation-delay": "0.08s" }}>
                                 <p class="text-[15px] font-medium text-neutral-200">Privacy</p>
                                 <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
-                                  Control whether Codex account email fragments are visible in Settings sidebar account widgets.
+                                  Control whether your full Codex account email is visible in sidebar account widgets.
                                 </p>
 
                                 <label class="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-white/[0.06] bg-white/[0.015] p-4">
@@ -204,7 +219,7 @@ export function SettingsView(props: SettingsViewProps) {
                                       Hide account email
                                     </span>
                                     <span class="mt-1 block text-[12.5px] leading-relaxed text-neutral-500">
-                                      When enabled, the sidebar account label shows <span class="font-mono text-neutral-400">Hidden</span> instead of your 4-character account tag.
+                                      When enabled, the sidebar account label shows <span class="font-mono text-neutral-400">Hidden</span> instead of your full email address.
                                     </span>
                                   </span>
                                 </label>
@@ -347,6 +362,69 @@ export function SettingsView(props: SettingsViewProps) {
                                     </Show>
                                   </div>
                                 </>
+                              </Show>
+                              <Show when={aiReviewProviderInput() === "app-server"}>
+                                <div class="mt-2 rounded-xl border border-white/[0.06] bg-white/[0.015] p-3">
+                                  <div class="flex items-center justify-between gap-2">
+                                    <p class="text-[12px] font-medium uppercase tracking-[0.09em] text-neutral-500">
+                                      Codex account
+                                    </p>
+                                    <span
+                                      class={`rounded-full border px-2.5 py-1 text-[11.5px] font-medium tracking-wide ${appServerAccountStatus()?.available
+                                        ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400/90"
+                                        : "border-rose-500/20 bg-rose-500/10 text-rose-300/90"
+                                        }`}
+                                    >
+                                      {appServerAccountStatus()?.available ? "Available" : "Unavailable"}
+                                    </span>
+                                  </div>
+                                  <p class="mt-2 text-[12px] text-neutral-400">
+                                    Account: <span class="font-mono text-neutral-300">{appServerAccountStatus()?.email ?? "Not signed in"}</span>
+                                  </p>
+                                  <p class="mt-1 text-[12px] text-neutral-400">
+                                    Plan: <span class="font-mono text-neutral-300">{appServerAccountStatus()?.planType ?? "Unknown"}</span>
+                                  </p>
+                                  <Show when={appServerAccountStatus()?.detail}>
+                                    {(detail) => (
+                                      <p class="mt-2 text-[12px] text-neutral-500">{detail()}</p>
+                                    )}
+                                  </Show>
+                                  <Show when={appServerAccountLoadError()}>
+                                    {(message) => (
+                                      <p class="mt-2 text-[12px] text-rose-300/90">{message()}</p>
+                                    )}
+                                  </Show>
+                                  <div class="mt-3 flex flex-wrap items-center gap-3">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      disabled={appServerAuthBusy()}
+                                      onClick={() => void handleSwitchAppServerAccount()}
+                                    >
+                                      {appServerAuthBusy() ? "Working..." : "Switch Codex account"}
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      class="h-9 border-white/[0.08] px-3 text-neutral-200 hover:border-white/[0.12]"
+                                      disabled={appServerAuthBusy()}
+                                      onClick={() => void handleRefreshAppServerAccountStatus()}
+                                    >
+                                      Refresh status
+                                    </Button>
+                                  </div>
+                                  <Show when={appServerAuthError()}>
+                                    {(message) => (
+                                      <p class="mt-2 text-[12px] text-rose-300/90">{message()}</p>
+                                    )}
+                                  </Show>
+                                  <Show when={appServerAuthStatus()}>
+                                    {(message) => (
+                                      <p class="mt-2 text-[12px] text-emerald-300/90">{message()}</p>
+                                    )}
+                                  </Show>
+                                </div>
                               </Show>
                               <div class="mt-3 flex flex-wrap items-center gap-3">
                                 <Button
