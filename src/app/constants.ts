@@ -50,6 +50,7 @@ export const settingsNavItems: SettingsNavItem[] = [
 export const UNKNOWN_REPO = "unknown-repo";
 export const REPO_DISPLAY_NAME_STORAGE_KEY = "rovex.settings.repo-display-names";
 export const KNOWN_REPO_WORKSPACES_STORAGE_KEY = "rovex.settings.repo-workspaces";
+export const REPO_REVIEW_DEFAULTS_STORAGE_KEY = "rovex.settings.repo-review-defaults";
 export const DIFF_THEME_STORAGE_KEY = "rovex.settings.diff-theme";
 export const ACCOUNT_EMAIL_MASK_STORAGE_KEY = "rovex.settings.mask-account-email";
 export const REVIEW_SIDEBAR_COLLAPSED_STORAGE_KEY = "rovex.workspace.review-sidebar-collapsed";

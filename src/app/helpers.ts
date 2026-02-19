@@ -4,13 +4,20 @@ import {
   DEFAULT_DIFF_THEME_ID,
   DIFF_THEME_STORAGE_KEY,
   KNOWN_REPO_WORKSPACES_STORAGE_KEY,
+  REPO_REVIEW_DEFAULTS_STORAGE_KEY,
   REPO_DISPLAY_NAME_STORAGE_KEY,
   REVIEW_SIDEBAR_COLLAPSED_STORAGE_KEY,
   UNKNOWN_REPO,
   diffThemePresets,
   providerOptions,
 } from "@/app/constants";
-import type { DiffThemePreset, ProviderOption, RepoGroup, RepoReview } from "@/app/types";
+import type {
+  DiffThemePreset,
+  ProviderOption,
+  RepoGroup,
+  RepoReview,
+  RepoReviewDefaults,
+} from "@/app/types";
 
 export function providerOption(provider: ProviderKind): ProviderOption {
   const option = providerOptions.find((candidate) => candidate.id === provider);
@@ -66,6 +73,32 @@ export function getInitialKnownRepoWorkspaces(): Record<string, string> {
       if (typeof value === "string" && value.trim().length > 0) {
         normalized[key] = value.trim();
       }
+    }
+    return normalized;
+  } catch {
+    return {};
+  }
+}
+
+export function getInitialRepoReviewDefaults(): Record<string, RepoReviewDefaults> {
+  if (typeof window === "undefined") return {};
+
+  try {
+    const raw = window.localStorage.getItem(REPO_REVIEW_DEFAULTS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+
+    const normalized: Record<string, RepoReviewDefaults> = {};
+    for (const [repoName, value] of Object.entries(parsed)) {
+      if (!value || typeof value !== "object") continue;
+
+      const candidate = value as { goal?: unknown; baseRef?: unknown };
+      const goal = typeof candidate.goal === "string" ? candidate.goal.trim() : "";
+      const baseRef = typeof candidate.baseRef === "string" ? candidate.baseRef.trim() : "";
+      if (!goal || !baseRef) continue;
+
+      normalized[repoName] = { goal, baseRef };
     }
     return normalized;
   } catch {

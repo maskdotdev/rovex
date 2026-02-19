@@ -33,6 +33,11 @@ export type RepoGroup = {
   workspace: string | null;
 };
 
+export type RepoReviewDefaults = {
+  goal: string;
+  baseRef: string;
+};
+
 export type DiffThemePreset = {
   id: string;
   label: string;

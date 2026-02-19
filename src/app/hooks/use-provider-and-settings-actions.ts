@@ -16,7 +16,13 @@ import {
   type StartProviderDeviceAuthResult,
 } from "@/lib/backend";
 import { providerOption, repoNameFromWorkspace, sleep } from "@/app/helpers";
-import type { AppView, RepoGroup, RepoReview, SettingsTab } from "@/app/types";
+import type {
+  AppView,
+  RepoGroup,
+  RepoReview,
+  RepoReviewDefaults,
+  SettingsTab,
+} from "@/app/types";
 
 type UseProviderAndSettingsActionsArgs = {
   selectedProvider: Accessor<ProviderKind>;
@@ -47,6 +53,10 @@ type UseProviderAndSettingsActionsArgs = {
   refetchGitlabConnection: () => unknown;
   refetchThreads: () => unknown;
   setSelectedThreadId: Setter<number | null>;
+  selectedBaseRef: Accessor<string>;
+  setSelectedBaseRef: Setter<string>;
+  reviewDefaultsByRepo: Accessor<Record<string, RepoReviewDefaults>>;
+  setReviewDefaultsByRepo: Setter<Record<string, RepoReviewDefaults>>;
   knownRepoWorkspaces: Accessor<Record<string, string>>;
   setKnownRepoWorkspaces: Setter<Record<string, string>>;
   repoDisplayNames: Accessor<Record<string, string>>;
@@ -397,7 +407,35 @@ export function useProviderAndSettingsActions(args: UseProviderAndSettingsAction
     }));
   };
 
-  const handleCreateReviewForRepo = async (repo: RepoGroup) => {
+  const makeReviewTitle = (repoName: string, goal: string) => {
+    const displayName = repoDisplayName(repoName);
+    const normalizedGoal = goal.trim();
+    if (!normalizedGoal) {
+      return `Review ${displayName}`;
+    }
+    const truncated =
+      normalizedGoal.length > 72 ? `${normalizedGoal.slice(0, 69).trimEnd()}...` : normalizedGoal;
+    return `Review ${displayName} - ${truncated}`;
+  };
+
+  const normalizeReviewGoal = (goal: string | null | undefined, repoName: string) => {
+    const normalized = goal?.trim();
+    if (normalized) return normalized;
+    return `Review recent changes in ${repoDisplayName(repoName)}.`;
+  };
+
+  const normalizeBaseRef = (baseRef: string | null | undefined) => {
+    const normalized = baseRef?.trim();
+    if (normalized) return normalized;
+    const selected = args.selectedBaseRef().trim();
+    if (selected) return selected;
+    return "main";
+  };
+
+  const handleCreateReviewForRepo = async (
+    repo: RepoGroup,
+    draft?: Partial<RepoReviewDefaults>
+  ): Promise<boolean> => {
     clearProviderNotice();
     const workspace =
       repo.reviews.find((review) => review.workspace?.trim())?.workspace?.trim() ??
@@ -405,22 +443,35 @@ export function useProviderAndSettingsActions(args: UseProviderAndSettingsAction
       args.knownRepoWorkspaces()[repo.repoName]?.trim();
     if (!workspace) {
       args.setProviderError(`No local workspace found for ${repo.repoName}.`);
-      return;
+      return false;
     }
+
+    const savedDefaults = args.reviewDefaultsByRepo()[repo.repoName];
+    const goal = normalizeReviewGoal(draft?.goal ?? savedDefaults?.goal, repo.repoName);
+    const baseRef = normalizeBaseRef(draft?.baseRef ?? savedDefaults?.baseRef);
 
     args.setProviderBusy(true);
     try {
       const thread = await createThread({
-        title: `Review ${repoDisplayName(repo.repoName)}`,
+        title: makeReviewTitle(repo.repoName, goal),
         workspace,
       });
       await args.refetchThreads();
       args.setSelectedThreadId(thread.id);
+      args.setSelectedBaseRef(baseRef);
+      args.setReviewDefaultsByRepo((current) => ({
+        ...current,
+        [repo.repoName]: { goal, baseRef },
+      }));
       args.setCollapsedRepos((current) => ({ ...current, [repo.repoName]: false }));
-      args.setProviderStatus(`Created a new review for ${repoDisplayName(repo.repoName)}.`);
+      args.setProviderStatus(
+        `Created a new review for ${repoDisplayName(repo.repoName)} (vs ${baseRef}).`
+      );
       setRepoMenuOpenState(repo.repoName, false);
+      return true;
     } catch (error) {
       args.setProviderError(error instanceof Error ? error.message : String(error));
+      return false;
     } finally {
       args.setProviderBusy(false);
     }

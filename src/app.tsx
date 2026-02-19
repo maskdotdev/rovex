@@ -13,6 +13,7 @@ import {
 } from "@/components/sidebar";
 import {
   ACCOUNT_EMAIL_MASK_STORAGE_KEY,
+  REPO_REVIEW_DEFAULTS_STORAGE_KEY,
   REVIEW_SIDEBAR_COLLAPSED_STORAGE_KEY,
 } from "@/app/constants";
 import {
@@ -21,6 +22,7 @@ import {
   getInitialKnownRepoWorkspaces,
   getInitialMaskAccountEmail,
   getInitialRepoDisplayNames,
+  getInitialRepoReviewDefaults,
   getInitialReviewSidebarCollapsed,
   groupThreadsByRepo,
   providerOption,
@@ -33,7 +35,7 @@ import { WorkspaceReviewSidebar } from "@/app/components/workspace-review-sideba
 import { useAppEffects } from "@/app/hooks/use-app-effects";
 import { useProviderAndSettingsActions } from "@/app/hooks/use-provider-and-settings-actions";
 import { useReviewActions } from "@/app/hooks/use-review-actions";
-import type { AppView, RepoReview, SettingsTab } from "@/app/types";
+import type { AppView, RepoReview, RepoReviewDefaults, SettingsTab } from "@/app/types";
 import {
   createFullReviewScope,
   type ReviewScope,
@@ -93,6 +95,9 @@ function App() {
   const [repoDisplayNames, setRepoDisplayNames] = createSignal<Record<string, string>>(
     getInitialRepoDisplayNames()
   );
+  const [reviewDefaultsByRepo, setReviewDefaultsByRepo] = createSignal<
+    Record<string, RepoReviewDefaults>
+  >(getInitialRepoReviewDefaults());
   const [repoMenuOpen, setRepoMenuOpen] = createSignal<Record<string, boolean>>({});
   const [selectedThreadId, setSelectedThreadId] = createSignal<number | null>(null);
   const [providerToken, setProviderToken] = createSignal("");
@@ -273,6 +278,13 @@ function App() {
   });
   createEffect(() => {
     if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      REPO_REVIEW_DEFAULTS_STORAGE_KEY,
+      JSON.stringify(reviewDefaultsByRepo())
+    );
+  });
+  createEffect(() => {
+    if (typeof window === "undefined") return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (
         event.key.toLowerCase() === "b" &&
@@ -390,6 +402,10 @@ function App() {
     refetchGitlabConnection,
     refetchThreads,
     setSelectedThreadId,
+    selectedBaseRef,
+    setSelectedBaseRef,
+    reviewDefaultsByRepo,
+    setReviewDefaultsByRepo,
     knownRepoWorkspaces,
     setKnownRepoWorkspaces,
     repoDisplayNames,
@@ -567,12 +583,15 @@ function App() {
           selectedThreadId={selectedThreadId}
           onSelectThread={setSelectedThreadId}
           onCreateReviewForRepo={handleCreateReviewForRepo}
+          selectedBaseRef={selectedBaseRef}
+          reviewDefaultsByRepo={reviewDefaultsByRepo}
           isRepoMenuOpen={isRepoMenuOpen}
           setRepoMenuOpenState={setRepoMenuOpenState}
           onRenameRepo={handleRenameRepo}
           onRemoveRepo={handleRemoveRepo}
           onRemoveReview={handleRemoveReview}
           onOpenSettings={() => openSettings("connections")}
+          onSwitchAccount={handleSwitchAppServerAccount}
           appServerAccountStatus={appServerAccountStatus}
           appServerAccountLoadError={appServerAccountLoadError}
           maskAccountEmail={maskAccountEmail}
