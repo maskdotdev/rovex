@@ -10,6 +10,14 @@ import {
   type AiReviewProgressEvent,
   type CompareWorkspaceDiffResult,
 } from "@/lib/backend";
+import {
+  buildScopedDiff,
+  createFullReviewScope,
+  getReviewScopeContext,
+  getReviewScopeLabel,
+  type ReviewScope,
+} from "@/app/review-scope";
+import type { ReviewRun, ReviewWorkbenchTab } from "@/app/review-types";
 
 type UseReviewActionsArgs = {
   selectedThreadId: Accessor<number | null>;
@@ -31,17 +39,31 @@ type UseReviewActionsArgs = {
   refetchWorkspaceBranches: () => unknown;
   aiPrompt: Accessor<string>;
   setAiPrompt: Setter<string>;
-  hasReviewStarted: Accessor<boolean>;
+  hasReviewStarted?: Accessor<boolean>;
   setAiReviewBusy: Setter<boolean>;
+  setAiFollowUpBusy?: Setter<boolean>;
   setAiReviewError: Setter<string | null>;
   setAiStatus: Setter<string | null>;
   setAiChunkReviews: Setter<AiReviewChunk[]>;
   setAiFindings: Setter<AiReviewFinding[]>;
   setAiProgressEvents: Setter<AiReviewProgressEvent[]>;
   refetchThreadMessages: () => unknown;
+  activeReviewScope: Accessor<ReviewScope>;
+  setActiveReviewScope: Setter<ReviewScope>;
+  setReviewRuns: Setter<ReviewRun[]>;
+  setSelectedRunId: Setter<string | null>;
+  setReviewWorkbenchTab: Setter<ReviewWorkbenchTab>;
 };
 
 export function useReviewActions(args: UseReviewActionsArgs) {
+  const setFollowUpBusy = (value: boolean) => {
+    if (args.setAiFollowUpBusy) {
+      args.setAiFollowUpBusy(value);
+      return;
+    }
+    args.setAiReviewBusy(value);
+  };
+
   const resetComparisonView = () => {
     args.setCompareError(null);
     args.setCompareResult(null);
@@ -150,7 +172,7 @@ export function useReviewActions(args: UseReviewActionsArgs) {
     await handleCompareSelectedReview();
   };
 
-  const handleStartAiReview = async () => {
+  const handleStartAiReview = async (scopeOverride?: ReviewScope) => {
     args.setAiReviewError(null);
     args.setAiStatus(null);
     args.setAiChunkReviews([]);
@@ -174,8 +196,39 @@ export function useReviewActions(args: UseReviewActionsArgs) {
       return;
     }
 
+    const scope = scopeOverride ?? args.activeReviewScope();
+    const scopedDiff = buildScopedDiff(comparison.diff, scope);
+    if (!scopedDiff) {
+      args.setAiReviewError("No changes found in the selected scope.");
+      return;
+    }
+
+    const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const runLabel = getReviewScopeLabel(scope);
+    const startedAt = Date.now();
+    args.setReviewRuns((current) => [
+      {
+        id: runId,
+        status: "running",
+        scope,
+        scopeLabel: runLabel,
+        startedAt,
+        endedAt: null,
+        model: null,
+        diffTruncated: false,
+        error: null,
+        progressEvents: [],
+        chunks: [],
+        findings: [],
+      },
+      ...current,
+    ]);
+    args.setSelectedRunId(runId);
+    args.setActiveReviewScope(scope);
+    args.setReviewWorkbenchTab("issues");
+
     args.setAiReviewBusy(true);
-    args.setAiStatus("Starting chunked review...");
+    args.setAiStatus(`Starting chunked review on ${runLabel}...`);
     try {
       const response = await generateAiReview({
         threadId,
@@ -183,24 +236,56 @@ export function useReviewActions(args: UseReviewActionsArgs) {
         baseRef: comparison.baseRef,
         mergeBase: comparison.mergeBase,
         head: comparison.head,
-        filesChanged: comparison.filesChanged,
-        insertions: comparison.insertions,
-        deletions: comparison.deletions,
-        diff: comparison.diff,
+        filesChanged: scopedDiff.filesChanged,
+        insertions: scopedDiff.insertions,
+        deletions: scopedDiff.deletions,
+        diff: scopedDiff.diff,
         prompt: args.aiPrompt().trim() || null,
       });
       await args.refetchThreadMessages();
       args.setAiPrompt("");
       args.setAiChunkReviews(response.chunks);
       args.setAiFindings(response.findings);
+      args.setReviewRuns((current) =>
+        current.map((run) =>
+          run.id !== runId
+            ? run
+            : {
+                ...run,
+                status: "completed",
+                endedAt: Date.now(),
+                model: response.model,
+                diffTruncated: response.diffTruncated,
+                chunks: response.chunks,
+                findings: response.findings,
+              }
+        )
+      );
       args.setAiStatus(
-        `Reviewed ${response.chunks.length} chunk(s) with ${response.findings.length} finding(s) using ${response.model}${response.diffTruncated ? " (truncated chunk input)." : "."}`
+        `Reviewed ${runLabel}: ${response.chunks.length} chunk(s), ${response.findings.length} finding(s) via ${response.model}${response.diffTruncated ? " (truncated chunk input)." : "."}`
       );
     } catch (error) {
-      args.setAiReviewError(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      args.setAiReviewError(message);
+      args.setReviewRuns((current) =>
+        current.map((run) =>
+          run.id !== runId
+            ? run
+            : {
+                ...run,
+                status: "failed",
+                endedAt: Date.now(),
+                error: message,
+              }
+        )
+      );
     } finally {
       args.setAiReviewBusy(false);
     }
+  };
+
+  const handleStartAiReviewOnFullDiff = async () => {
+    await handleStartAiReview(createFullReviewScope());
   };
 
   const handleAskAiFollowUp = async (event: Event) => {
@@ -211,10 +296,6 @@ export function useReviewActions(args: UseReviewActionsArgs) {
     const threadId = args.selectedThreadId();
     if (threadId == null) {
       args.setAiReviewError("Select a review before asking questions.");
-      return;
-    }
-    if (!args.hasReviewStarted()) {
-      args.setAiReviewError("Start review before asking follow-up questions.");
       return;
     }
 
@@ -230,13 +311,15 @@ export function useReviewActions(args: UseReviewActionsArgs) {
       return;
     }
 
-    args.setAiReviewBusy(true);
+    const scopedQuestion = `${question}\n\n[Review context]\n${getReviewScopeContext(args.activeReviewScope())}`;
+
+    setFollowUpBusy(true);
     args.setAiStatus("Sending follow-up question...");
     try {
       const response = await generateAiFollowUp({
         threadId,
         workspace,
-        question,
+        question: scopedQuestion,
       });
       await args.refetchThreadMessages();
       args.setAiPrompt("");
@@ -244,7 +327,7 @@ export function useReviewActions(args: UseReviewActionsArgs) {
     } catch (error) {
       args.setAiReviewError(error instanceof Error ? error.message : String(error));
     } finally {
-      args.setAiReviewBusy(false);
+      setFollowUpBusy(false);
     }
   };
 
@@ -255,6 +338,7 @@ export function useReviewActions(args: UseReviewActionsArgs) {
     handleCompareSelectedReview,
     handleOpenDiffViewer,
     handleStartAiReview,
+    handleStartAiReviewOnFullDiff,
     handleAskAiFollowUp,
   };
 }

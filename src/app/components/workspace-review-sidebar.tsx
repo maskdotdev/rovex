@@ -1,0 +1,617 @@
+import { For, Show, createEffect, createMemo, type Accessor, type Setter } from "solid-js";
+import {
+  Check,
+  ChevronRight,
+  GitBranch,
+  LoaderCircle,
+  PlusCircle,
+  Search,
+  Send,
+} from "lucide-solid";
+import * as Popover from "@kobalte/core/popover";
+import { Button } from "@/components/button";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+} from "@/components/sidebar";
+import { TextField, TextFieldInput } from "@/components/text-field";
+import { getReviewScopeLabel, normalizeDiffPath, type ReviewScope } from "@/app/review-scope";
+import type { ReviewRun, ReviewWorkbenchTab } from "@/app/review-types";
+import type {
+  AiReviewChunk,
+  AiReviewFinding,
+  AiReviewProgressEvent,
+  ListWorkspaceBranchesResult,
+  Message as ThreadMessage,
+  WorkspaceBranch,
+} from "@/lib/backend";
+
+type WorkspaceReviewSidebarProps = {
+  reviewSidebarCollapsed?: Accessor<boolean>;
+  activeReviewScope: Accessor<ReviewScope>;
+  setActiveReviewScope: Setter<ReviewScope>;
+  aiChunkReviews: Accessor<AiReviewChunk[]>;
+  aiFindings: Accessor<AiReviewFinding[]>;
+  aiProgressEvents: Accessor<AiReviewProgressEvent[]>;
+  reviewRuns: Accessor<ReviewRun[]>;
+  selectedRunId: Accessor<string | null>;
+  setSelectedRunId: Setter<string | null>;
+  reviewWorkbenchTab: Accessor<ReviewWorkbenchTab>;
+  setReviewWorkbenchTab: Setter<ReviewWorkbenchTab>;
+  threadMessagesLoadError: Accessor<string | null>;
+  threadMessages: Accessor<ThreadMessage[] | undefined>;
+  aiPrompt: Accessor<string>;
+  setAiPrompt: Setter<string>;
+  handleAskAiFollowUp: (event: Event) => void | Promise<void>;
+  aiReviewBusy: Accessor<boolean>;
+  aiFollowUpBusy?: Accessor<boolean>;
+  compareBusy: Accessor<boolean>;
+  selectedWorkspace: Accessor<string>;
+  hasReviewStarted?: Accessor<boolean>;
+  branchPopoverOpen: Accessor<boolean>;
+  setBranchPopoverOpen: Setter<boolean>;
+  workspaceBranches: Accessor<ListWorkspaceBranchesResult | null | undefined>;
+  workspaceBranchesLoading: Accessor<boolean>;
+  currentWorkspaceBranch: Accessor<string>;
+  branchSearchQuery: Accessor<string>;
+  setBranchSearchQuery: Setter<string>;
+  filteredWorkspaceBranches: Accessor<WorkspaceBranch[]>;
+  branchActionBusy: Accessor<boolean>;
+  handleCheckoutBranch: (branchName: string) => void | Promise<void>;
+  workspaceBranchLoadError: Accessor<string | null>;
+  branchCreateMode: Accessor<boolean>;
+  handleCreateAndCheckoutBranch: (event: Event) => void | Promise<void>;
+  setBranchSearchInputRef: (element: HTMLInputElement | undefined) => void;
+  setBranchCreateInputRef: (element: HTMLInputElement | undefined) => void;
+  newBranchName: Accessor<string>;
+  setNewBranchName: Setter<string>;
+  setBranchCreateMode: Setter<boolean>;
+  canCreateBranch: Accessor<boolean>;
+  handleStartCreateBranch: () => void;
+};
+
+function severityRank(severity: string) {
+  switch ((severity || "").toLowerCase()) {
+    case "critical":
+      return 0;
+    case "high":
+      return 1;
+    case "medium":
+      return 2;
+    case "low":
+      return 3;
+    default:
+      return 4;
+  }
+}
+
+function formatRunTime(timestamp: number) {
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
+  const isCollapsed = createMemo(() => props.reviewSidebarCollapsed?.() ?? false);
+  const isFollowUpBusy = createMemo(() => props.aiFollowUpBusy?.() ?? props.aiReviewBusy());
+
+  const selectedRun = createMemo<ReviewRun | null>(() => {
+    const runs = props.reviewRuns();
+    if (runs.length === 0) return null;
+    const selectedId = props.selectedRunId();
+    if (selectedId) {
+      const found = runs.find((run) => run.id === selectedId);
+      if (found) return found;
+    }
+    return runs[0] ?? null;
+  });
+
+  const visibleChunkReviews = createMemo(() => selectedRun()?.chunks ?? props.aiChunkReviews());
+  const visibleFindings = createMemo(() => selectedRun()?.findings ?? props.aiFindings());
+  const visibleProgressEvents = createMemo(
+    () => selectedRun()?.progressEvents ?? props.aiProgressEvents()
+  );
+
+  const sortedVisibleFindings = createMemo(() =>
+    [...visibleFindings()].sort((left, right) => {
+      const bySeverity = severityRank(left.severity) - severityRank(right.severity);
+      if (bySeverity !== 0) return bySeverity;
+      const byPath = left.filePath.localeCompare(right.filePath);
+      if (byPath !== 0) return byPath;
+      return left.lineNumber - right.lineNumber;
+    })
+  );
+
+  const latestProgress = createMemo(() => {
+    const events = visibleProgressEvents();
+    return events.length > 0 ? events[events.length - 1] : null;
+  });
+
+  const progressRatio = createMemo(() => {
+    const progress = latestProgress();
+    if (!progress || progress.totalChunks <= 0) return 0;
+    return Math.round((progress.completedChunks / progress.totalChunks) * 100);
+  });
+
+  const issuesEmptyMessage = createMemo(() => {
+    if (visibleChunkReviews().length === 0) {
+      return "Run review to scan this diff for issues.";
+    }
+    const run = selectedRun();
+    if (run?.status === "running" || props.aiReviewBusy()) {
+      return "Scanning files for issues. New findings will stream here in real time.";
+    }
+    return "No issues found for this run.";
+  });
+
+  createEffect(() => {
+    const runs = props.reviewRuns();
+    if (runs.length === 0) {
+      if (props.selectedRunId() !== null) {
+        props.setSelectedRunId(null);
+      }
+      return;
+    }
+
+    const selectedId = props.selectedRunId();
+    if (!selectedId || !runs.some((run) => run.id === selectedId)) {
+      props.setSelectedRunId(runs[0].id);
+    }
+  });
+
+  return (
+    <Sidebar
+      side="right"
+      collapsible="none"
+      class={`w-[23rem] overflow-hidden border-0 bg-transparent px-2.5 py-2 transition-[width,opacity,padding] duration-200 ease-linear [&_[data-sidebar=sidebar]]:rounded-2xl [&_[data-sidebar=sidebar]]:border [&_[data-sidebar=sidebar]]:border-white/[0.06] [&_[data-sidebar=sidebar]]:bg-white/[0.02] ${
+        isCollapsed() ? "w-0 px-0 py-0 opacity-0 pointer-events-none" : "opacity-100"
+      }`}
+    >
+      <SidebarContent class="p-2">
+        <SidebarGroup class="h-full min-h-0 p-0">
+          <div class="review-right-tabs" role="tablist" aria-label="Review workbench tabs">
+            <For
+              each={[
+                { id: "description", label: "Description" },
+                { id: "issues", label: "Issues" },
+                { id: "chat", label: "Chat" },
+              ] as const}
+            >
+              {(tab) => (
+                <button
+                  type="button"
+                  role="tab"
+                  class={`review-tab-trigger ${props.reviewWorkbenchTab() === tab.id ? "is-active" : ""}`}
+                  onClick={() => props.setReviewWorkbenchTab(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              )}
+            </For>
+          </div>
+
+          <div class="review-right-content">
+            <Show when={props.reviewWorkbenchTab() === "description"}>
+              <Show
+                when={selectedRun()}
+                fallback={<p class="review-empty-state">Run AI review to build a chunked description of the active scope.</p>}
+              >
+                {(run) => (
+                  <>
+                    <div class="mb-3 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
+                      <div class="mb-1 flex items-center justify-between gap-2">
+                        <p class="truncate text-[12.5px] font-medium text-neutral-200">{run().scopeLabel}</p>
+                        <span
+                          class={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${run().status === "completed"
+                            ? "bg-emerald-500/15 text-emerald-300"
+                            : run().status === "failed"
+                              ? "bg-rose-500/15 text-rose-300"
+                              : "bg-amber-500/15 text-amber-300"
+                            }`}
+                        >
+                          {run().status}
+                        </span>
+                      </div>
+                      <p class="text-[11px] text-neutral-500">
+                        {formatRunTime(run().startedAt)} • {run().findings.length} findings
+                        {run().model ? ` • ${run().model}` : ""}
+                      </p>
+                      <Show when={latestProgress()}>
+                        {(progress) => (
+                          <div class="mt-2">
+                            <p class="text-[11px] text-neutral-400">{progress().message}</p>
+                            <div class="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/[0.08]">
+                              <div
+                                class="h-full rounded-full bg-amber-400/80 transition-all duration-150"
+                                style={{ width: `${progressRatio()}%` }}
+                              />
+                            </div>
+                            <p class="mt-1 text-[10px] uppercase tracking-[0.08em] text-neutral-500">
+                              {progress().completedChunks}/{progress().totalChunks} chunks analyzed
+                            </p>
+                          </div>
+                        )}
+                      </Show>
+                    </div>
+
+                    <Show when={run().status === "failed"}>
+                      <div class="rounded-lg border border-rose-500/18 bg-rose-500/8 px-3 py-2 text-[12px] text-rose-300/90">
+                        {run().error ?? "Review run failed."}
+                      </div>
+                    </Show>
+
+                    <Show
+                      when={visibleChunkReviews().length > 0}
+                      fallback={<p class="review-empty-state">Waiting for chunk summaries...</p>}
+                    >
+                      <div class="space-y-2.5">
+                        <For each={visibleChunkReviews()}>
+                          {(chunk) => (
+                            <article class="review-suggestion-card">
+                              <div class="mb-1.5 flex items-center justify-between gap-2">
+                                <p class="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-neutral-400">
+                                  {chunk.filePath} • chunk {chunk.chunkIndex}
+                                </p>
+                                <span class="text-[11px] text-neutral-500">
+                                  {chunk.findings.length} issue{chunk.findings.length === 1 ? "" : "s"}
+                                </span>
+                              </div>
+                              <p class="text-[12.5px] leading-5 text-neutral-300">{chunk.summary}</p>
+                              <div class="mt-2 flex items-center gap-2">
+                                <Show when={chunk.findings.length > 0}>
+                                  <button
+                                    type="button"
+                                    class="review-inline-action"
+                                    onClick={() => {
+                                      props.setActiveReviewScope({
+                                        kind: "file",
+                                        filePath: normalizeDiffPath(chunk.filePath),
+                                      });
+                                      props.setReviewWorkbenchTab("issues");
+                                    }}
+                                  >
+                                    View issues
+                                  </button>
+                                </Show>
+                                <button
+                                  type="button"
+                                  class="review-inline-action"
+                                  onClick={() => {
+                                    props.setReviewWorkbenchTab("chat");
+                                    props.setAiPrompt(
+                                      `Explain this chunk and highlight risky changes: ${chunk.filePath} chunk ${chunk.chunkIndex}`
+                                    );
+                                  }}
+                                >
+                                  Ask AI
+                                </button>
+                              </div>
+                            </article>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+
+                    <Show when={props.reviewRuns().length > 1}>
+                      <div class="mt-3 border-t border-white/[0.06] pt-3">
+                        <p class="mb-2 text-[10px] uppercase tracking-[0.08em] text-neutral-500">
+                          Recent runs
+                        </p>
+                        <div class="space-y-2">
+                          <For each={props.reviewRuns().slice(0, 6)}>
+                            {(historyRun) => (
+                              <button
+                                type="button"
+                                class={`review-run-row ${props.selectedRunId() === historyRun.id ? "is-active" : ""}`}
+                                onClick={() => props.setSelectedRunId(historyRun.id)}
+                              >
+                                <div class="mb-1 flex items-center justify-between gap-2">
+                                  <p class="truncate text-[12px] text-neutral-200">{historyRun.scopeLabel}</p>
+                                  <span class="text-[11px] text-neutral-500">
+                                    {historyRun.findings.length}
+                                  </span>
+                                </div>
+                                <p class="text-[10px] uppercase tracking-[0.08em] text-neutral-500">
+                                  {formatRunTime(historyRun.startedAt)}
+                                </p>
+                              </button>
+                            )}
+                          </For>
+                        </div>
+                      </div>
+                    </Show>
+                  </>
+                )}
+              </Show>
+            </Show>
+
+            <Show when={props.reviewWorkbenchTab() === "issues"}>
+              <div class="mb-2 flex items-center justify-between text-[12px] text-neutral-500">
+                <span>
+                  {visibleChunkReviews().length} chunks • {visibleFindings().length} findings
+                </span>
+                <Show when={selectedRun()}>
+                  {(run) => (
+                    <span class="rounded-full border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 text-[11px] text-neutral-400">
+                      {run().status}
+                    </span>
+                  )}
+                </Show>
+              </div>
+
+              <Show when={visibleProgressEvents().length > 0}>
+                <div class="mb-2 max-h-[7rem] space-y-1.5 overflow-y-auto rounded-lg border border-white/[0.05] bg-white/[0.015] px-3 py-2">
+                  <For each={visibleProgressEvents().slice(Math.max(0, visibleProgressEvents().length - 8))}>
+                    {(event) => (
+                      <p class="text-[12px] text-neutral-500">{event.message}</p>
+                    )}
+                  </For>
+                </div>
+              </Show>
+
+              <Show
+                when={sortedVisibleFindings().length > 0}
+                fallback={<p class="review-empty-state">{issuesEmptyMessage()}</p>}
+              >
+                <div class="space-y-2 overflow-y-auto pr-1">
+                  <For each={sortedVisibleFindings()}>
+                    {(finding) => (
+                      <article class="review-suggestion-card">
+                        <div class="mb-1.5 flex items-center justify-between gap-2">
+                          <p class="text-[12px] font-semibold uppercase tracking-[0.08em] text-amber-200/90">
+                            {finding.severity}
+                          </p>
+                          <span class="text-[11px] text-neutral-500">
+                            {finding.filePath}:{finding.lineNumber}
+                          </span>
+                        </div>
+                        <p class="text-[13px] font-medium text-neutral-200">{finding.title}</p>
+                        <p class="mt-1 text-[12.5px] leading-5 text-neutral-400">{finding.body}</p>
+                        <div class="mt-2 flex items-center gap-2">
+                          <button
+                            type="button"
+                            class="review-inline-action"
+                            onClick={() => {
+                              props.setActiveReviewScope({
+                                kind: "file",
+                                filePath: normalizeDiffPath(finding.filePath),
+                              });
+                            }}
+                          >
+                            Jump to file
+                          </button>
+                          <button
+                            type="button"
+                            class="review-inline-action"
+                            onClick={() => {
+                              props.setReviewWorkbenchTab("chat");
+                              props.setAiPrompt(
+                                `Explain this issue and propose a fix: [${finding.severity}] ${finding.title} at ${finding.filePath}:${finding.lineNumber}`
+                              );
+                            }}
+                          >
+                            Ask AI
+                          </button>
+                        </div>
+                      </article>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </Show>
+
+            <Show when={props.reviewWorkbenchTab() === "chat"}>
+              <div class="mb-3 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-[12px] text-neutral-400">
+                Active scope: <span class="text-neutral-300">{getReviewScopeLabel(props.activeReviewScope())}</span>
+              </div>
+              <Show when={props.aiReviewBusy()}>
+                <p class="mb-3 text-[12px] text-neutral-500">
+                  Issue scan is running. Chat stays available while findings stream in.
+                </p>
+              </Show>
+              <div class="mb-3 max-h-[15rem] space-y-2 overflow-y-auto rounded-lg border border-white/[0.05] bg-white/[0.015] p-2.5">
+                <For each={(props.threadMessages() ?? []).slice(-14)}>
+                  {(message) => (
+                    <div
+                      class={`rounded-md px-2.5 py-2 text-[12.5px] leading-5 ${message.role === "assistant" ? "bg-emerald-500/8 text-emerald-100/85" : "bg-white/[0.035] text-neutral-300"}`}
+                    >
+                      <p class="mb-1 text-[10px] uppercase tracking-[0.08em] text-neutral-500">{message.role}</p>
+                      <p>{message.content}</p>
+                    </div>
+                  )}
+                </For>
+                <Show when={(props.threadMessages() ?? []).length === 0}>
+                  <p class="px-1 py-1 text-[12px] text-neutral-500">
+                    No conversation yet. Ask about the active diff scope to get started.
+                  </p>
+                </Show>
+              </div>
+              <Show when={props.threadMessagesLoadError()}>
+                {(message) => (
+                  <p class="mb-2 text-[12px] text-rose-300/90">
+                    Unable to refresh conversation history: {message()}
+                  </p>
+                )}
+              </Show>
+
+              <form
+                class="overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.02]"
+                onSubmit={(event) => void props.handleAskAiFollowUp(event)}
+              >
+                <TextField>
+                  <TextFieldInput
+                    value={props.aiPrompt()}
+                    onInput={(event) => props.setAiPrompt(event.currentTarget.value)}
+                    placeholder={
+                      props.aiReviewBusy()
+                        ? "Ask while scanning: explain risks, fixes, or design intent..."
+                        : "Ask about this diff, findings, or implementation choices..."
+                    }
+                    class="h-12 border-0 bg-transparent px-4 text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:ring-0 focus:ring-offset-0"
+                  />
+                </TextField>
+                <div class="flex items-center justify-between border-t border-white/[0.04] px-4 py-2.5">
+                  <div class="flex items-center gap-2">
+                    <Popover.Root
+                      open={props.branchPopoverOpen()}
+                      onOpenChange={props.setBranchPopoverOpen}
+                      placement="top-start"
+                      gutter={8}
+                    >
+                      <Popover.Trigger
+                        as="button"
+                        type="button"
+                        class="branch-picker-trigger"
+                        disabled={props.selectedWorkspace().length === 0}
+                        aria-label="Switch current branch"
+                      >
+                        <GitBranch class="size-4 text-neutral-400" />
+                        <span class="max-w-[8.75rem] truncate">
+                          {props.workspaceBranchesLoading() && !props.workspaceBranches()
+                            ? "Loading..."
+                            : props.currentWorkspaceBranch()}
+                        </span>
+                        <ChevronRight class="size-3.5 rotate-90 text-neutral-500" />
+                      </Popover.Trigger>
+                      <Popover.Portal>
+                        <Popover.Content
+                          class="branch-picker-popover"
+                          onOpenAutoFocus={(event) => event.preventDefault()}
+                        >
+                          <div class="branch-picker-search">
+                            <Search class="size-4 text-neutral-500" />
+                            <input
+                              ref={(element) => {
+                                props.setBranchSearchInputRef(element);
+                              }}
+                              value={props.branchSearchQuery()}
+                              onInput={(event) => props.setBranchSearchQuery(event.currentTarget.value)}
+                              class="branch-picker-search-input"
+                              placeholder="Search branches"
+                            />
+                          </div>
+
+                          <p class="branch-picker-section-label">Branches</p>
+                          <div class="branch-picker-list">
+                            <Show
+                              when={!props.workspaceBranchesLoading()}
+                              fallback={
+                                <div class="branch-picker-loading">
+                                  <LoaderCircle class="size-4 animate-spin text-neutral-500" />
+                                  <span>Loading branches...</span>
+                                </div>
+                              }
+                            >
+                              <Show
+                                when={props.filteredWorkspaceBranches().length > 0}
+                                fallback={
+                                  <p class="px-3 py-2 text-[13px] text-neutral-500">
+                                    {props.workspaceBranchLoadError() ?? "No branches found."}
+                                  </p>
+                                }
+                              >
+                                <For each={props.filteredWorkspaceBranches()}>
+                                  {(branch) => (
+                                    <button
+                                      type="button"
+                                      class="branch-picker-item"
+                                      disabled={props.branchActionBusy()}
+                                      onClick={() => void props.handleCheckoutBranch(branch.name)}
+                                    >
+                                      <span class="flex items-center gap-3 truncate">
+                                        <GitBranch class="size-4 text-neutral-500" />
+                                        <span class="truncate">{branch.name}</span>
+                                      </span>
+                                      <Show when={branch.isCurrent}>
+                                        <Check class="size-5 text-neutral-100" />
+                                      </Show>
+                                    </button>
+                                  )}
+                                </For>
+                              </Show>
+                            </Show>
+                          </div>
+
+                          <div class="branch-picker-create-wrap">
+                            <Show
+                              when={!props.branchCreateMode()}
+                              fallback={
+                                <form
+                                  class="branch-picker-create-form"
+                                  onSubmit={(event) => void props.handleCreateAndCheckoutBranch(event)}
+                                >
+                                  <input
+                                    ref={(element) => {
+                                      props.setBranchCreateInputRef(element);
+                                    }}
+                                    value={props.newBranchName()}
+                                    onInput={(event) => props.setNewBranchName(event.currentTarget.value)}
+                                    class="branch-picker-create-input"
+                                    placeholder="feature/new-branch"
+                                  />
+                                  <div class="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      class="branch-picker-create-cancel"
+                                      onClick={() => {
+                                        props.setBranchCreateMode(false);
+                                        props.setNewBranchName("");
+                                      }}
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="submit"
+                                      class="branch-picker-create-submit"
+                                      disabled={!props.canCreateBranch()}
+                                    >
+                                      Create
+                                    </button>
+                                  </div>
+                                </form>
+                              }
+                            >
+                              <button
+                                type="button"
+                                class="branch-picker-create-trigger"
+                                disabled={props.branchActionBusy()}
+                                onClick={props.handleStartCreateBranch}
+                              >
+                                <PlusCircle class="size-4" />
+                                <span>Create and checkout new branch...</span>
+                              </button>
+                            </Show>
+                          </div>
+                        </Popover.Content>
+                      </Popover.Portal>
+                    </Popover.Root>
+                  </div>
+                  <Button
+                    type="submit"
+                    size="icon"
+                    disabled={
+                      isFollowUpBusy() ||
+                      props.compareBusy() ||
+                      props.selectedWorkspace().length === 0 ||
+                      props.aiPrompt().trim().length === 0
+                    }
+                    class="h-8 w-8 rounded-xl bg-amber-500/90 text-neutral-900 shadow-[0_0_12px_rgba(212,175,55,0.15)] hover:bg-amber-400/90 disabled:bg-neutral-700 disabled:text-neutral-400"
+                  >
+                    <Show
+                      when={!isFollowUpBusy()}
+                      fallback={<LoaderCircle class="size-3.5 animate-spin" />}
+                    >
+                      <Send class="size-3.5" />
+                    </Show>
+                  </Button>
+                </div>
+              </form>
+            </Show>
+          </div>
+        </SidebarGroup>
+      </SidebarContent>
+    </Sidebar>
+  );
+}

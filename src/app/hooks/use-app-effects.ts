@@ -12,6 +12,8 @@ import type {
   AiReviewProgressEvent,
   CompareWorkspaceDiffResult,
 } from "@/lib/backend";
+import { createFullReviewScope, type ReviewScope } from "@/app/review-scope";
+import type { ReviewRun, ReviewWorkbenchTab } from "@/app/review-types";
 
 type UseAppEffectsArgs = {
   selectedDiffTheme: Accessor<DiffThemePreset>;
@@ -28,6 +30,7 @@ type UseAppEffectsArgs = {
   setNewBranchName: Setter<string>;
   setBranchActionError: Setter<string | null>;
   setAiPrompt: Setter<string>;
+  setAiFollowUpBusy?: Setter<boolean>;
   setAiReviewError: Setter<string | null>;
   setAiStatus: Setter<string | null>;
   setAiChunkReviews: Setter<AiReviewChunk[]>;
@@ -48,6 +51,11 @@ type UseAppEffectsArgs = {
   refetchThreadMessages: () => unknown;
   aiReviewBusy: Accessor<boolean>;
   setAiRunElapsedSeconds: Setter<number>;
+  setActiveReviewScope: Setter<ReviewScope>;
+  setReviewRuns: Setter<ReviewRun[]>;
+  selectedRunId: Accessor<string | null>;
+  setSelectedRunId: Setter<string | null>;
+  setReviewWorkbenchTab: Setter<ReviewWorkbenchTab>;
 };
 
 export function useAppEffects(args: UseAppEffectsArgs) {
@@ -86,11 +94,16 @@ export function useAppEffects(args: UseAppEffectsArgs) {
     args.setNewBranchName("");
     args.setBranchActionError(null);
     args.setAiPrompt("");
+    args.setAiFollowUpBusy?.(false);
     args.setAiReviewError(null);
     args.setAiStatus(null);
     args.setAiChunkReviews([]);
     args.setAiFindings([]);
     args.setAiProgressEvents([]);
+    args.setActiveReviewScope(createFullReviewScope());
+    args.setReviewRuns([]);
+    args.setSelectedRunId(null);
+    args.setReviewWorkbenchTab("description");
   });
 
   createEffect(() => {
@@ -181,6 +194,70 @@ export function useAppEffects(args: UseAppEffectsArgs) {
         args.setAiReviewBusy(false);
         void args.refetchThreadMessages();
       }
+
+      args.setReviewRuns((current) => {
+        if (current.length === 0) return current;
+
+        const selectedId = args.selectedRunId();
+        const runningIndex = current.findIndex((candidate) => candidate.status === "running");
+        const selectedIndex = selectedId
+          ? current.findIndex((candidate) => candidate.id === selectedId)
+          : -1;
+        const targetIndex = runningIndex >= 0 ? runningIndex : selectedIndex;
+
+        if (targetIndex < 0) return current;
+
+        const run = current[targetIndex];
+        const nextRuns = [...current];
+        let nextRun = {
+          ...run,
+          progressEvents: [...run.progressEvents, payload].slice(-160),
+        };
+
+        if (chunk) {
+          const nextChunks = [...nextRun.chunks];
+          const existingChunkIndex = nextChunks.findIndex((candidate) => candidate.id === chunk.id);
+          if (existingChunkIndex >= 0) {
+            nextChunks[existingChunkIndex] = chunk;
+          } else {
+            nextChunks.push(chunk);
+          }
+          nextRun = {
+            ...nextRun,
+            chunks: nextChunks.sort(
+              (left, right) =>
+                left.filePath.localeCompare(right.filePath) || left.chunkIndex - right.chunkIndex
+            ),
+          };
+        }
+
+        if (finding) {
+          if (!nextRun.findings.some((candidate) => candidate.id === finding.id)) {
+            nextRun = {
+              ...nextRun,
+              findings: [...nextRun.findings, finding],
+            };
+          }
+        }
+
+        if (payload.status === "failed") {
+          nextRun = {
+            ...nextRun,
+            status: "failed",
+            endedAt: Date.now(),
+            error: payload.message,
+          };
+        } else if (payload.status === "completed") {
+          nextRun = {
+            ...nextRun,
+            status: "completed",
+            endedAt: Date.now(),
+          };
+        }
+
+        nextRuns[targetIndex] = nextRun;
+        return nextRuns;
+      });
     }).then((unlisten) => {
       if (!active) {
         unlisten();
