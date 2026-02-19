@@ -9,6 +9,8 @@ type WorkspaceHeaderProps = {
   repoDisplayName: (repoName: string) => string;
   compareResult: Accessor<CompareWorkspaceDiffResult | null>;
   selectedBaseRef: Accessor<string>;
+  reviewSidebarCollapsed: Accessor<boolean>;
+  toggleReviewSidebar: () => void;
 };
 
 export function WorkspaceHeader(props: WorkspaceHeaderProps) {
@@ -32,24 +34,33 @@ export function WorkspaceHeader(props: WorkspaceHeaderProps) {
             </Show>
           </div>
         </div>
-        <div class="flex shrink-0 items-center gap-px rounded-lg border border-white/[0.06] bg-white/[0.02] text-[12px]">
-          <div class="flex items-center gap-1.5 border-r border-white/[0.06] px-3 py-1.5">
-            <span class="text-neutral-500">Base</span>
-            <span class="font-medium text-neutral-300">
-              {props.compareResult()?.baseRef ?? props.selectedBaseRef()}
-            </span>
-          </div>
-          <div class="flex items-center gap-1.5 border-r border-white/[0.06] px-3 py-1.5">
-            <span class="text-neutral-500">Merge</span>
-            <span class="font-mono font-medium text-neutral-300">
-              {props.compareResult()?.mergeBase ? props.compareResult()?.mergeBase.slice(0, 8) : "—"}
-            </span>
-          </div>
-          <div class="flex items-center gap-1.5 px-3 py-1.5">
-            <span class="text-neutral-500">Head</span>
-            <span class="font-mono font-medium text-neutral-300">
-              {props.compareResult()?.head ? props.compareResult()?.head.slice(0, 8) : "—"}
-            </span>
+        <div class="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            class="h-8 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 text-[12px] font-medium text-neutral-400 transition-colors hover:border-white/[0.12] hover:text-neutral-200"
+            onClick={props.toggleReviewSidebar}
+          >
+            {props.reviewSidebarCollapsed() ? "Show panel" : "Hide panel"}
+          </button>
+          <div class="flex items-center gap-px rounded-lg border border-white/[0.06] bg-white/[0.02] text-[12px]">
+            <div class="flex items-center gap-1.5 border-r border-white/[0.06] px-3 py-1.5">
+              <span class="text-neutral-500">Base</span>
+              <span class="font-medium text-neutral-300">
+                {props.compareResult()?.baseRef ?? props.selectedBaseRef()}
+              </span>
+            </div>
+            <div class="flex items-center gap-1.5 border-r border-white/[0.06] px-3 py-1.5">
+              <span class="text-neutral-500">Merge</span>
+              <span class="font-mono font-medium text-neutral-300">
+                {props.compareResult()?.mergeBase ? props.compareResult()?.mergeBase.slice(0, 8) : "—"}
+              </span>
+            </div>
+            <div class="flex items-center gap-1.5 px-3 py-1.5">
+              <span class="text-neutral-500">Head</span>
+              <span class="font-mono font-medium text-neutral-300">
+                {props.compareResult()?.head ? props.compareResult()?.head.slice(0, 8) : "—"}
+              </span>
+            </div>
           </div>
         </div>
       </div>
