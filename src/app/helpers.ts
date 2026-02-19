@@ -93,12 +93,13 @@ export function getInitialRepoReviewDefaults(): Record<string, RepoReviewDefault
     for (const [repoName, value] of Object.entries(parsed)) {
       if (!value || typeof value !== "object") continue;
 
-      const candidate = value as { goal?: unknown; baseRef?: unknown };
+      const candidate = value as { goal?: unknown; baseRef?: unknown; reviewBranch?: unknown };
       const goal = typeof candidate.goal === "string" ? candidate.goal.trim() : "";
       const baseRef = typeof candidate.baseRef === "string" ? candidate.baseRef.trim() : "";
       if (!goal || !baseRef) continue;
-
-      normalized[repoName] = { goal, baseRef };
+      const reviewBranch =
+        typeof candidate.reviewBranch === "string" ? candidate.reviewBranch.trim() : "";
+      normalized[repoName] = reviewBranch ? { goal, baseRef, reviewBranch } : { goal, baseRef };
     }
     return normalized;
   } catch {

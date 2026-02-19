@@ -36,6 +36,7 @@ export type RepoGroup = {
 export type RepoReviewDefaults = {
   goal: string;
   baseRef: string;
+  reviewBranch?: string;
 };
 
 export type DiffThemePreset = {

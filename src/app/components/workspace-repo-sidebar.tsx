@@ -1,5 +1,6 @@
 import { For, Show, createMemo, createSignal, type Accessor } from "solid-js";
 import {
+  Check,
   BadgeCheck,
   ChevronDown,
   ChevronRight,
@@ -36,7 +37,7 @@ import {
   SidebarSeparator,
 } from "@/components/sidebar";
 import type { RepoGroup, RepoReview, RepoReviewDefaults } from "@/app/types";
-import type { AppServerAccountStatus } from "@/lib/backend";
+import { listWorkspaceBranches, type AppServerAccountStatus } from "@/lib/backend";
 
 type WorkspaceRepoSidebarProps = {
   providerBusy: Accessor<boolean>;
@@ -154,11 +155,68 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
 
   const [reviewSheetOpen, setReviewSheetOpen] = createSignal(false);
   const [reviewDraftRepo, setReviewDraftRepo] = createSignal<RepoGroup | null>(null);
-  const [reviewGoalInput, setReviewGoalInput] = createSignal("");
+  const [reviewBranchInput, setReviewBranchInput] = createSignal("");
   const [reviewBaseRefInput, setReviewBaseRefInput] = createSignal("");
+  const [reviewCurrentBranch, setReviewCurrentBranch] = createSignal<string | null>(null);
+  const [reviewBranchSuggestions, setReviewBranchSuggestions] = createSignal<string[]>([]);
+  const [reviewBranchComboboxOpen, setReviewBranchComboboxOpen] = createSignal(false);
+  const [reviewBaseRefSuggestions, setReviewBaseRefSuggestions] = createSignal<string[]>([]);
+  const [reviewBaseRefSuggested, setReviewBaseRefSuggested] = createSignal<string | null>(null);
+  const [reviewBaseRefLoading, setReviewBaseRefLoading] = createSignal(false);
+  const [reviewBaseRefLoadError, setReviewBaseRefLoadError] = createSignal<string | null>(null);
+  const [reviewBaseRefComboboxOpen, setReviewBaseRefComboboxOpen] = createSignal(false);
   const [reviewDraftError, setReviewDraftError] = createSignal<string | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = createSignal(false);
   const [rateLimitsExpanded, setRateLimitsExpanded] = createSignal(true);
+  let reviewBaseRefLoadRequestId = 0;
+
+  const defaultBaseRefTargets = ["origin/main", "origin/master", "main", "master", "HEAD~1"];
+
+  const dedupeRefTargets = (values: Array<string | null | undefined>) => {
+    const seen = new Set<string>();
+    const targets: string[] = [];
+    for (const rawValue of values) {
+      const value = rawValue?.trim();
+      if (!value) continue;
+      const key = value.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      targets.push(value);
+    }
+    return targets;
+  };
+
+  const filteredReviewBaseRefSuggestions = createMemo(() => {
+    const query = reviewBaseRefInput().trim().toLowerCase();
+    const targets = reviewBaseRefSuggestions();
+    if (!query) return targets;
+    return targets.filter((target) => target.toLowerCase().includes(query));
+  });
+
+  const filteredReviewBranchSuggestions = createMemo(() => {
+    const query = reviewBranchInput().trim().toLowerCase();
+    const targets = reviewBranchSuggestions();
+    if (!query) return targets;
+    return targets.filter((target) => target.toLowerCase().includes(query));
+  });
+
+  const reviewBranchTypedTarget = createMemo(() => {
+    const typedValue = reviewBranchInput().trim();
+    if (!typedValue) return null;
+    const alreadyListed = reviewBranchSuggestions().some(
+      (target) => target.toLowerCase() === typedValue.toLowerCase()
+    );
+    return alreadyListed ? null : typedValue;
+  });
+
+  const reviewBaseRefTypedTarget = createMemo(() => {
+    const typedValue = reviewBaseRefInput().trim();
+    if (!typedValue) return null;
+    const alreadyListed = reviewBaseRefSuggestions().some(
+      (target) => target.toLowerCase() === typedValue.toLowerCase()
+    );
+    return alreadyListed ? null : typedValue;
+  });
 
   const activeReviewDefaults = createMemo<RepoReviewDefaults | null>(() => {
     const repo = reviewDraftRepo();
@@ -172,19 +230,134 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
     return props.repoDisplayName(repo.repoName);
   });
 
+  const loadReviewBaseRefSuggestions = async (
+    repo: RepoGroup,
+    fallbackBaseRef: string,
+    adoptSuggestedBaseRef: boolean,
+    fallbackReviewBranch: string,
+    adoptCurrentBranch: boolean
+  ) => {
+    const requestId = ++reviewBaseRefLoadRequestId;
+    setReviewBaseRefLoading(true);
+    setReviewBaseRefLoadError(null);
+
+    const workspace =
+      repo.workspace?.trim() ||
+      repo.reviews.find((review) => review.workspace?.trim())?.workspace?.trim() ||
+      null;
+
+    if (!workspace) {
+      setReviewCurrentBranch(null);
+      const branchTargets = dedupeRefTargets([fallbackReviewBranch]);
+      setReviewBranchSuggestions(branchTargets);
+      const fallbackTargets = dedupeRefTargets([fallbackBaseRef, ...defaultBaseRefTargets]);
+      setReviewBaseRefSuggestions(fallbackTargets);
+      setReviewBaseRefSuggested(fallbackTargets[0] ?? "origin/main");
+      if (adoptCurrentBranch && branchTargets[0]) {
+        setReviewBranchInput(branchTargets[0]);
+      }
+      if (adoptSuggestedBaseRef && fallbackTargets[0]) {
+        setReviewBaseRefInput(fallbackTargets[0]);
+      }
+      setReviewBaseRefLoading(false);
+      return;
+    }
+
+    try {
+      const result = await listWorkspaceBranches({
+        workspace,
+        fetchRemote: true,
+      });
+      if (requestId !== reviewBaseRefLoadRequestId) return;
+
+      const currentBranch = result.currentBranch?.trim() || null;
+      setReviewCurrentBranch(currentBranch);
+      const remoteTargets = result.remoteBranches.map((branch) => branch.name);
+      const localTargets = result.branches.map((branch) => branch.name);
+      const branchTargets = dedupeRefTargets([currentBranch, fallbackReviewBranch, ...localTargets]);
+      const targets = dedupeRefTargets([
+        result.suggestedBaseRef,
+        result.upstreamBranch,
+        fallbackBaseRef,
+        ...defaultBaseRefTargets,
+        ...remoteTargets,
+        ...localTargets,
+      ]);
+      const suggestedBaseRef = result.suggestedBaseRef?.trim() || targets[0] || "origin/main";
+      setReviewBranchSuggestions(branchTargets);
+      setReviewBaseRefSuggestions(targets);
+      setReviewBaseRefSuggested(suggestedBaseRef);
+      if (adoptCurrentBranch && currentBranch && reviewBranchInput().trim().length === 0) {
+        setReviewBranchInput(currentBranch);
+      }
+      if (adoptSuggestedBaseRef) {
+        setReviewBaseRefInput(suggestedBaseRef);
+      }
+    } catch (error) {
+      if (requestId !== reviewBaseRefLoadRequestId) return;
+      setReviewCurrentBranch(null);
+      const branchTargets = dedupeRefTargets([fallbackReviewBranch]);
+      setReviewBranchSuggestions(branchTargets);
+      const fallbackTargets = dedupeRefTargets([fallbackBaseRef, ...defaultBaseRefTargets]);
+      setReviewBaseRefSuggestions(fallbackTargets);
+      setReviewBaseRefSuggested(fallbackTargets[0] ?? "origin/main");
+      setReviewBaseRefLoadError(error instanceof Error ? error.message : String(error));
+      if (adoptCurrentBranch && branchTargets[0]) {
+        setReviewBranchInput(branchTargets[0]);
+      }
+      if (adoptSuggestedBaseRef && fallbackTargets[0]) {
+        setReviewBaseRefInput(fallbackTargets[0]);
+      }
+    } finally {
+      if (requestId === reviewBaseRefLoadRequestId) {
+        setReviewBaseRefLoading(false);
+      }
+    }
+  };
+
   const openCreateReviewSheet = (repo: RepoGroup) => {
     const defaults = props.reviewDefaultsByRepo()[repo.repoName];
+    const selectedBaseRef = props.selectedBaseRef().trim();
+    const savedBaseRef = defaults?.baseRef?.trim() || "";
+    const savedReviewBranch = defaults?.reviewBranch?.trim() || "";
+    const fallbackBaseRef = savedBaseRef || selectedBaseRef || "origin/main";
+    const fallbackReviewBranch = savedReviewBranch;
+    const shouldAdoptCurrentBranch = !savedReviewBranch;
+    const shouldAdoptSuggestedBaseRef =
+      !savedBaseRef &&
+      (selectedBaseRef.length === 0 ||
+        selectedBaseRef.toLowerCase() === "main" ||
+        selectedBaseRef.toLowerCase() === "origin/main");
+
     setReviewDraftRepo(repo);
-    setReviewGoalInput(
-      defaults?.goal?.trim() || `Review recent changes in ${props.repoDisplayName(repo.repoName)}.`
-    );
-    setReviewBaseRefInput(defaults?.baseRef?.trim() || props.selectedBaseRef().trim() || "main");
+    setReviewBranchInput(fallbackReviewBranch);
+    setReviewBranchSuggestions(dedupeRefTargets([fallbackReviewBranch]));
+    setReviewBranchComboboxOpen(false);
+    setReviewBaseRefInput(fallbackBaseRef);
+    setReviewBaseRefSuggestions(dedupeRefTargets([fallbackBaseRef, ...defaultBaseRefTargets]));
+    setReviewBaseRefSuggested(fallbackBaseRef);
+    setReviewBaseRefComboboxOpen(false);
+    setReviewBaseRefLoadError(null);
     setReviewDraftError(null);
     setReviewSheetOpen(true);
+    void loadReviewBaseRefSuggestions(
+      repo,
+      fallbackBaseRef,
+      shouldAdoptSuggestedBaseRef,
+      fallbackReviewBranch,
+      shouldAdoptCurrentBranch
+    );
   };
 
   const closeCreateReviewSheet = () => {
+    reviewBaseRefLoadRequestId += 1;
     setReviewSheetOpen(false);
+    setReviewCurrentBranch(null);
+    setReviewBranchInput("");
+    setReviewBranchSuggestions([]);
+    setReviewBranchComboboxOpen(false);
+    setReviewBaseRefComboboxOpen(false);
+    setReviewBaseRefLoadError(null);
     setReviewDraftError(null);
   };
 
@@ -192,20 +365,19 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
     const repo = reviewDraftRepo();
     if (!repo) return;
 
-    const goal = reviewGoalInput().trim();
-    if (!goal) {
-      setReviewDraftError("What are we reviewing is required.");
-      return;
-    }
-
     const baseRef = reviewBaseRefInput().trim();
     if (!baseRef) {
       setReviewDraftError("Against what is required.");
       return;
     }
 
+    const reviewBranch = reviewBranchInput().trim() || reviewCurrentBranch()?.trim() || "";
+
     setReviewDraftError(null);
-    const success = await props.onCreateReviewForRepo(repo, { goal, baseRef });
+    const success = await props.onCreateReviewForRepo(repo, {
+      baseRef,
+      reviewBranch: reviewBranch || undefined,
+    });
     if (success) {
       closeCreateReviewSheet();
     } else {
@@ -574,10 +746,11 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
       <Dialog.Root
         open={reviewSheetOpen()}
         onOpenChange={(open) => {
-          setReviewSheetOpen(open);
-          if (!open) {
-            setReviewDraftError(null);
+          if (open) {
+            setReviewSheetOpen(true);
+            return;
           }
+          closeCreateReviewSheet();
         }}
       >
         <Dialog.Portal>
@@ -588,7 +761,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                 <div class="border-b border-white/[0.06] px-6 py-5 text-left">
                   <Dialog.Title class="text-xl font-semibold text-neutral-100">New review</Dialog.Title>
                   <Dialog.Description class="mt-1 text-[13px] leading-relaxed text-neutral-400">
-                    Define what you are reviewing and what ref to compare against for{" "}
+                    Choose branch and compare target for{" "}
                     <span class="font-semibold text-neutral-200">{reviewSheetRepoLabel()}</span>.
                   </Dialog.Description>
                 </div>
@@ -602,27 +775,259 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                   <div class="space-y-5">
                     <div class="space-y-1.5">
                       <label class="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-500">
-                        What are we reviewing?
+                        Reviewing branch
                       </label>
-                      <textarea
-                        value={reviewGoalInput()}
-                        onInput={(event) => setReviewGoalInput(event.currentTarget.value)}
-                        rows={4}
-                        placeholder="Example: API pagination edge cases and error handling"
-                        class="w-full resize-none rounded-xl border border-white/[0.08] bg-black/20 px-3 py-2.5 text-[13px] leading-relaxed text-neutral-100 outline-none ring-0 transition-colors placeholder:text-neutral-600 focus:border-amber-300/60"
-                      />
+                      <div class="relative">
+                        <input
+                          type="text"
+                          value={reviewBranchInput()}
+                          onInput={(event) => {
+                            setReviewBranchInput(event.currentTarget.value);
+                            setReviewBranchComboboxOpen(true);
+                          }}
+                          onFocus={() => setReviewBranchComboboxOpen(true)}
+                          onBlur={() => window.setTimeout(() => setReviewBranchComboboxOpen(false), 120)}
+                          onKeyDown={(event) => {
+                            if (event.key === "ArrowDown") {
+                              event.preventDefault();
+                              setReviewBranchComboboxOpen(true);
+                            } else if (event.key === "Escape") {
+                              setReviewBranchComboboxOpen(false);
+                            }
+                          }}
+                          spellcheck={false}
+                          autocomplete="off"
+                          placeholder="Current checked-out branch"
+                          class="h-10 w-full rounded-xl border border-white/[0.08] bg-black/20 px-3 pr-10 text-[13px] text-neutral-100 outline-none ring-0 transition-colors placeholder:text-neutral-600 focus:border-amber-300/60"
+                        />
+                        <button
+                          type="button"
+                          aria-label="Toggle branch suggestions"
+                          class="absolute inset-y-0 right-0 flex w-9 items-center justify-center text-neutral-500 transition-colors hover:text-neutral-300"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => setReviewBranchComboboxOpen((open) => !open)}
+                        >
+                          <ChevronDown
+                            class={`size-4 transition-transform ${reviewBranchComboboxOpen() ? "rotate-180" : ""}`}
+                          />
+                        </button>
+                        <Show when={reviewBranchComboboxOpen()}>
+                          <div class="absolute left-0 right-0 z-50 mt-1 overflow-hidden rounded-xl border border-white/[0.08] bg-[#111217] shadow-[0_16px_40px_rgba(0,0,0,0.45)]">
+                            <Show when={reviewCurrentBranch()}>
+                              {(branchName) => (
+                                <button
+                                  type="button"
+                                  class="flex w-full items-center justify-between gap-2 border-b border-white/[0.06] px-3 py-2 text-left text-[12px] text-neutral-300 transition-colors hover:bg-white/[0.05] hover:text-neutral-100"
+                                  onMouseDown={(event) => {
+                                    event.preventDefault();
+                                    setReviewBranchInput(branchName());
+                                    setReviewBranchComboboxOpen(false);
+                                  }}
+                                >
+                                  <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-emerald-300/80">
+                                    Current
+                                  </span>
+                                  <span class="truncate">{branchName()}</span>
+                                </button>
+                              )}
+                            </Show>
+                            <Show when={reviewBranchTypedTarget()}>
+                              {(typedTarget) => (
+                                <button
+                                  type="button"
+                                  class="flex w-full items-center justify-between gap-2 border-b border-white/[0.06] px-3 py-2 text-left text-[12px] text-neutral-400 transition-colors hover:bg-white/[0.05] hover:text-neutral-200"
+                                  onMouseDown={(event) => {
+                                    event.preventDefault();
+                                    setReviewBranchInput(typedTarget());
+                                    setReviewBranchComboboxOpen(false);
+                                  }}
+                                >
+                                  <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500">
+                                    Use typed branch
+                                  </span>
+                                  <span class="truncate">{typedTarget()}</span>
+                                </button>
+                              )}
+                            </Show>
+                            <div class="max-h-48 overflow-y-auto py-1">
+                              <Show when={reviewBaseRefLoading()}>
+                                <p class="px-3 py-2 text-[11px] text-neutral-500">Loading branches...</p>
+                              </Show>
+                              <For each={filteredReviewBranchSuggestions().slice(0, 30)}>
+                                {(target) => (
+                                  <button
+                                    type="button"
+                                    class="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[12.5px] text-neutral-300 transition-colors hover:bg-white/[0.05] hover:text-neutral-100"
+                                    onMouseDown={(event) => {
+                                      event.preventDefault();
+                                      setReviewBranchInput(target);
+                                      setReviewBranchComboboxOpen(false);
+                                    }}
+                                  >
+                                    <span class="truncate">{target}</span>
+                                    <Show
+                                      when={
+                                        reviewBranchInput().trim().toLowerCase() ===
+                                        target.trim().toLowerCase()
+                                      }
+                                    >
+                                      <Check class="size-3.5 text-amber-300/90" />
+                                    </Show>
+                                  </button>
+                                )}
+                              </For>
+                            </div>
+                          </div>
+                        </Show>
+                      </div>
+                      <p class="text-[11px] text-neutral-500">
+                        If different, this branch will be checked out before the review starts.
+                      </p>
                     </div>
                     <div class="space-y-1.5">
                       <label class="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-500">
                         Against what exactly?
                       </label>
-                      <input
-                        type="text"
-                        value={reviewBaseRefInput()}
-                        onInput={(event) => setReviewBaseRefInput(event.currentTarget.value)}
-                        placeholder="main"
-                        class="h-10 w-full rounded-xl border border-white/[0.08] bg-black/20 px-3 text-[13px] text-neutral-100 outline-none ring-0 transition-colors placeholder:text-neutral-600 focus:border-amber-300/60"
-                      />
+                      <div class="relative">
+                        <input
+                          type="text"
+                          value={reviewBaseRefInput()}
+                          onInput={(event) => {
+                            setReviewBaseRefInput(event.currentTarget.value);
+                            setReviewBaseRefComboboxOpen(true);
+                          }}
+                          onFocus={() => setReviewBaseRefComboboxOpen(true)}
+                          onBlur={() => window.setTimeout(() => setReviewBaseRefComboboxOpen(false), 120)}
+                          onKeyDown={(event) => {
+                            if (event.key === "ArrowDown") {
+                              event.preventDefault();
+                              setReviewBaseRefComboboxOpen(true);
+                            } else if (event.key === "Escape") {
+                              setReviewBaseRefComboboxOpen(false);
+                            }
+                          }}
+                          spellcheck={false}
+                          autocomplete="off"
+                          placeholder="origin/main, v1.2.0, or a1b2c3d"
+                          class="h-10 w-full rounded-xl border border-white/[0.08] bg-black/20 px-3 pr-10 text-[13px] text-neutral-100 outline-none ring-0 transition-colors placeholder:text-neutral-600 focus:border-amber-300/60"
+                        />
+                        <button
+                          type="button"
+                          aria-label="Toggle target suggestions"
+                          class="absolute inset-y-0 right-0 flex w-9 items-center justify-center text-neutral-500 transition-colors hover:text-neutral-300"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => setReviewBaseRefComboboxOpen((open) => !open)}
+                        >
+                          <ChevronDown
+                            class={`size-4 transition-transform ${reviewBaseRefComboboxOpen() ? "rotate-180" : ""}`}
+                          />
+                        </button>
+                        <Show when={reviewBaseRefComboboxOpen()}>
+                          <div class="absolute left-0 right-0 z-50 mt-1 overflow-hidden rounded-xl border border-white/[0.08] bg-[#111217] shadow-[0_16px_40px_rgba(0,0,0,0.45)]">
+                            <Show when={reviewBaseRefSuggested()}>
+                              {(target) => (
+                                <button
+                                  type="button"
+                                  class="flex w-full items-center justify-between gap-2 border-b border-white/[0.06] px-3 py-2 text-left text-[12px] text-neutral-300 transition-colors hover:bg-white/[0.05] hover:text-neutral-100"
+                                  onMouseDown={(event) => {
+                                    event.preventDefault();
+                                    setReviewBaseRefInput(target());
+                                    setReviewBaseRefComboboxOpen(false);
+                                  }}
+                                >
+                                  <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-amber-300/80">
+                                    Suggested
+                                  </span>
+                                  <span class="truncate">{target()}</span>
+                                </button>
+                              )}
+                            </Show>
+                            <Show when={reviewBaseRefTypedTarget()}>
+                              {(typedTarget) => (
+                                <button
+                                  type="button"
+                                  class="flex w-full items-center justify-between gap-2 border-b border-white/[0.06] px-3 py-2 text-left text-[12px] text-neutral-400 transition-colors hover:bg-white/[0.05] hover:text-neutral-200"
+                                  onMouseDown={(event) => {
+                                    event.preventDefault();
+                                    setReviewBaseRefInput(typedTarget());
+                                    setReviewBaseRefComboboxOpen(false);
+                                  }}
+                                >
+                                  <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500">
+                                    Use typed ref
+                                  </span>
+                                  <span class="truncate">{typedTarget()}</span>
+                                </button>
+                              )}
+                            </Show>
+                            <div class="max-h-56 overflow-y-auto py-1">
+                              <Show when={reviewBaseRefLoading()}>
+                                <p class="px-3 py-2 text-[11px] text-neutral-500">Loading targets...</p>
+                              </Show>
+                              <For each={filteredReviewBaseRefSuggestions().slice(0, 36)}>
+                                {(target) => (
+                                  <button
+                                    type="button"
+                                    class="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[12.5px] text-neutral-300 transition-colors hover:bg-white/[0.05] hover:text-neutral-100"
+                                    onMouseDown={(event) => {
+                                      event.preventDefault();
+                                      setReviewBaseRefInput(target);
+                                      setReviewBaseRefComboboxOpen(false);
+                                    }}
+                                  >
+                                    <span class="truncate">{target}</span>
+                                    <Show
+                                      when={
+                                        reviewBaseRefInput().trim().toLowerCase() === target.trim().toLowerCase()
+                                      }
+                                    >
+                                      <Check class="size-3.5 text-amber-300/90" />
+                                    </Show>
+                                  </button>
+                                )}
+                              </For>
+                              <Show
+                                when={
+                                  !reviewBaseRefLoading() &&
+                                  reviewBaseRefTypedTarget() == null &&
+                                  filteredReviewBaseRefSuggestions().length === 0
+                                }
+                              >
+                                <p class="px-3 py-2 text-[11px] text-neutral-500">
+                                  No matching refs. Keep typing any branch, tag, or SHA.
+                                </p>
+                              </Show>
+                            </div>
+                            <Show when={reviewBaseRefLoadError()}>
+                              {(error) => (
+                                <p class="border-t border-white/[0.06] px-3 py-2 text-[11px] text-amber-300/90">
+                                  Could not refresh targets: {error()}
+                                </p>
+                              )}
+                            </Show>
+                          </div>
+                        </Show>
+                      </div>
+                      <p class="text-[11px] text-neutral-500">
+                        Compare selected branch against this target ref.
+                      </p>
+                    </div>
+                    <div class="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-[11px] text-neutral-400">
+                      <p>
+                        Reviewing branch:{" "}
+                        <span class="font-mono text-neutral-200">
+                          {reviewBranchInput().trim() || reviewCurrentBranch() || "current HEAD"}
+                        </span>
+                      </p>
+                      <p class="mt-1">
+                        Compare target:{" "}
+                        <span class="font-mono text-neutral-200">
+                          {reviewBaseRefInput().trim() || "origin/main"}
+                        </span>
+                      </p>
+                      <p class="mt-1 text-[10px] text-neutral-500">
+                        Diff scope: {reviewBaseRefInput().trim() || "origin/main"}...HEAD
+                      </p>
                     </div>
                   </div>
                   <Show when={reviewDraftError()}>

@@ -2,6 +2,7 @@ import { createEffect, onCleanup, type Accessor, type Setter } from "solid-js";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
+  checkoutWorkspaceBranch,
   cloneRepository,
   connectProvider,
   createThread,
@@ -429,7 +430,13 @@ export function useProviderAndSettingsActions(args: UseProviderAndSettingsAction
     if (normalized) return normalized;
     const selected = args.selectedBaseRef().trim();
     if (selected) return selected;
-    return "main";
+    return "origin/main";
+  };
+
+  const normalizeReviewBranch = (reviewBranch: string | null | undefined) => {
+    const normalized = reviewBranch?.trim();
+    if (normalized) return normalized;
+    return "";
   };
 
   const handleCreateReviewForRepo = async (
@@ -449,9 +456,16 @@ export function useProviderAndSettingsActions(args: UseProviderAndSettingsAction
     const savedDefaults = args.reviewDefaultsByRepo()[repo.repoName];
     const goal = normalizeReviewGoal(draft?.goal ?? savedDefaults?.goal, repo.repoName);
     const baseRef = normalizeBaseRef(draft?.baseRef ?? savedDefaults?.baseRef);
+    const reviewBranch = normalizeReviewBranch(draft?.reviewBranch ?? savedDefaults?.reviewBranch);
 
     args.setProviderBusy(true);
     try {
+      if (reviewBranch) {
+        await checkoutWorkspaceBranch({
+          workspace,
+          branchName: reviewBranch,
+        });
+      }
       const thread = await createThread({
         title: makeReviewTitle(repo.repoName, goal),
         workspace,
@@ -461,11 +475,11 @@ export function useProviderAndSettingsActions(args: UseProviderAndSettingsAction
       args.setSelectedBaseRef(baseRef);
       args.setReviewDefaultsByRepo((current) => ({
         ...current,
-        [repo.repoName]: { goal, baseRef },
+        [repo.repoName]: reviewBranch ? { goal, baseRef, reviewBranch } : { goal, baseRef },
       }));
       args.setCollapsedRepos((current) => ({ ...current, [repo.repoName]: false }));
       args.setProviderStatus(
-        `Created a new review for ${repoDisplayName(repo.repoName)} (vs ${baseRef}).`
+        `Created a new review for ${repoDisplayName(repo.repoName)} on ${reviewBranch || "current branch"} (vs ${baseRef}).`
       );
       setRepoMenuOpenState(repo.repoName, false);
       return true;
