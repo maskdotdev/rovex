@@ -503,8 +503,8 @@ export function useProviderAndSettingsActions(args: UseProviderAndSettingsAction
     const opencodeProvider = args.aiOpencodeProviderInput().trim();
     const opencodeModel = args.aiOpencodeModelInput().trim();
 
-    if (provider !== "openai" && provider !== "opencode") {
-      args.setAiSettingsError("Provider must be openai or opencode.");
+    if (provider !== "openai" && provider !== "opencode" && provider !== "app-server") {
+      args.setAiSettingsError("Provider must be openai, opencode, or app-server.");
       return;
     }
     if (!model) {

@@ -225,6 +225,7 @@ export function SettingsView(props: SettingsViewProps) {
                               >
                                 <option value="openai">openai</option>
                                 <option value="opencode">opencode</option>
+                                <option value="app-server">app-server</option>
                               </select>
 
                               <label

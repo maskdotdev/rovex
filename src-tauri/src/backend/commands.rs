@@ -2,7 +2,7 @@ use std::{
     collections::BTreeSet,
     env, fs,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
     time::Duration,
 };
 
@@ -10,6 +10,8 @@ use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::Command as TokioCommand;
 
 use super::{
     providers::{provider_client, ProviderDeviceAuthorizationPoll},
@@ -40,6 +42,7 @@ const ROVEX_OPENCODE_PORT_ENV: &str = "ROVEX_OPENCODE_PORT";
 const ROVEX_OPENCODE_SERVER_TIMEOUT_MS_ENV: &str = "ROVEX_OPENCODE_SERVER_TIMEOUT_MS";
 const ROVEX_OPENCODE_PROVIDER_ENV: &str = "ROVEX_OPENCODE_PROVIDER";
 const ROVEX_OPENCODE_AGENT_ENV: &str = "ROVEX_OPENCODE_AGENT";
+const ROVEX_APP_SERVER_COMMAND_ENV: &str = "ROVEX_APP_SERVER_COMMAND";
 const DEFAULT_REVIEW_PROVIDER: &str = "openai";
 const DEFAULT_REVIEW_MODEL: &str = "gpt-4.1-mini";
 const DEFAULT_REVIEW_BASE_URL: &str = "https://api.openai.com/v1";
@@ -53,6 +56,7 @@ const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS: u64 = 5_000;
 const DEFAULT_OPENCODE_PROVIDER: &str = "openai";
 const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-5";
 const DEFAULT_OPENCODE_AGENT: &str = "plan";
+const DEFAULT_APP_SERVER_COMMAND: &str = "codex";
 const OPENCODE_SIDECAR_NAME: &str = "opencode";
 const AI_REVIEW_PROGRESS_EVENT: &str = "rovex://ai-review-progress";
 const MAX_CHUNK_FILE_CONTEXT_CHARS: usize = 6_000;
@@ -71,6 +75,7 @@ struct ProviderConnectionRow {
 enum ReviewProvider {
     OpenAi,
     Opencode,
+    AppServer,
 }
 
 impl ReviewProvider {
@@ -83,8 +88,9 @@ impl ReviewProvider {
         match provider.as_str() {
             "openai" => Ok(Self::OpenAi),
             "opencode" => Ok(Self::Opencode),
+            "app-server" | "app_server" | "codex" => Ok(Self::AppServer),
             other => Err(format!(
-                "Unsupported {ROVEX_REVIEW_PROVIDER_ENV} value '{other}'. Use 'openai' or 'opencode'."
+                "Unsupported {ROVEX_REVIEW_PROVIDER_ENV} value '{other}'. Use 'openai', 'opencode', or 'app-server'."
             )),
         }
     }
@@ -906,11 +912,17 @@ fn mask_secret(value: &str) -> Option<String> {
 }
 
 fn current_review_provider_value() -> String {
-    env::var(ROVEX_REVIEW_PROVIDER_ENV)
+    let provider = env::var(ROVEX_REVIEW_PROVIDER_ENV)
         .ok()
         .map(|value| value.trim().to_lowercase())
-        .filter(|value| value == "openai" || value == "opencode")
-        .unwrap_or_else(|| DEFAULT_REVIEW_PROVIDER.to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_REVIEW_PROVIDER.to_string());
+    match provider.as_str() {
+        "openai" => "openai".to_string(),
+        "opencode" => "opencode".to_string(),
+        "app-server" | "app_server" | "codex" => "app-server".to_string(),
+        _ => DEFAULT_REVIEW_PROVIDER.to_string(),
+    }
 }
 
 fn current_ai_review_config() -> AiReviewConfig {
@@ -1027,6 +1039,185 @@ struct OpenAiChatRequest<'a> {
     model: &'a str,
     temperature: f32,
     messages: Vec<OpenAiChatMessage<'a>>,
+}
+
+fn resolve_app_server_model(review_model: &str) -> String {
+    review_model.trim().to_string()
+}
+
+fn json_rpc_id_matches(message: &serde_json::Value, expected_id: i64) -> bool {
+    message
+        .get("id")
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_u64().and_then(|id| i64::try_from(id).ok()))
+                .or_else(|| value.as_str().and_then(|id| id.parse::<i64>().ok()))
+        })
+        .map(|id| id == expected_id)
+        .unwrap_or(false)
+}
+
+fn extract_json_rpc_error_message(message: &serde_json::Value) -> Option<String> {
+    let error = message.get("error")?;
+    let code = error.get("code").and_then(|value| value.as_i64());
+    let detail = error
+        .get("message")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("request failed");
+    Some(match code {
+        Some(code) => format!("Codex app-server error {code}: {detail}"),
+        None => format!("Codex app-server error: {detail}"),
+    })
+}
+
+fn normalize_text_fragment(value: &serde_json::Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        let normalized = text.trim();
+        if !normalized.is_empty() {
+            return Some(normalized.to_string());
+        }
+        return None;
+    }
+
+    if let Some(text) = value.get("text").and_then(|entry| entry.as_str()) {
+        let normalized = text.trim();
+        if !normalized.is_empty() {
+            return Some(normalized.to_string());
+        }
+    }
+
+    if let Some(text) = value
+        .get("text")
+        .and_then(|entry| entry.get("value"))
+        .and_then(|entry| entry.as_str())
+    {
+        let normalized = text.trim();
+        if !normalized.is_empty() {
+            return Some(normalized.to_string());
+        }
+    }
+
+    if let Some(output) = value.get("output") {
+        if let Some(text) = normalize_text_fragment(output) {
+            return Some(text);
+        }
+    }
+
+    None
+}
+
+fn extract_app_server_item_text(item: &serde_json::Value) -> Option<String> {
+    if let Some(text) = normalize_text_fragment(item) {
+        return Some(text);
+    }
+
+    let mut parts = Vec::new();
+    for key in ["content", "parts"] {
+        let Some(entries) = item.get(key).and_then(|value| value.as_array()) else {
+            continue;
+        };
+        for entry in entries {
+            if let Some(text) = normalize_text_fragment(entry) {
+                parts.push(text);
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    }
+}
+
+fn json_value_id(value: &serde_json::Value) -> Option<String> {
+    value
+        .as_str()
+        .map(ToOwned::to_owned)
+        .or_else(|| value.as_i64().map(|id| id.to_string()))
+        .or_else(|| value.as_u64().map(|id| id.to_string()))
+}
+
+fn json_ids_equal(left: &serde_json::Value, right: &serde_json::Value) -> bool {
+    match (json_value_id(left), json_value_id(right)) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn remaining_until(deadline: tokio::time::Instant) -> Result<Duration, String> {
+    let now = tokio::time::Instant::now();
+    if now >= deadline {
+        return Err("Timed out waiting for Codex app-server response.".to_string());
+    }
+    Ok(deadline.saturating_duration_since(now))
+}
+
+async fn read_json_rpc_message<R: AsyncBufRead + Unpin>(
+    lines: &mut tokio::io::Lines<R>,
+    deadline: tokio::time::Instant,
+) -> Result<serde_json::Value, String> {
+    loop {
+        let remaining = remaining_until(deadline)?;
+        let next_line = tokio::time::timeout(remaining, lines.next_line())
+            .await
+            .map_err(|_| "Timed out waiting for Codex app-server response.".to_string())?;
+        let line = next_line
+            .map_err(|error| format!("Failed to read Codex app-server output: {error}"))?
+            .ok_or_else(|| "Codex app-server exited before returning a response.".to_string())?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let message = serde_json::from_str::<serde_json::Value>(trimmed).map_err(|error| {
+            format!(
+                "Received invalid JSON from Codex app-server: {error}. Payload: {}",
+                snippet(trimmed, 200)
+            )
+        })?;
+        return Ok(message);
+    }
+}
+
+async fn write_json_rpc_message(
+    stdin: &mut tokio::process::ChildStdin,
+    payload: &serde_json::Value,
+) -> Result<(), String> {
+    let mut bytes =
+        serde_json::to_vec(payload).map_err(|error| format!("Failed to encode JSON-RPC request: {error}"))?;
+    bytes.push(b'\n');
+    stdin
+        .write_all(&bytes)
+        .await
+        .map_err(|error| format!("Failed to write to Codex app-server: {error}"))?;
+    stdin
+        .flush()
+        .await
+        .map_err(|error| format!("Failed to flush Codex app-server request: {error}"))
+}
+
+async fn wait_for_json_rpc_result<R: AsyncBufRead + Unpin>(
+    lines: &mut tokio::io::Lines<R>,
+    request_id: i64,
+    deadline: tokio::time::Instant,
+) -> Result<serde_json::Value, String> {
+    loop {
+        let message = read_json_rpc_message(lines, deadline).await?;
+        if !json_rpc_id_matches(&message, request_id) {
+            continue;
+        }
+        if let Some(error) = extract_json_rpc_error_message(&message) {
+            return Err(error);
+        }
+        return Ok(message
+            .get("result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null));
+    }
 }
 
 struct ResolvedOpencodeModel {
@@ -1525,6 +1716,180 @@ async fn generate_chunk_with_openai(
         .await
 }
 
+async fn generate_review_with_app_server(
+    workspace: &str,
+    prompt: &str,
+    timeout_ms: u64,
+    review_model: &str,
+) -> Result<(String, String), String> {
+    let command_name = env::var(ROVEX_APP_SERVER_COMMAND_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_APP_SERVER_COMMAND.to_string());
+    let resolved_model = resolve_app_server_model(review_model);
+
+    let mut child = TokioCommand::new(&command_name)
+        .arg("app-server")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| {
+            format!(
+                "Failed to start Codex app-server with '{} app-server': {error}",
+                command_name
+            )
+        })?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "Failed to open Codex app-server stdin.".to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Failed to open Codex app-server stdout.".to_string())?;
+    let mut lines = BufReader::new(stdout).lines();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+    let review_result: Result<(String, String), String> = async {
+        let initialize_request_id = 1i64;
+        write_json_rpc_message(
+            &mut stdin,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": initialize_request_id,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "clientInfo": {
+                        "name": "rovex",
+                        "version": env!("CARGO_PKG_VERSION"),
+                    },
+                    "capabilities": {},
+                }
+            }),
+        )
+        .await?;
+        let _ = wait_for_json_rpc_result(&mut lines, initialize_request_id, deadline).await?;
+
+        write_json_rpc_message(
+            &mut stdin,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "initialized",
+                "params": {},
+            }),
+        )
+        .await?;
+
+        let thread_start_request_id = 2i64;
+        write_json_rpc_message(
+            &mut stdin,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": thread_start_request_id,
+                "method": "thread/start",
+                "params": {
+                    "cwd": workspace,
+                    "model": resolved_model,
+                }
+            }),
+        )
+        .await?;
+        let thread_result = wait_for_json_rpc_result(&mut lines, thread_start_request_id, deadline)
+            .await?;
+        let thread_id = thread_result
+            .pointer("/thread/id")
+            .and_then(|value| value.as_str())
+            .or_else(|| thread_result.get("threadId").and_then(|value| value.as_str()))
+            .or_else(|| thread_result.get("id").and_then(|value| value.as_str()))
+            .ok_or_else(|| "Codex app-server did not return a thread id.".to_string())?;
+
+        let turn_start_request_id = 3i64;
+        write_json_rpc_message(
+            &mut stdin,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": turn_start_request_id,
+                "method": "turn/start",
+                "params": {
+                    "threadId": thread_id,
+                    "cwd": workspace,
+                    "input": prompt,
+                }
+            }),
+        )
+        .await?;
+        let turn_result = wait_for_json_rpc_result(&mut lines, turn_start_request_id, deadline)
+            .await?;
+        let expected_turn_id = turn_result
+            .pointer("/turn/id")
+            .cloned()
+            .or_else(|| turn_result.get("turnId").cloned())
+            .or_else(|| turn_result.get("id").cloned());
+
+        let mut latest_text: Option<String> = None;
+        loop {
+            let message = read_json_rpc_message(&mut lines, deadline).await?;
+            if let Some(error) = extract_json_rpc_error_message(&message) {
+                return Err(error);
+            }
+
+            let method = message.get("method").and_then(|value| value.as_str());
+            match method {
+                Some("item/completed") => {
+                    let Some(item) = message.pointer("/params/item") else {
+                        continue;
+                    };
+                    let item_type = item.get("type").and_then(|value| value.as_str());
+                    if matches!(item_type, Some("agentMessage") | Some("message")) {
+                        if let Some(text) = extract_app_server_item_text(item) {
+                            latest_text = Some(text);
+                        }
+                    }
+                }
+                Some("turn/completed") => {
+                    if let Some(expected_turn_id) = expected_turn_id.as_ref() {
+                        if let Some(actual_turn_id) = message.pointer("/params/turn/id") {
+                            if !json_ids_equal(actual_turn_id, expected_turn_id) {
+                                continue;
+                            }
+                        }
+                    }
+
+                    let turn_status = message
+                        .pointer("/params/turn/status")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("completed");
+                    if turn_status != "completed" {
+                        let detail = message
+                            .pointer("/params/turn/error/message")
+                            .and_then(|value| value.as_str())
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .unwrap_or("turn did not complete successfully");
+                        return Err(format!("Codex app-server turn failed: {detail}"));
+                    }
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        let review = latest_text
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "Codex app-server completed without returning assistant output.".to_string())?;
+        Ok((review, resolved_model.clone()))
+    }
+    .await;
+
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+    review_result
+}
+
 async fn wait_for_opencode_server(
     app: &AppHandle,
     hostname: &str,
@@ -1790,6 +2155,9 @@ async fn generate_chunk_review(
         }
         ReviewProvider::Opencode => {
             generate_review_with_opencode(app, workspace, prompt, timeout_ms, model).await
+        }
+        ReviewProvider::AppServer => {
+            generate_review_with_app_server(workspace, prompt, timeout_ms, model).await
         }
     }
 }
@@ -2502,10 +2870,16 @@ pub async fn set_ai_review_api_key(
 pub async fn set_ai_review_settings(
     input: SetAiReviewSettingsInput,
 ) -> Result<AiReviewConfig, String> {
-    let review_provider = input.review_provider.trim().to_lowercase();
-    if review_provider != "openai" && review_provider != "opencode" {
-        return Err("Review provider must be 'openai' or 'opencode'.".to_string());
-    }
+    let review_provider = match input.review_provider.trim().to_lowercase().as_str() {
+        "openai" => "openai".to_string(),
+        "opencode" => "opencode".to_string(),
+        "app-server" | "app_server" | "codex" => "app-server".to_string(),
+        _ => {
+            return Err(
+                "Review provider must be 'openai', 'opencode', or 'app-server'.".to_string()
+            )
+        }
+    };
 
     let review_model = input.review_model.trim();
     if review_model.is_empty() {
@@ -3017,6 +3391,10 @@ pub async fn generate_ai_follow_up(
         }
         ReviewProvider::Opencode => {
             generate_review_with_opencode(&app, &workspace, &follow_up_prompt, timeout_ms, &model)
+                .await?
+        }
+        ReviewProvider::AppServer => {
+            generate_review_with_app_server(&workspace, &follow_up_prompt, timeout_ms, &model)
                 .await?
         }
     };
