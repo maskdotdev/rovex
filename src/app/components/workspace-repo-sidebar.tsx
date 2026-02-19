@@ -191,7 +191,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                         <Popover.Trigger
                           as="button"
                           type="button"
-                          class="absolute right-2 top-1.5 z-10 flex h-7 w-7 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:bg-white/[0.08] hover:text-neutral-200"
+                          class="absolute right-2 top-1.5 z-10 flex h-7 w-7 items-center justify-center rounded-lg text-neutral-500 outline-none ring-sidebar-ring transition-colors hover:bg-white/[0.08] hover:text-neutral-200 focus-visible:outline-none focus-visible:ring-2"
                           aria-label={`Open menu for ${props.repoDisplayName(repo.repoName)}`}
                           title={`Open menu for ${props.repoDisplayName(repo.repoName)}`}
                           onClick={(event) => event.stopPropagation()}
@@ -200,7 +200,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                         </Popover.Trigger>
                         <Popover.Portal>
                           <Popover.Content
-                            class="z-50 w-44 rounded-xl border border-white/[0.08] bg-[#16171b] p-1.5 shadow-[0_16px_48px_rgba(0,0,0,0.45)]"
+                            class="z-50 w-44 rounded-xl border border-white/[0.08] bg-[#16171b] p-1.5 shadow-[0_16px_48px_rgba(0,0,0,0.45)] outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
                             onClick={(event: MouseEvent) => event.stopPropagation()}
                           >
                             <button
@@ -266,7 +266,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
           <Popover.Trigger
             as="button"
             type="button"
-            class="mb-2 flex h-11 w-full items-center justify-between rounded-xl border border-white/[0.08] bg-white/[0.03] px-3.5 text-left transition-colors hover:border-white/[0.14] hover:bg-white/[0.05]"
+            class="mb-2 flex h-11 w-full items-center justify-between rounded-xl border border-white/[0.08] bg-white/[0.03] px-3.5 text-left outline-none ring-sidebar-ring transition-colors hover:border-white/[0.14] hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
             <div class="min-w-0">
               <p class="truncate text-[13px] font-medium text-neutral-100">Codex</p>
@@ -283,7 +283,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
             </span>
           </Popover.Trigger>
           <Popover.Portal>
-            <Popover.Content class="z-50 w-[320px] rounded-xl border border-white/[0.08] bg-[#16171b] p-3.5 shadow-[0_20px_56px_rgba(0,0,0,0.5)]">
+            <Popover.Content class="z-50 w-[320px] rounded-xl border border-white/[0.08] bg-[#16171b] p-3.5 shadow-[0_20px_56px_rgba(0,0,0,0.5)] outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0">
               <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-500">
                 Codex usage
               </p>
