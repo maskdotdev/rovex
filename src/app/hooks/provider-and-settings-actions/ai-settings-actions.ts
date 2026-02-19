@@ -5,6 +5,7 @@ import {
   setAiReviewSettings,
   startAppServerAccountLogin,
 } from "@/lib/backend";
+import { toErrorMessage } from "@/app/hooks/error-utils";
 import type { UseProviderAndSettingsActionsArgs } from "@/app/hooks/provider-and-settings-action-types";
 
 type AiSettingsActionsArgs = Pick<
@@ -20,7 +21,7 @@ export function createAiSettingsActions(args: AiSettingsActionsArgs) {
     try {
       await openUrl("https://diffs.com/");
     } catch (error) {
-      settingsState.setSettingsError(error instanceof Error ? error.message : String(error));
+      settingsState.setSettingsError(toErrorMessage(error));
     }
   };
 
@@ -85,7 +86,7 @@ export function createAiSettingsActions(args: AiSettingsActionsArgs) {
           : "Saved AI review settings."
       );
     } catch (error) {
-      aiSettingsState.setAiSettingsError(error instanceof Error ? error.message : String(error));
+      aiSettingsState.setAiSettingsError(toErrorMessage(error));
     } finally {
       aiSettingsState.setAiSettingsBusy(false);
     }
@@ -102,7 +103,7 @@ export function createAiSettingsActions(args: AiSettingsActionsArgs) {
         "Opened Codex sign-in in your browser. Finish login, then refresh account status."
       );
     } catch (error) {
-      accountState.setAppServerAuthError(error instanceof Error ? error.message : String(error));
+      accountState.setAppServerAuthError(toErrorMessage(error));
     } finally {
       accountState.setAppServerAuthBusy(false);
     }
@@ -116,7 +117,7 @@ export function createAiSettingsActions(args: AiSettingsActionsArgs) {
       await accountState.refetchAppServerAccountStatus();
       accountState.setAppServerAuthStatus("Refreshed Codex account status.");
     } catch (error) {
-      accountState.setAppServerAuthError(error instanceof Error ? error.message : String(error));
+      accountState.setAppServerAuthError(toErrorMessage(error));
     } finally {
       accountState.setAppServerAuthBusy(false);
     }
@@ -146,7 +147,7 @@ export function createAiSettingsActions(args: AiSettingsActionsArgs) {
           : "Saved OPENAI_API_KEY."
       );
     } catch (error) {
-      apiKeyState.setAiApiKeyError(error instanceof Error ? error.message : String(error));
+      apiKeyState.setAiApiKeyError(toErrorMessage(error));
     } finally {
       apiKeyState.setAiApiKeyBusy(false);
     }

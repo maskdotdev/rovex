@@ -9,6 +9,7 @@ import {
   type StartProviderDeviceAuthResult,
 } from "@/lib/backend";
 import { providerOption, sleep } from "@/app/helpers";
+import { toErrorMessage } from "@/app/hooks/error-utils";
 import type { SettingsTab } from "@/app/types";
 import type { UseProviderAndSettingsActionsArgs } from "@/app/hooks/provider-and-settings-action-types";
 
@@ -107,7 +108,7 @@ export function createProviderConnectionActions(args: ProviderConnectionActionsA
           return;
         }
         cancelDeviceAuthFlow();
-        providerState.setProviderError(error instanceof Error ? error.message : String(error));
+        providerState.setProviderError(toErrorMessage(error));
         return;
       }
     }
@@ -140,7 +141,7 @@ export function createProviderConnectionActions(args: ProviderConnectionActionsA
       await openDeviceVerificationUrl(selected.label);
       void pollProviderDeviceAuthFlow(sessionId, provider, flow);
     } catch (error) {
-      providerState.setProviderError(error instanceof Error ? error.message : String(error));
+      providerState.setProviderError(toErrorMessage(error));
       cancelDeviceAuthFlow();
     } finally {
       providerState.setProviderBusy(false);
@@ -177,7 +178,7 @@ export function createProviderConnectionActions(args: ProviderConnectionActionsA
       await refetchProviderConnection(provider);
       providerState.setProviderStatus(`Connected ${selected.label} as ${connection.accountLogin}.`);
     } catch (error) {
-      providerState.setProviderError(error instanceof Error ? error.message : String(error));
+      providerState.setProviderError(toErrorMessage(error));
     } finally {
       providerState.setProviderBusy(false);
     }
@@ -195,7 +196,7 @@ export function createProviderConnectionActions(args: ProviderConnectionActionsA
       await refetchProviderConnection(provider);
       providerState.setProviderStatus(`Disconnected ${selected.label}.`);
     } catch (error) {
-      providerState.setProviderError(error instanceof Error ? error.message : String(error));
+      providerState.setProviderError(toErrorMessage(error));
     } finally {
       providerState.setProviderBusy(false);
     }

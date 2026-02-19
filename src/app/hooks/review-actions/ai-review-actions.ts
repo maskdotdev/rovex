@@ -6,6 +6,7 @@ import {
   getReviewScopeLabel,
   type ReviewScope,
 } from "@/app/review-scope";
+import { toErrorMessage } from "@/app/hooks/error-utils";
 import type { ReviewRun } from "@/app/review-types";
 import type { UseReviewActionsArgs } from "@/app/hooks/review-action-types";
 
@@ -115,7 +116,7 @@ export function createAiReviewActions(args: AiReviewActionsArgs) {
       ai.setAiStatus(`Review queued on ${runLabel}.`);
       await ai.refetchAiReviewRuns?.();
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = toErrorMessage(error);
       ai.setAiReviewError(message);
       review.setReviewRuns((current) =>
         current.map((run) =>
@@ -163,7 +164,7 @@ export function createAiReviewActions(args: AiReviewActionsArgs) {
         );
       }
     } catch (error) {
-      ai.setAiReviewError(error instanceof Error ? error.message : String(error));
+      ai.setAiReviewError(toErrorMessage(error));
     }
   };
 
@@ -204,7 +205,7 @@ export function createAiReviewActions(args: AiReviewActionsArgs) {
       ai.setPrompt("");
       ai.setAiStatus(`Answered with ${response.model}.`);
     } catch (error) {
-      ai.setAiReviewError(error instanceof Error ? error.message : String(error));
+      ai.setAiReviewError(toErrorMessage(error));
     } finally {
       setFollowUpBusy(false);
     }

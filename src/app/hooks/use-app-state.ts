@@ -1,4 +1,5 @@
 import { createMemo } from "solid-js";
+import { toOptionalErrorMessage } from "@/app/hooks/error-utils";
 import { useAiState } from "@/app/hooks/app-state/use-ai-state";
 import { useCompareBranchState } from "@/app/hooks/app-state/use-compare-branch-state";
 import { useCoreState } from "@/app/hooks/app-state/use-core-state";
@@ -7,11 +8,6 @@ import { useProviderState } from "@/app/hooks/app-state/use-provider-state";
 import { useRepoState } from "@/app/hooks/app-state/use-repo-state";
 import { useReviewWorkbenchState } from "@/app/hooks/app-state/use-review-workbench-state";
 import { useWorkspaceResources } from "@/app/hooks/app-state/use-workspace-resources";
-
-function toErrorMessage(error: unknown): string | null {
-  if (!error) return null;
-  return error instanceof Error ? error.message : String(error);
-}
 
 export function useAppState() {
   const resources = usePrimaryResources();
@@ -43,25 +39,27 @@ export function useAppState() {
     return branches.filter((branch) => branch.name.toLowerCase().includes(query));
   });
 
-  const loadError = createMemo(() => toErrorMessage(resources.threads.error));
+  const loadError = createMemo(() => toOptionalErrorMessage(resources.threads.error));
   const providerConnectionError = createMemo(() => {
     const error = coreState.selectedProvider() === "github"
       ? resources.githubConnection.error
       : resources.gitlabConnection.error;
-    return toErrorMessage(error);
+    return toOptionalErrorMessage(error);
   });
   const workspaceBranchLoadError = createMemo(() =>
-    toErrorMessage(workspaceResources.workspaceBranches.error)
+    toOptionalErrorMessage(workspaceResources.workspaceBranches.error)
   );
   const threadMessagesLoadError = createMemo(() =>
-    toErrorMessage(workspaceResources.threadMessages.error)
+    toOptionalErrorMessage(workspaceResources.threadMessages.error)
   );
-  const aiReviewConfigLoadError = createMemo(() => toErrorMessage(resources.aiReviewConfig.error));
+  const aiReviewConfigLoadError = createMemo(() =>
+    toOptionalErrorMessage(resources.aiReviewConfig.error)
+  );
   const opencodeSidecarLoadError = createMemo(() =>
-    toErrorMessage(resources.opencodeSidecarStatus.error)
+    toOptionalErrorMessage(resources.opencodeSidecarStatus.error)
   );
   const appServerAccountLoadError = createMemo(() =>
-    toErrorMessage(resources.appServerAccountStatus.error)
+    toOptionalErrorMessage(resources.appServerAccountStatus.error)
   );
 
   return {

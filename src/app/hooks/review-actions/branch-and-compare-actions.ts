@@ -3,6 +3,7 @@ import {
   compareWorkspaceDiff,
   createWorkspaceBranch,
 } from "@/lib/backend";
+import { toErrorMessage } from "@/app/hooks/error-utils";
 import type { UseReviewActionsArgs } from "@/app/hooks/review-action-types";
 
 type BranchAndCompareActionsArgs = Pick<
@@ -42,7 +43,7 @@ export function createBranchAndCompareActions(args: BranchAndCompareActionsArgs)
       branch.setNewBranchName("");
       resetComparisonView();
     } catch (error) {
-      branch.setBranchActionError(error instanceof Error ? error.message : String(error));
+      branch.setBranchActionError(toErrorMessage(error));
     } finally {
       branch.setBranchActionBusy(false);
     }
@@ -79,7 +80,7 @@ export function createBranchAndCompareActions(args: BranchAndCompareActionsArgs)
       branch.setNewBranchName("");
       resetComparisonView();
     } catch (error) {
-      branch.setBranchActionError(error instanceof Error ? error.message : String(error));
+      branch.setBranchActionError(toErrorMessage(error));
     } finally {
       branch.setBranchActionBusy(false);
     }
@@ -118,7 +119,7 @@ export function createBranchAndCompareActions(args: BranchAndCompareActionsArgs)
       if (requestSequence !== compareRequestSequence) {
         return;
       }
-      compare.setCompareError(error instanceof Error ? error.message : String(error));
+      compare.setCompareError(toErrorMessage(error));
     } finally {
       if (requestSequence === compareRequestSequence) {
         compare.setCompareBusy(false);
