@@ -46,7 +46,12 @@ pub fn run() {
             backend::commands::set_ai_review_api_key,
             backend::commands::set_ai_review_settings,
             backend::commands::get_app_server_account_status,
+            backend::commands::start_app_server_account_login,
             backend::commands::get_opencode_sidecar_status,
+            backend::commands::start_ai_review_run,
+            backend::commands::cancel_ai_review_run,
+            backend::commands::list_ai_review_runs,
+            backend::commands::get_ai_review_run,
             backend::commands::generate_ai_review,
             backend::commands::generate_ai_follow_up,
             backend::commands::run_code_intel_sync

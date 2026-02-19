@@ -36,6 +36,45 @@ CREATE TABLE IF NOT EXISTS provider_connections (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS ai_review_runs (
+  run_id TEXT PRIMARY KEY,
+  thread_id INTEGER NOT NULL,
+  workspace TEXT NOT NULL,
+  base_ref TEXT NOT NULL,
+  merge_base TEXT NOT NULL,
+  head TEXT NOT NULL,
+  files_changed INTEGER NOT NULL,
+  insertions INTEGER NOT NULL,
+  deletions INTEGER NOT NULL,
+  prompt TEXT,
+  scope_label TEXT,
+  status TEXT NOT NULL,
+  total_chunks INTEGER NOT NULL DEFAULT 0,
+  completed_chunks INTEGER NOT NULL DEFAULT 0,
+  failed_chunks INTEGER NOT NULL DEFAULT 0,
+  finding_count INTEGER NOT NULL DEFAULT 0,
+  model TEXT,
+  review TEXT,
+  diff_chars_used INTEGER,
+  diff_chars_total INTEGER,
+  diff_truncated INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  chunks_json TEXT NOT NULL DEFAULT '[]',
+  findings_json TEXT NOT NULL DEFAULT '[]',
+  progress_events_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  started_at TEXT,
+  ended_at TEXT,
+  canceled_at TEXT,
+  FOREIGN KEY (thread_id) REFERENCES threads(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_review_runs_thread_created
+ON ai_review_runs(thread_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ai_review_runs_status_created
+ON ai_review_runs(status, created_at ASC);
 "#;
 
 pub async fn open_database_from_env() -> Result<(String, Database), String> {

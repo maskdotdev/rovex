@@ -44,6 +44,7 @@ type WorkspaceReviewSidebarProps = {
   aiPrompt: Accessor<string>;
   setAiPrompt: Setter<string>;
   handleAskAiFollowUp: (event: Event) => void | Promise<void>;
+  handleCancelAiReviewRun: (runId: string) => void | Promise<void>;
   aiReviewBusy: Accessor<boolean>;
   aiFollowUpBusy?: Accessor<boolean>;
   compareBusy: Accessor<boolean>;
@@ -137,6 +138,10 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
 
   const issuesEmptyMessage = createMemo(() => {
     if (visibleChunkReviews().length === 0) {
+      const run = selectedRun();
+      if (run?.status === "queued") {
+        return "Review is queued and will start shortly.";
+      }
       return "Run review to scan this diff for issues.";
     }
     const run = selectedRun();
@@ -203,16 +208,30 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                     <div class="mb-3 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
                       <div class="mb-1 flex items-center justify-between gap-2">
                         <p class="truncate text-[12.5px] font-medium text-neutral-200">{run().scopeLabel}</p>
-                        <span
-                          class={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${run().status === "completed"
-                            ? "bg-emerald-500/15 text-emerald-300"
-                            : run().status === "failed"
-                              ? "bg-rose-500/15 text-rose-300"
-                              : "bg-amber-500/15 text-amber-300"
+                        <div class="flex items-center gap-1.5">
+                          <span
+                            class={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${
+                              run().status === "completed"
+                                ? "bg-emerald-500/15 text-emerald-300"
+                                : run().status === "completed_with_errors"
+                                  ? "bg-amber-500/15 text-amber-300"
+                                  : run().status === "failed" || run().status === "canceled"
+                                    ? "bg-rose-500/15 text-rose-300"
+                                    : "bg-amber-500/15 text-amber-300"
                             }`}
-                        >
-                          {run().status}
-                        </span>
+                          >
+                            {run().status}
+                          </span>
+                          <Show when={run().status === "queued" || run().status === "running"}>
+                            <button
+                              type="button"
+                              class="review-inline-action"
+                              onClick={() => void props.handleCancelAiReviewRun(run().id)}
+                            >
+                              Cancel
+                            </button>
+                          </Show>
+                        </div>
                       </div>
                       <p class="text-[11px] text-neutral-500">
                         {formatRunTime(run().startedAt)} • {run().findings.length} findings

@@ -46,6 +46,7 @@ import {
   getAiReviewConfig,
   getOpencodeSidecarStatus,
   getProviderConnection,
+  listAiReviewRuns,
   listThreadMessages,
   listWorkspaceBranches,
   listThreads,
@@ -54,6 +55,7 @@ import {
   type AiReviewConfig,
   type AiReviewFinding,
   type AiReviewProgressEvent,
+  type AiReviewRun as PersistedAiReviewRun,
   type CompareWorkspaceDiffResult,
   type ListWorkspaceBranchesResult,
   type Message as ThreadMessage,
@@ -114,7 +116,7 @@ function App() {
   const [compareError, setCompareError] = createSignal<string | null>(null);
   const [compareResult, setCompareResult] = createSignal<CompareWorkspaceDiffResult | null>(null);
   const [showDiffViewer, setShowDiffViewer] = createSignal(false);
-  const [selectedBaseRef, setSelectedBaseRef] = createSignal("main");
+  const [selectedBaseRef, setSelectedBaseRef] = createSignal("origin/main");
   const [branchPopoverOpen, setBranchPopoverOpen] = createSignal(false);
   const [branchSearchQuery, setBranchSearchQuery] = createSignal("");
   const [branchCreateMode, setBranchCreateMode] = createSignal(false);
@@ -203,6 +205,14 @@ function App() {
       return listThreadMessages(threadId, 100);
     }
   );
+  const [persistedReviewRuns, { refetch: refetchAiReviewRuns }] = createResource(
+    selectedThreadId,
+    async (threadId): Promise<PersistedAiReviewRun[]> => {
+      if (threadId == null) return [];
+      const response = await listAiReviewRuns({ threadId, limit: 50 });
+      return response.runs;
+    }
+  );
   const [aiReviewConfig, { refetch: refetchAiReviewConfig }] = createResource<AiReviewConfig>(
     () => getAiReviewConfig()
   );
@@ -264,6 +274,29 @@ function App() {
   const hasReviewStarted = createMemo(() =>
     (threadMessages() ?? []).some((message) => message.role === "assistant")
   );
+
+  createEffect(() => {
+    const runs = persistedReviewRuns();
+    if (!runs) return;
+    setReviewRuns(
+      runs.map((run) => ({
+        id: run.runId,
+        status: run.status as ReviewRun["status"],
+        scope: createFullReviewScope(),
+        scopeLabel: run.scopeLabel?.trim() || "AI review run",
+        startedAt: Date.parse(run.startedAt ?? run.createdAt) || Date.now(),
+        endedAt: run.endedAt ? Date.parse(run.endedAt) || Date.now() : null,
+        model: run.model,
+        diffTruncated: run.diffTruncated,
+        error: run.error,
+        progressEvents: run.progressEvents,
+        chunks: run.chunks,
+        findings: run.findings,
+      }))
+    );
+    const hasActiveRun = runs.some((run) => run.status === "queued" || run.status === "running");
+    setAiReviewBusy(hasActiveRun);
+  });
 
   createEffect(() => {
     if (typeof window === "undefined") return;
@@ -338,6 +371,7 @@ function App() {
     setAiOpencodeModelInput,
     setAiReviewBusy,
     refetchThreadMessages,
+    refetchAiReviewRuns,
     aiReviewBusy,
     setAiRunElapsedSeconds,
     setActiveReviewScope,
@@ -446,6 +480,7 @@ function App() {
     handleOpenDiffViewer,
     handleStartAiReview,
     handleStartAiReviewOnFullDiff,
+    handleCancelAiReviewRun,
     handleAskAiFollowUp,
   } = useReviewActions({
     selectedThreadId,
@@ -475,6 +510,7 @@ function App() {
     setAiFindings,
     setAiProgressEvents,
     refetchThreadMessages,
+    refetchAiReviewRuns,
     activeReviewScope,
     setActiveReviewScope,
     setReviewRuns,
@@ -650,6 +686,7 @@ function App() {
           aiPrompt={aiPrompt}
           setAiPrompt={setAiPrompt}
           handleAskAiFollowUp={handleAskAiFollowUp}
+          handleCancelAiReviewRun={handleCancelAiReviewRun}
           aiReviewBusy={aiReviewBusy}
           aiFollowUpBusy={aiFollowUpBusy}
           compareBusy={compareBusy}

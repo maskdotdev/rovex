@@ -1,10 +1,11 @@
 import type { Accessor, Setter } from "solid-js";
 import {
+  cancelAiReviewRun,
   checkoutWorkspaceBranch,
   compareWorkspaceDiff,
   createWorkspaceBranch,
   generateAiFollowUp,
-  generateAiReview,
+  startAiReviewRun,
   type AiReviewChunk,
   type AiReviewFinding,
   type AiReviewProgressEvent,
@@ -48,6 +49,7 @@ type UseReviewActionsArgs = {
   setAiFindings: Setter<AiReviewFinding[]>;
   setAiProgressEvents: Setter<AiReviewProgressEvent[]>;
   refetchThreadMessages: () => unknown;
+  refetchAiReviewRuns?: () => unknown;
   activeReviewScope: Accessor<ReviewScope>;
   setActiveReviewScope: Setter<ReviewScope>;
   setReviewRuns: Setter<ReviewRun[]>;
@@ -136,8 +138,8 @@ export function useReviewActions(args: UseReviewActionsArgs) {
   };
 
   const handleCompareSelectedReview = async (target: { baseRef?: string; fetchRemote?: boolean } = {}) => {
-    const baseRef = target.baseRef?.trim() || args.selectedBaseRef().trim() || "main";
-    const fetchRemote = target.fetchRemote ?? false;
+    const baseRef = target.baseRef?.trim() || args.selectedBaseRef().trim() || "origin/main";
+    const fetchRemote = target.fetchRemote ?? baseRef.startsWith("origin/");
     args.setCompareError(null);
 
     const workspace = args.selectedWorkspace();
@@ -203,13 +205,13 @@ export function useReviewActions(args: UseReviewActionsArgs) {
       return;
     }
 
-    const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const optimisticRunId = `run-pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const runLabel = getReviewScopeLabel(scope);
     const startedAt = Date.now();
     args.setReviewRuns((current) => [
       {
-        id: runId,
-        status: "running",
+        id: optimisticRunId,
+        status: "queued",
         scope,
         scopeLabel: runLabel,
         startedAt,
@@ -223,14 +225,14 @@ export function useReviewActions(args: UseReviewActionsArgs) {
       },
       ...current,
     ]);
-    args.setSelectedRunId(runId);
+    args.setSelectedRunId(optimisticRunId);
     args.setActiveReviewScope(scope);
     args.setReviewWorkbenchTab("issues");
 
-    args.setAiReviewBusy(true);
-    args.setAiStatus(`Starting chunked review on ${runLabel}...`);
+    args.setAiReviewBusy(false);
+    args.setAiStatus(`Queueing review on ${runLabel}...`);
     try {
-      const response = await generateAiReview({
+      const response = await startAiReviewRun({
         threadId,
         workspace: comparison.workspace,
         baseRef: comparison.baseRef,
@@ -241,51 +243,75 @@ export function useReviewActions(args: UseReviewActionsArgs) {
         deletions: scopedDiff.deletions,
         diff: scopedDiff.diff,
         prompt: args.aiPrompt().trim() || null,
+        scopeLabel: runLabel,
       });
-      await args.refetchThreadMessages();
       args.setAiPrompt("");
-      args.setAiChunkReviews(response.chunks);
-      args.setAiFindings(response.findings);
       args.setReviewRuns((current) =>
         current.map((run) =>
-          run.id !== runId
+          run.id !== optimisticRunId
             ? run
             : {
                 ...run,
-                status: "completed",
-                endedAt: Date.now(),
-                model: response.model,
-                diffTruncated: response.diffTruncated,
-                chunks: response.chunks,
-                findings: response.findings,
+                id: response.run.runId,
+                status: response.run.status === "queued" ? "queued" : "running",
+                startedAt: Date.parse(response.run.createdAt) || run.startedAt,
               }
         )
       );
-      args.setAiStatus(
-        `Reviewed ${runLabel}: ${response.chunks.length} chunk(s), ${response.findings.length} finding(s) via ${response.model}${response.diffTruncated ? " (truncated chunk input)." : "."}`
-      );
+      args.setSelectedRunId(response.run.runId);
+      args.setAiStatus(`Review queued on ${runLabel}.`);
+      await args.refetchAiReviewRuns?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       args.setAiReviewError(message);
       args.setReviewRuns((current) =>
         current.map((run) =>
-          run.id !== runId
+          run.id !== optimisticRunId
             ? run
             : {
                 ...run,
                 status: "failed",
                 endedAt: Date.now(),
                 error: message,
-              }
+          }
         )
       );
-    } finally {
-      args.setAiReviewBusy(false);
     }
   };
 
   const handleStartAiReviewOnFullDiff = async () => {
     await handleStartAiReview(createFullReviewScope());
+  };
+
+  const handleCancelAiReviewRun = async (runId: string) => {
+    const normalizedRunId = runId.trim();
+    if (!normalizedRunId) return;
+
+    try {
+      const response = await cancelAiReviewRun({ runId: normalizedRunId });
+      args.setReviewRuns((current) =>
+        current.map((run) =>
+          run.id !== normalizedRunId
+            ? run
+            : {
+                ...run,
+                status:
+                  response.status === "canceled" ? "canceled" : (run.status as ReviewRun["status"]),
+                endedAt: response.status === "canceled" ? Date.now() : run.endedAt,
+              }
+        )
+      );
+      await args.refetchAiReviewRuns?.();
+      if (response.canceled) {
+        args.setAiStatus(
+          response.status === "canceled"
+            ? "Review run canceled."
+            : "Cancel request sent for running review."
+        );
+      }
+    } catch (error) {
+      args.setAiReviewError(error instanceof Error ? error.message : String(error));
+    }
   };
 
   const handleAskAiFollowUp = async (event: Event) => {
@@ -339,6 +365,7 @@ export function useReviewActions(args: UseReviewActionsArgs) {
     handleOpenDiffViewer,
     handleStartAiReview,
     handleStartAiReviewOnFullDiff,
+    handleCancelAiReviewRun,
     handleAskAiFollowUp,
   };
 }

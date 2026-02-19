@@ -52,6 +52,7 @@ type UseAppEffectsArgs = {
   setAiOpencodeModelInput: Setter<string>;
   setAiReviewBusy: Setter<boolean>;
   refetchThreadMessages: () => unknown;
+  refetchAiReviewRuns?: () => unknown;
   aiReviewBusy: Accessor<boolean>;
   setAiRunElapsedSeconds: Setter<number>;
   setActiveReviewScope: Setter<ReviewScope>;
@@ -175,27 +176,31 @@ export function useAppEffects(args: UseAppEffectsArgs) {
       const payload = event.payload;
       const selected = args.selectedThreadId();
       if (selected != null && payload.threadId !== selected) return;
+      const payloadRunId = payload.runId;
+      const selectedRunId = args.selectedRunId();
+      const runIsSelected =
+        payloadRunId != null
+          ? selectedRunId == null || selectedRunId === payloadRunId
+          : true;
 
-      args.setAiProgressEvents((current) => {
-        const next = [...current, payload];
-        return next.length > 160 ? next.slice(next.length - 160) : next;
-      });
-
-      if (payload.status === "started") {
-        args.setAiReviewBusy(true);
-        args.setAiReviewError(null);
-        args.setAiStatus(payload.message);
-        args.setAiChunkReviews([]);
-        args.setAiFindings([]);
-      } else if (payload.status === "failed") {
-        args.setAiReviewBusy(false);
+      if (runIsSelected) {
+        args.setAiProgressEvents((current) => {
+          const next = [...current, payload];
+          return next.length > 160 ? next.slice(next.length - 160) : next;
+        });
+        if (payload.status === "started") {
+          args.setAiReviewError(null);
+          args.setAiChunkReviews([]);
+          args.setAiFindings([]);
+        }
+      }
+      args.setAiStatus(payload.message);
+      if (payload.status === "failed") {
         args.setAiReviewError(payload.message);
-      } else {
-        args.setAiStatus(payload.message);
       }
 
       const chunk = payload.chunk;
-      if (chunk) {
+      if (chunk && runIsSelected) {
         args.setAiChunkReviews((current) => {
           const next = [...current];
           const existingIndex = next.findIndex((candidate) => candidate.id === chunk.id);
@@ -211,7 +216,7 @@ export function useAppEffects(args: UseAppEffectsArgs) {
       }
 
       const finding = payload.finding;
-      if (finding) {
+      if (finding && runIsSelected) {
         args.setAiFindings((current) => {
           if (current.some((candidate) => candidate.id === finding.id)) {
             return current;
@@ -220,25 +225,32 @@ export function useAppEffects(args: UseAppEffectsArgs) {
         });
       }
 
-      if (payload.status === "completed") {
-        args.setAiReviewBusy(false);
-        void args.refetchThreadMessages();
-      }
-
       args.setReviewRuns((current) => {
-        if (current.length === 0) return current;
-
-        const selectedId = args.selectedRunId();
-        const runningIndex = current.findIndex((candidate) => candidate.status === "running");
-        const selectedIndex = selectedId
-          ? current.findIndex((candidate) => candidate.id === selectedId)
-          : -1;
-        const targetIndex = runningIndex >= 0 ? runningIndex : selectedIndex;
-
-        if (targetIndex < 0) return current;
-
-        const run = current[targetIndex];
         const nextRuns = [...current];
+        const effectiveRunId = payloadRunId ?? args.selectedRunId();
+        if (!effectiveRunId) {
+          return current;
+        }
+        let targetIndex = nextRuns.findIndex((candidate) => candidate.id === effectiveRunId);
+        if (targetIndex < 0) {
+          nextRuns.unshift({
+            id: effectiveRunId,
+            status: "queued",
+            scope: createFullReviewScope(),
+            scopeLabel: "AI review run",
+            startedAt: Date.now(),
+            endedAt: null,
+            model: null,
+            diffTruncated: false,
+            error: null,
+            progressEvents: [],
+            chunks: [],
+            findings: [],
+          });
+          targetIndex = 0;
+        }
+
+        const run = nextRuns[targetIndex];
         let nextRun = {
           ...run,
           progressEvents: [...run.progressEvents, payload].slice(-160),
@@ -270,12 +282,36 @@ export function useAppEffects(args: UseAppEffectsArgs) {
           }
         }
 
-        if (payload.status === "failed") {
+        if (payload.status === "queued") {
+          nextRun = {
+            ...nextRun,
+            status: "queued",
+          };
+        } else if (payload.status === "started") {
+          nextRun = {
+            ...nextRun,
+            status: "running",
+            error: null,
+          };
+        } else if (payload.status === "failed") {
           nextRun = {
             ...nextRun,
             status: "failed",
             endedAt: Date.now(),
             error: payload.message,
+          };
+        } else if (payload.status === "canceled") {
+          nextRun = {
+            ...nextRun,
+            status: "canceled",
+            endedAt: Date.now(),
+            error: payload.message,
+          };
+        } else if (payload.status === "completed_with_errors") {
+          nextRun = {
+            ...nextRun,
+            status: "completed_with_errors",
+            endedAt: Date.now(),
           };
         } else if (payload.status === "completed") {
           nextRun = {
@@ -286,6 +322,22 @@ export function useAppEffects(args: UseAppEffectsArgs) {
         }
 
         nextRuns[targetIndex] = nextRun;
+        const hasActiveRun = nextRuns.some(
+          (candidate) => candidate.status === "queued" || candidate.status === "running"
+        );
+        args.setAiReviewBusy(hasActiveRun);
+        if (
+          payload.status === "completed" ||
+          payload.status === "completed_with_errors" ||
+          payload.status === "failed" ||
+          payload.status === "canceled"
+        ) {
+          void args.refetchThreadMessages();
+          void args.refetchAiReviewRuns?.();
+        }
+        if (runIsSelected && payloadRunId && args.selectedRunId() == null) {
+          args.setSelectedRunId(payloadRunId);
+        }
         return nextRuns;
       });
     }).then((unlisten) => {

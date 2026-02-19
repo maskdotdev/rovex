@@ -6,16 +6,18 @@ mod models;
 mod providers;
 
 pub use models::{
-    AddThreadMessageInput, AiReviewChunk, AiReviewConfig, AiReviewFinding, AppServerAccountStatus,
-    AppServerCredits, AppServerRateLimitWindow, AppServerRateLimits, BackendHealth,
-    CheckoutWorkspaceBranchInput, CheckoutWorkspaceBranchResult, CloneRepositoryInput,
-    CloneRepositoryResult, CodeIntelSyncInput, CodeIntelSyncResult, CompareWorkspaceDiffInput,
-    CompareWorkspaceDiffResult, ConnectProviderInput, CreateThreadInput,
+    AddThreadMessageInput, AiReviewChunk, AiReviewConfig, AiReviewFinding, AiReviewProgressEvent,
+    AiReviewRun, AppServerAccountStatus, AppServerCredits, AppServerLoginStartResult,
+    AppServerRateLimitWindow, AppServerRateLimits, BackendHealth, CancelAiReviewRunInput,
+    CancelAiReviewRunResult, CheckoutWorkspaceBranchInput, CheckoutWorkspaceBranchResult,
+    CloneRepositoryInput, CloneRepositoryResult, CodeIntelSyncInput, CodeIntelSyncResult,
+    CompareWorkspaceDiffInput, CompareWorkspaceDiffResult, ConnectProviderInput, CreateThreadInput,
     CreateWorkspaceBranchInput, GenerateAiFollowUpInput, GenerateAiFollowUpResult,
-    GenerateAiReviewInput, GenerateAiReviewResult, ListWorkspaceBranchesInput,
-    ListWorkspaceBranchesResult, Message, MessageRole, OpencodeSidecarStatus,
-    PollProviderDeviceAuthInput, PollProviderDeviceAuthResult, ProviderConnection,
-    ProviderDeviceAuthStatus, ProviderKind, SetAiReviewApiKeyInput, SetAiReviewSettingsInput,
+    GenerateAiReviewInput, GenerateAiReviewResult, GetAiReviewRunInput, ListAiReviewRunsInput,
+    ListAiReviewRunsResult, ListWorkspaceBranchesInput, ListWorkspaceBranchesResult, Message,
+    MessageRole, OpencodeSidecarStatus, PollProviderDeviceAuthInput, PollProviderDeviceAuthResult,
+    ProviderConnection, ProviderDeviceAuthStatus, ProviderKind, SetAiReviewApiKeyInput,
+    SetAiReviewSettingsInput, StartAiReviewRunInput, StartAiReviewRunResult,
     StartProviderDeviceAuthInput, StartProviderDeviceAuthResult, Thread, WorkspaceBranch,
 };
 

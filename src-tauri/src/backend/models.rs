@@ -223,6 +223,9 @@ pub struct ListWorkspaceBranchesResult {
     pub workspace: String,
     pub current_branch: Option<String>,
     pub branches: Vec<WorkspaceBranch>,
+    pub upstream_branch: Option<String>,
+    pub remote_branches: Vec<WorkspaceBranch>,
+    pub suggested_base_ref: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -262,7 +265,7 @@ pub struct GenerateAiReviewInput {
     pub prompt: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiReviewFinding {
     pub id: String,
@@ -278,7 +281,7 @@ pub struct AiReviewFinding {
     pub confidence: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiReviewChunk {
     pub id: String,
@@ -287,6 +290,23 @@ pub struct AiReviewChunk {
     pub hunk_header: String,
     pub summary: String,
     pub findings: Vec<AiReviewFinding>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiReviewProgressEvent {
+    pub run_id: Option<String>,
+    pub thread_id: i64,
+    pub status: String,
+    pub message: String,
+    pub total_chunks: usize,
+    pub completed_chunks: usize,
+    pub chunk_id: Option<String>,
+    pub file_path: Option<String>,
+    pub chunk_index: Option<usize>,
+    pub finding_count: Option<usize>,
+    pub chunk: Option<AiReviewChunk>,
+    pub finding: Option<AiReviewFinding>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -307,6 +327,95 @@ pub struct GenerateAiReviewResult {
     pub diff_truncated: bool,
     pub chunks: Vec<AiReviewChunk>,
     pub findings: Vec<AiReviewFinding>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartAiReviewRunInput {
+    pub thread_id: i64,
+    pub workspace: String,
+    pub base_ref: String,
+    pub merge_base: String,
+    pub head: String,
+    pub files_changed: i64,
+    pub insertions: i64,
+    pub deletions: i64,
+    pub diff: String,
+    pub prompt: Option<String>,
+    pub scope_label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiReviewRun {
+    pub run_id: String,
+    pub thread_id: i64,
+    pub workspace: String,
+    pub base_ref: String,
+    pub merge_base: String,
+    pub head: String,
+    pub files_changed: i64,
+    pub insertions: i64,
+    pub deletions: i64,
+    pub prompt: Option<String>,
+    pub scope_label: Option<String>,
+    pub status: String,
+    pub total_chunks: usize,
+    pub completed_chunks: usize,
+    pub failed_chunks: usize,
+    pub finding_count: usize,
+    pub model: Option<String>,
+    pub review: Option<String>,
+    pub diff_chars_used: Option<usize>,
+    pub diff_chars_total: Option<usize>,
+    pub diff_truncated: bool,
+    pub error: Option<String>,
+    pub chunks: Vec<AiReviewChunk>,
+    pub findings: Vec<AiReviewFinding>,
+    pub progress_events: Vec<AiReviewProgressEvent>,
+    pub created_at: String,
+    pub started_at: Option<String>,
+    pub ended_at: Option<String>,
+    pub canceled_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartAiReviewRunResult {
+    pub run: AiReviewRun,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelAiReviewRunInput {
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelAiReviewRunResult {
+    pub run_id: String,
+    pub canceled: bool,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListAiReviewRunsInput {
+    pub thread_id: Option<i64>,
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListAiReviewRunsResult {
+    pub runs: Vec<AiReviewRun>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetAiReviewRunInput {
+    pub run_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -400,4 +509,11 @@ pub struct AppServerAccountStatus {
     pub plan_type: Option<String>,
     pub rate_limits: Option<AppServerRateLimits>,
     pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppServerLoginStartResult {
+    pub login_id: String,
+    pub auth_url: String,
 }

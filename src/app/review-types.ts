@@ -14,7 +14,13 @@ export type ReviewWorkbenchTab =
   | "qa"
   | "runs";
 
-export type ReviewRunStatus = "running" | "completed" | "failed";
+export type ReviewRunStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "completed_with_errors"
+  | "failed"
+  | "canceled";
 
 export type ReviewRun = {
   id: string;

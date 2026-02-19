@@ -120,6 +120,9 @@ export type ListWorkspaceBranchesResult = {
   workspace: string;
   currentBranch: string | null;
   branches: WorkspaceBranch[];
+  upstreamBranch: string | null;
+  remoteBranches: WorkspaceBranch[];
+  suggestedBaseRef: string;
 };
 
 export type CheckoutWorkspaceBranchInput = {
@@ -175,8 +178,20 @@ export type AiReviewChunk = {
 };
 
 export type AiReviewProgressEvent = {
+  runId: string | null;
   threadId: number;
-  status: "started" | "chunk-start" | "chunk-complete" | "finding" | "completed" | "failed" | string;
+  status:
+    | "queued"
+    | "started"
+    | "chunk-start"
+    | "chunk-complete"
+    | "chunk-failed"
+    | "finding"
+    | "completed"
+    | "completed_with_errors"
+    | "canceled"
+    | "failed"
+    | string;
   message: string;
   totalChunks: number;
   completedChunks: number;
@@ -186,6 +201,78 @@ export type AiReviewProgressEvent = {
   findingCount: number | null;
   chunk: AiReviewChunk | null;
   finding: AiReviewFinding | null;
+};
+
+export type AiReviewRunStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "completed_with_errors"
+  | "failed"
+  | "canceled"
+  | string;
+
+export type AiReviewRun = {
+  runId: string;
+  threadId: number;
+  workspace: string;
+  baseRef: string;
+  mergeBase: string;
+  head: string;
+  filesChanged: number;
+  insertions: number;
+  deletions: number;
+  prompt: string | null;
+  scopeLabel: string | null;
+  status: AiReviewRunStatus;
+  totalChunks: number;
+  completedChunks: number;
+  failedChunks: number;
+  findingCount: number;
+  model: string | null;
+  review: string | null;
+  diffCharsUsed: number | null;
+  diffCharsTotal: number | null;
+  diffTruncated: boolean;
+  error: string | null;
+  chunks: AiReviewChunk[];
+  findings: AiReviewFinding[];
+  progressEvents: AiReviewProgressEvent[];
+  createdAt: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  canceledAt: string | null;
+};
+
+export type StartAiReviewRunInput = GenerateAiReviewInput & {
+  scopeLabel?: string | null;
+};
+
+export type StartAiReviewRunResult = {
+  run: AiReviewRun;
+};
+
+export type CancelAiReviewRunInput = {
+  runId: string;
+};
+
+export type CancelAiReviewRunResult = {
+  runId: string;
+  canceled: boolean;
+  status: string;
+};
+
+export type ListAiReviewRunsInput = {
+  threadId?: number | null;
+  limit?: number | null;
+};
+
+export type ListAiReviewRunsResult = {
+  runs: AiReviewRun[];
+};
+
+export type GetAiReviewRunInput = {
+  runId: string;
 };
 
 export type GenerateAiReviewResult = {
@@ -279,6 +366,11 @@ export type AppServerAccountStatus = {
   detail: string | null;
 };
 
+export type AppServerLoginStartResult = {
+  loginId: string;
+  authUrl: string;
+};
+
 export function backendHealth() {
   return invoke<BackendHealth>("backend_health");
 }
@@ -367,8 +459,28 @@ export function getAppServerAccountStatus() {
   return invoke<AppServerAccountStatus>("get_app_server_account_status");
 }
 
+export function startAppServerAccountLogin() {
+  return invoke<AppServerLoginStartResult>("start_app_server_account_login");
+}
+
 export function generateAiReview(input: GenerateAiReviewInput) {
   return invoke<GenerateAiReviewResult>("generate_ai_review", { input });
+}
+
+export function startAiReviewRun(input: StartAiReviewRunInput) {
+  return invoke<StartAiReviewRunResult>("start_ai_review_run", { input });
+}
+
+export function cancelAiReviewRun(input: CancelAiReviewRunInput) {
+  return invoke<CancelAiReviewRunResult>("cancel_ai_review_run", { input });
+}
+
+export function listAiReviewRuns(input: ListAiReviewRunsInput = {}) {
+  return invoke<ListAiReviewRunsResult>("list_ai_review_runs", { input });
+}
+
+export function getAiReviewRun(input: GetAiReviewRunInput) {
+  return invoke<AiReviewRun>("get_ai_review_run", { input });
 }
 
 export function generateAiFollowUp(input: GenerateAiFollowUpInput) {
