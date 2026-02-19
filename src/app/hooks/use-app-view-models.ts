@@ -22,12 +22,8 @@ type BuildAppViewModelsArgs = {
   >;
 };
 
-export function buildAppViewModels(args: BuildAppViewModelsArgs) {
-  const s = args.state;
-  const p = args.providerActions;
-  const r = args.reviewActions;
-
-  const settingsViewModel: SettingsViewModel = {
+function buildSettingsViewModel(s: AppState, p: ProviderActions): SettingsViewModel {
+  return {
     activeSettingsTab: s.activeSettingsTab,
     setActiveSettingsTab: s.setActiveSettingsTab,
     closeSettings: p.closeSettings,
@@ -94,106 +90,126 @@ export function buildAppViewModels(args: BuildAppViewModelsArgs) {
     aiApiKeyStatus: s.aiApiKeyStatus,
     handleSaveAiApiKey: p.handleSaveAiApiKey,
   };
+}
 
-  const workspaceViewModel: WorkspaceViewModel = {
-    repoSidebar: {
-      providerBusy: s.providerBusy,
-      onAddLocalRepo: p.handleAddLocalRepoFromSidebar,
-      threadsLoading: () => s.threads.loading,
-      repoGroups: s.repoGroups,
-      loadError: s.loadError,
-      repoDisplayName: p.repoDisplayName,
-      isRepoCollapsed: p.isRepoCollapsed,
-      toggleRepoCollapsed: p.toggleRepoCollapsed,
-      selectedThreadId: s.selectedThreadId,
-      onSelectThread: s.setSelectedThreadId,
-      onCreateReviewForRepo: p.handleCreateReviewForRepo,
-      selectedBaseRef: s.selectedBaseRef,
-      reviewDefaultsByRepo: s.reviewDefaultsByRepo,
-      isRepoMenuOpen: p.isRepoMenuOpen,
-      setRepoMenuOpenState: p.setRepoMenuOpenState,
-      onRenameRepo: p.handleRenameRepo,
-      onRemoveRepo: p.handleRemoveRepo,
-      onRemoveReview: p.handleRemoveReview,
-      onOpenSettings: () => p.openSettings("connections"),
-      onSwitchAccount: p.handleSwitchAppServerAccount,
-      appServerAccountStatus: s.appServerAccountStatus,
-      appServerAccountLoadError: s.appServerAccountLoadError,
-      maskAccountEmail: s.maskAccountEmail,
-    },
-    header: {
-      selectedReview: s.selectedReview,
-      repoDisplayName: p.repoDisplayName,
-      compareResult: s.compareResult,
-      selectedBaseRef: s.selectedBaseRef,
-      reviewSidebarCollapsed: s.reviewSidebarCollapsed,
-      toggleReviewSidebar: () => s.setReviewSidebarCollapsed((collapsed) => !collapsed),
-    },
-    mainPane: {
-      branchActionError: s.branchActionError,
-      compareError: s.compareError,
-      aiReviewError: s.aiReviewError,
-      aiStatus: s.aiStatus,
-      aiReviewBusy: s.aiReviewBusy,
-      aiRunElapsedSeconds: s.aiRunElapsedSeconds,
-      compareSummary: s.compareSummary,
-      compareBusy: s.compareBusy,
-      selectedWorkspace: s.selectedWorkspace,
-      compareResult: s.compareResult,
-      showDiffViewer: s.showDiffViewer,
-      activeReviewScope: s.activeReviewScope,
-      setActiveReviewScope: s.setActiveReviewScope,
-      selectedDiffTheme: s.selectedDiffTheme,
-      diffAnnotations: s.diffAnnotations,
-      handleStartAiReviewOnFullDiff: r.handleStartAiReviewOnFullDiff,
-    },
-    reviewSidebar: {
-      reviewSidebarCollapsed: s.reviewSidebarCollapsed,
-      activeReviewScope: s.activeReviewScope,
-      setActiveReviewScope: s.setActiveReviewScope,
-      aiChunkReviews: s.aiChunkReviews,
-      aiFindings: s.aiFindings,
-      aiProgressEvents: s.aiProgressEvents,
-      reviewRuns: s.reviewRuns,
-      selectedRunId: s.selectedRunId,
-      setSelectedRunId: s.setSelectedRunId,
-      reviewWorkbenchTab: s.reviewWorkbenchTab,
-      setReviewWorkbenchTab: s.setReviewWorkbenchTab,
-      threadMessagesLoadError: s.threadMessagesLoadError,
-      threadMessages: s.threadMessages,
-      aiPrompt: s.aiPrompt,
-      setAiPrompt: s.setAiPrompt,
-      handleAskAiFollowUp: r.handleAskAiFollowUp,
-      handleCancelAiReviewRun: r.handleCancelAiReviewRun,
-      aiReviewBusy: s.aiReviewBusy,
-      aiFollowUpBusy: s.aiFollowUpBusy,
-      compareBusy: s.compareBusy,
-      selectedWorkspace: s.selectedWorkspace,
-      branchPopoverOpen: s.branchPopoverOpen,
-      setBranchPopoverOpen: s.setBranchPopoverOpen,
-      workspaceBranches: s.workspaceBranches,
-      workspaceBranchesLoading: () => s.workspaceBranches.loading,
-      currentWorkspaceBranch: s.currentWorkspaceBranch,
-      branchSearchQuery: s.branchSearchQuery,
-      setBranchSearchQuery: s.setBranchSearchQuery,
-      filteredWorkspaceBranches: s.filteredWorkspaceBranches,
-      branchActionBusy: s.branchActionBusy,
-      handleCheckoutBranch: r.handleCheckoutBranch,
-      workspaceBranchLoadError: s.workspaceBranchLoadError,
-      branchCreateMode: s.branchCreateMode,
-      handleCreateAndCheckoutBranch: r.handleCreateAndCheckoutBranch,
-      setBranchSearchInputRef: s.setBranchSearchInputRef,
-      setBranchCreateInputRef: s.setBranchCreateInputRef,
-      newBranchName: s.newBranchName,
-      setNewBranchName: s.setNewBranchName,
-      setBranchCreateMode: s.setBranchCreateMode,
-      canCreateBranch: s.canCreateBranch,
-      handleStartCreateBranch: r.handleStartCreateBranch,
-    },
+function buildWorkspaceViewModel(
+  s: AppState,
+  p: ProviderActions,
+  r: BuildAppViewModelsArgs["reviewActions"]
+): WorkspaceViewModel {
+  const repoSidebar: WorkspaceViewModel["repoSidebar"] = {
+    providerBusy: s.providerBusy,
+    onAddLocalRepo: p.handleAddLocalRepoFromSidebar,
+    threadsLoading: () => s.threads.loading,
+    repoGroups: s.repoGroups,
+    loadError: s.loadError,
+    repoDisplayName: p.repoDisplayName,
+    isRepoCollapsed: p.isRepoCollapsed,
+    toggleRepoCollapsed: p.toggleRepoCollapsed,
+    selectedThreadId: s.selectedThreadId,
+    onSelectThread: s.setSelectedThreadId,
+    onCreateReviewForRepo: p.handleCreateReviewForRepo,
+    selectedBaseRef: s.selectedBaseRef,
+    reviewDefaultsByRepo: s.reviewDefaultsByRepo,
+    isRepoMenuOpen: p.isRepoMenuOpen,
+    setRepoMenuOpenState: p.setRepoMenuOpenState,
+    onRenameRepo: p.handleRenameRepo,
+    onRemoveRepo: p.handleRemoveRepo,
+    onRemoveReview: p.handleRemoveReview,
+    onOpenSettings: () => p.openSettings("connections"),
+    onSwitchAccount: p.handleSwitchAppServerAccount,
+    appServerAccountStatus: s.appServerAccountStatus,
+    appServerAccountLoadError: s.appServerAccountLoadError,
+    maskAccountEmail: s.maskAccountEmail,
+  };
+
+  const header: WorkspaceViewModel["header"] = {
+    selectedReview: s.selectedReview,
+    repoDisplayName: p.repoDisplayName,
+    compareResult: s.compareResult,
+    selectedBaseRef: s.selectedBaseRef,
+    reviewSidebarCollapsed: s.reviewSidebarCollapsed,
+    toggleReviewSidebar: () => s.setReviewSidebarCollapsed((collapsed) => !collapsed),
+  };
+
+  const mainPane: WorkspaceViewModel["mainPane"] = {
+    branchActionError: s.branchActionError,
+    compareError: s.compareError,
+    aiReviewError: s.aiReviewError,
+    aiStatus: s.aiStatus,
+    aiReviewBusy: s.aiReviewBusy,
+    aiRunElapsedSeconds: s.aiRunElapsedSeconds,
+    compareSummary: s.compareSummary,
+    compareBusy: s.compareBusy,
+    selectedWorkspace: s.selectedWorkspace,
+    compareResult: s.compareResult,
+    showDiffViewer: s.showDiffViewer,
+    activeReviewScope: s.activeReviewScope,
+    setActiveReviewScope: s.setActiveReviewScope,
+    selectedDiffTheme: s.selectedDiffTheme,
+    diffAnnotations: s.diffAnnotations,
+    handleStartAiReviewOnFullDiff: r.handleStartAiReviewOnFullDiff,
+  };
+
+  const reviewSidebar: WorkspaceViewModel["reviewSidebar"] = {
+    reviewSidebarCollapsed: s.reviewSidebarCollapsed,
+    activeReviewScope: s.activeReviewScope,
+    setActiveReviewScope: s.setActiveReviewScope,
+    aiChunkReviews: s.aiChunkReviews,
+    aiFindings: s.aiFindings,
+    aiProgressEvents: s.aiProgressEvents,
+    reviewRuns: s.reviewRuns,
+    selectedRunId: s.selectedRunId,
+    setSelectedRunId: s.setSelectedRunId,
+    reviewWorkbenchTab: s.reviewWorkbenchTab,
+    setReviewWorkbenchTab: s.setReviewWorkbenchTab,
+    threadMessagesLoadError: s.threadMessagesLoadError,
+    threadMessages: s.threadMessages,
+    aiPrompt: s.aiPrompt,
+    setAiPrompt: s.setAiPrompt,
+    handleAskAiFollowUp: r.handleAskAiFollowUp,
+    handleCancelAiReviewRun: r.handleCancelAiReviewRun,
+    aiReviewBusy: s.aiReviewBusy,
+    aiFollowUpBusy: s.aiFollowUpBusy,
+    compareBusy: s.compareBusy,
+    selectedWorkspace: s.selectedWorkspace,
+    branchPopoverOpen: s.branchPopoverOpen,
+    setBranchPopoverOpen: s.setBranchPopoverOpen,
+    workspaceBranches: s.workspaceBranches,
+    workspaceBranchesLoading: () => s.workspaceBranches.loading,
+    currentWorkspaceBranch: s.currentWorkspaceBranch,
+    branchSearchQuery: s.branchSearchQuery,
+    setBranchSearchQuery: s.setBranchSearchQuery,
+    filteredWorkspaceBranches: s.filteredWorkspaceBranches,
+    branchActionBusy: s.branchActionBusy,
+    handleCheckoutBranch: r.handleCheckoutBranch,
+    workspaceBranchLoadError: s.workspaceBranchLoadError,
+    branchCreateMode: s.branchCreateMode,
+    handleCreateAndCheckoutBranch: r.handleCreateAndCheckoutBranch,
+    setBranchSearchInputRef: s.setBranchSearchInputRef,
+    setBranchCreateInputRef: s.setBranchCreateInputRef,
+    newBranchName: s.newBranchName,
+    setNewBranchName: s.setNewBranchName,
+    setBranchCreateMode: s.setBranchCreateMode,
+    canCreateBranch: s.canCreateBranch,
+    handleStartCreateBranch: r.handleStartCreateBranch,
   };
 
   return {
-    settingsViewModel,
-    workspaceViewModel,
+    repoSidebar,
+    header,
+    mainPane,
+    reviewSidebar,
+  };
+}
+
+export function buildAppViewModels(args: BuildAppViewModelsArgs) {
+  const s = args.state;
+  const p = args.providerActions;
+  const r = args.reviewActions;
+
+  return {
+    settingsViewModel: buildSettingsViewModel(s, p),
+    workspaceViewModel: buildWorkspaceViewModel(s, p, r),
   };
 }
