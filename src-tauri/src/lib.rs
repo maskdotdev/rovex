@@ -45,6 +45,7 @@ pub fn run() {
             backend::commands::get_ai_review_config,
             backend::commands::set_ai_review_api_key,
             backend::commands::set_ai_review_settings,
+            backend::commands::get_app_server_account_status,
             backend::commands::get_opencode_sidecar_status,
             backend::commands::generate_ai_review,
             backend::commands::generate_ai_follow_up,

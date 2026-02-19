@@ -1,4 +1,4 @@
-import { For, Show, type Accessor } from "solid-js";
+import { For, Show, createMemo, type Accessor } from "solid-js";
 import {
   ChevronRight,
   FolderOpen,
@@ -28,6 +28,7 @@ import {
 } from "@/components/sidebar";
 import { SidebarRow } from "@/app/components/sidebar-row";
 import type { RepoGroup } from "@/app/types";
+import type { AppServerAccountStatus } from "@/lib/backend";
 
 type WorkspaceRepoSidebarProps = {
   providerBusy: Accessor<boolean>;
@@ -46,9 +47,60 @@ type WorkspaceRepoSidebarProps = {
   onRenameRepo: (repo: RepoGroup) => void;
   onRemoveRepo: (repo: RepoGroup) => void | Promise<void>;
   onOpenSettings: () => void;
+  appServerAccountStatus: Accessor<AppServerAccountStatus | undefined>;
+  appServerAccountLoadError: Accessor<string | null>;
+  maskAccountEmail: Accessor<boolean>;
 };
 
 export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
+  const formatQuotaReset = (unixSeconds: number | null | undefined) => {
+    if (!unixSeconds || unixSeconds <= 0) {
+      return "Unknown";
+    }
+    const date = new Date(unixSeconds * 1000);
+    if (Number.isNaN(date.getTime())) {
+      return "Unknown";
+    }
+    return date.toLocaleString();
+  };
+
+  const accountLabel = createMemo(() => {
+    const email = props.appServerAccountStatus()?.email?.trim();
+    if (!email) {
+      return "Unknown";
+    }
+    if (props.maskAccountEmail()) {
+      return "Hidden";
+    }
+    const localPart = email.split("@")[0] ?? email;
+    const firstFour = localPart.slice(0, 4);
+    return firstFour || "Unknown";
+  });
+
+  const usageWindows = createMemo(() => {
+    const rateLimits = props.appServerAccountStatus()?.rateLimits;
+    const primary = rateLimits?.primary ?? null;
+    const secondary = rateLimits?.secondary ?? null;
+    const windows = [primary, secondary].filter((value): value is NonNullable<typeof value> => Boolean(value));
+
+    const fiveHourWindow =
+      windows.find((window) => window.windowDurationMins === 300) ?? primary ?? secondary;
+    const weeklyWindow =
+      windows.find((window) => window.windowDurationMins === 10080) ??
+      (fiveHourWindow === primary ? secondary : primary);
+
+    return {
+      fiveHourWindow,
+      weeklyWindow,
+    };
+  });
+
+  const clampPercent = (value: number | null | undefined) => {
+    const numeric = Number(value ?? 0);
+    if (!Number.isFinite(numeric)) return 0;
+    return Math.max(0, Math.min(100, Math.round(numeric)));
+  };
+
   return (
     <Sidebar
       collapsible="offcanvas"
@@ -210,6 +262,106 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
 
       <SidebarFooter class="px-2.5 pb-4">
         <SidebarSeparator class="my-2 bg-white/[0.04]" />
+        <Popover.Root placement="right-start" gutter={10}>
+          <Popover.Trigger
+            as="button"
+            type="button"
+            class="mb-2 flex h-11 w-full items-center justify-between rounded-xl border border-white/[0.08] bg-white/[0.03] px-3.5 text-left transition-colors hover:border-white/[0.14] hover:bg-white/[0.05]"
+          >
+            <div class="min-w-0">
+              <p class="truncate text-[13px] font-medium text-neutral-100">Codex</p>
+              <p class="truncate text-[11.5px] text-neutral-500">Account: {accountLabel()}</p>
+            </div>
+            <span
+              class={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] ${
+                props.appServerAccountStatus()?.available
+                  ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400/90"
+                  : "border-rose-500/20 bg-rose-500/10 text-rose-300/90"
+              }`}
+            >
+              {props.appServerAccountStatus()?.available ? "Live" : "Offline"}
+            </span>
+          </Popover.Trigger>
+          <Popover.Portal>
+            <Popover.Content class="z-50 w-[320px] rounded-xl border border-white/[0.08] bg-[#16171b] p-3.5 shadow-[0_20px_56px_rgba(0,0,0,0.5)]">
+              <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-500">
+                Codex usage
+              </p>
+              <p class="mt-2 text-[12.5px] text-neutral-300">
+                Account: <span class="font-mono text-neutral-100">{accountLabel()}</span>
+              </p>
+              <p class="mt-1.5 text-[12.5px] text-neutral-300">
+                Plan: <span class="font-mono text-neutral-100">{props.appServerAccountStatus()?.planType ?? "Unknown"}</span>
+              </p>
+              <Show when={usageWindows().fiveHourWindow}>
+                {(window) => {
+                  const used = clampPercent(window().usedPercent);
+                  const left = clampPercent(100 - used);
+                  return (
+                    <div class="mt-2.5">
+                      <div class="flex items-center justify-between gap-2">
+                        <p class="text-[12px] text-neutral-400">Primary (5hr)</p>
+                        <p class="text-[11.5px] font-mono text-neutral-200">{left}% left</p>
+                      </div>
+                      <div class="mt-1.5 h-2 overflow-hidden rounded-full bg-white/[0.08]">
+                        <div
+                          class="h-full rounded-full bg-amber-400/80 transition-[width] duration-300"
+                          style={{ width: `${used}%` }}
+                        />
+                      </div>
+                      <p class="mt-1 text-[11.5px] text-neutral-500">
+                        {used}% used, resets {formatQuotaReset(window().resetsAt)}
+                      </p>
+                    </div>
+                  );
+                }}
+              </Show>
+              <Show when={usageWindows().weeklyWindow}>
+                {(window) => {
+                  const used = clampPercent(window().usedPercent);
+                  const left = clampPercent(100 - used);
+                  return (
+                    <div class="mt-2.5">
+                      <div class="flex items-center justify-between gap-2">
+                        <p class="text-[12px] text-neutral-400">Secondary (weekly)</p>
+                        <p class="text-[11.5px] font-mono text-neutral-200">{left}% left</p>
+                      </div>
+                      <div class="mt-1.5 h-2 overflow-hidden rounded-full bg-white/[0.08]">
+                        <div
+                          class="h-full rounded-full bg-emerald-400/80 transition-[width] duration-300"
+                          style={{ width: `${used}%` }}
+                        />
+                      </div>
+                      <p class="mt-1 text-[11.5px] text-neutral-500">
+                        {used}% used, resets {formatQuotaReset(window().resetsAt)}
+                      </p>
+                    </div>
+                  );
+                }}
+              </Show>
+              <Show when={props.appServerAccountStatus()?.rateLimits?.credits}>
+                {(credits) => (
+                  <p class="mt-1.5 text-[12px] text-neutral-400">
+                    Credits:{" "}
+                    <span class="font-mono text-neutral-200">
+                      {credits().balance ?? "n/a"} (has: {credits().hasCredits ? "yes" : "no"})
+                    </span>
+                  </p>
+                )}
+              </Show>
+              <Show when={props.appServerAccountStatus()?.detail}>
+                {(detail) => (
+                  <p class="mt-2.5 text-[11.5px] text-neutral-500">{detail()}</p>
+                )}
+              </Show>
+              <Show when={props.appServerAccountLoadError()}>
+                {(error) => (
+                  <p class="mt-2.5 text-[11.5px] text-rose-300/90">{error()}</p>
+                )}
+              </Show>
+            </Popover.Content>
+          </Popover.Portal>
+        </Popover.Root>
         <SidebarMenu>
           <SidebarRow label="Settings" onClick={props.onOpenSettings} />
         </SidebarMenu>

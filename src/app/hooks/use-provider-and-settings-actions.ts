@@ -69,6 +69,7 @@ type UseProviderAndSettingsActionsArgs = {
   setAiApiKeyError: Setter<string | null>;
   setAiApiKeyStatus: Setter<string | null>;
   refetchAiReviewConfig: () => unknown;
+  refetchAppServerAccountStatus: () => unknown;
   refetchOpencodeSidecarStatus: () => unknown;
 };
 
@@ -524,6 +525,8 @@ export function useProviderAndSettingsActions(args: UseProviderAndSettingsAction
       await args.refetchAiReviewConfig();
       if (provider === "opencode") {
         await args.refetchOpencodeSidecarStatus();
+      } else if (provider === "app-server") {
+        await args.refetchAppServerAccountStatus();
       }
       args.setAiSettingsStatus(
         provider === "opencode"

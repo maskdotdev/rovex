@@ -6,7 +6,8 @@ mod models;
 mod providers;
 
 pub use models::{
-    AddThreadMessageInput, AiReviewChunk, AiReviewConfig, AiReviewFinding, BackendHealth,
+    AddThreadMessageInput, AiReviewChunk, AiReviewConfig, AiReviewFinding, AppServerAccountStatus,
+    AppServerCredits, AppServerRateLimitWindow, AppServerRateLimits, BackendHealth,
     CheckoutWorkspaceBranchInput, CheckoutWorkspaceBranchResult, CloneRepositoryInput,
     CloneRepositoryResult, CodeIntelSyncInput, CodeIntelSyncResult, CompareWorkspaceDiffInput,
     CompareWorkspaceDiffResult, ConnectProviderInput, CreateThreadInput,

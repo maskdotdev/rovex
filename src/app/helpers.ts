@@ -1,5 +1,6 @@
 import type { ProviderKind, Thread } from "@/lib/backend";
 import {
+  ACCOUNT_EMAIL_MASK_STORAGE_KEY,
   DEFAULT_DIFF_THEME_ID,
   DIFF_THEME_STORAGE_KEY,
   REPO_DISPLAY_NAME_STORAGE_KEY,
@@ -47,6 +48,14 @@ export function getInitialRepoDisplayNames(): Record<string, string> {
   } catch {
     return {};
   }
+}
+
+export function getInitialMaskAccountEmail(): boolean {
+  if (typeof window === "undefined") return false;
+  const raw = window.localStorage.getItem(ACCOUNT_EMAIL_MASK_STORAGE_KEY);
+  if (!raw) return false;
+  const normalized = raw.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
 export function sleep(ms: number): Promise<void> {

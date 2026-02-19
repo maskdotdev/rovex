@@ -1,5 +1,6 @@
 import {
   Show,
+  createEffect,
   createMemo,
   createResource,
   createSignal,
@@ -10,8 +11,12 @@ import {
   SidebarProvider,
 } from "@/components/sidebar";
 import {
+  ACCOUNT_EMAIL_MASK_STORAGE_KEY,
+} from "@/app/constants";
+import {
   getDiffThemePreset,
   getInitialDiffThemeId,
+  getInitialMaskAccountEmail,
   getInitialRepoDisplayNames,
   groupThreadsByRepo,
   providerOption,
@@ -20,17 +25,25 @@ import { SettingsView } from "@/app/components/settings-view";
 import { WorkspaceHeader } from "@/app/components/workspace-header";
 import { WorkspaceMainPane } from "@/app/components/workspace-main-pane";
 import { WorkspaceRepoSidebar } from "@/app/components/workspace-repo-sidebar";
+import { WorkspaceReviewSidebar } from "@/app/components/workspace-review-sidebar";
 import { useAppEffects } from "@/app/hooks/use-app-effects";
 import { useProviderAndSettingsActions } from "@/app/hooks/use-provider-and-settings-actions";
 import { useReviewActions } from "@/app/hooks/use-review-actions";
 import type { AppView, RepoReview, SettingsTab } from "@/app/types";
 import {
+  createFullReviewScope,
+  type ReviewScope,
+} from "@/app/review-scope";
+import type { ReviewRun, ReviewWorkbenchTab } from "@/app/review-types";
+import {
+  getAppServerAccountStatus,
   getAiReviewConfig,
   getOpencodeSidecarStatus,
   getProviderConnection,
   listThreadMessages,
   listWorkspaceBranches,
   listThreads,
+  type AppServerAccountStatus,
   type AiReviewChunk,
   type AiReviewConfig,
   type AiReviewFinding,
@@ -56,6 +69,7 @@ function App() {
   const [activeView, setActiveView] = createSignal<AppView>("workspace");
   const [activeSettingsTab, setActiveSettingsTab] = createSignal<SettingsTab>("connections");
   const [selectedDiffThemeId, setSelectedDiffThemeId] = createSignal(getInitialDiffThemeId());
+  const [maskAccountEmail, setMaskAccountEmail] = createSignal(getInitialMaskAccountEmail());
   const [settingsError, setSettingsError] = createSignal<string | null>(null);
   const [selectedProvider, setSelectedProvider] = createSignal<ProviderKind>("github");
   const selectedDiffTheme = createMemo(() => getDiffThemePreset(selectedDiffThemeId()));
@@ -111,6 +125,12 @@ function App() {
   const [aiChunkReviews, setAiChunkReviews] = createSignal<AiReviewChunk[]>([]);
   const [aiFindings, setAiFindings] = createSignal<AiReviewFinding[]>([]);
   const [aiProgressEvents, setAiProgressEvents] = createSignal<AiReviewProgressEvent[]>([]);
+  const [activeReviewScope, setActiveReviewScope] = createSignal<ReviewScope>(
+    createFullReviewScope()
+  );
+  const [reviewRuns, setReviewRuns] = createSignal<ReviewRun[]>([]);
+  const [selectedRunId, setSelectedRunId] = createSignal<string | null>(null);
+  const [reviewWorkbenchTab, setReviewWorkbenchTab] = createSignal<ReviewWorkbenchTab>("suggestions");
   let branchSearchInputRef: HTMLInputElement | undefined;
   let branchCreateInputRef: HTMLInputElement | undefined;
 
@@ -166,6 +186,8 @@ function App() {
   const [aiReviewConfig, { refetch: refetchAiReviewConfig }] = createResource<AiReviewConfig>(
     () => getAiReviewConfig()
   );
+  const [appServerAccountStatus, { refetch: refetchAppServerAccountStatus }] =
+    createResource<AppServerAccountStatus>(() => getAppServerAccountStatus());
   const [opencodeSidecarStatus, { refetch: refetchOpencodeSidecarStatus }] =
     createResource<OpencodeSidecarStatus>(() => getOpencodeSidecarStatus());
   const currentWorkspaceBranch = createMemo(() => {
@@ -214,9 +236,19 @@ function App() {
     if (!error) return null;
     return error instanceof Error ? error.message : String(error);
   });
+  const appServerAccountLoadError = createMemo(() => {
+    const error = appServerAccountStatus.error;
+    if (!error) return null;
+    return error instanceof Error ? error.message : String(error);
+  });
   const hasReviewStarted = createMemo(() =>
     (threadMessages() ?? []).some((message) => message.role === "assistant")
   );
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(ACCOUNT_EMAIL_MASK_STORAGE_KEY, maskAccountEmail() ? "1" : "0");
+  });
 
   const getBranchSearchInputRef = () => branchSearchInputRef;
   const getBranchCreateInputRef = () => branchCreateInputRef;
@@ -256,6 +288,11 @@ function App() {
     refetchThreadMessages,
     aiReviewBusy,
     setAiRunElapsedSeconds,
+    setActiveReviewScope,
+    setReviewRuns,
+    selectedRunId,
+    setSelectedRunId,
+    setReviewWorkbenchTab,
   });
 
   const {
@@ -333,6 +370,7 @@ function App() {
     setAiApiKeyError,
     setAiApiKeyStatus,
     refetchAiReviewConfig,
+    refetchAppServerAccountStatus,
     refetchOpencodeSidecarStatus,
   });
 
@@ -342,6 +380,7 @@ function App() {
     handleCreateAndCheckoutBranch,
     handleOpenDiffViewer,
     handleStartAiReview,
+    handleStartAiReviewOnFullDiff,
     handleAskAiFollowUp,
   } = useReviewActions({
     selectedThreadId,
@@ -371,6 +410,11 @@ function App() {
     setAiFindings,
     setAiProgressEvents,
     refetchThreadMessages,
+    activeReviewScope,
+    setActiveReviewScope,
+    setReviewRuns,
+    setSelectedRunId,
+    setReviewWorkbenchTab,
   });
 
   const setBranchSearchInputRef = (element: HTMLInputElement | undefined) => {
@@ -442,6 +486,8 @@ function App() {
             aiSettingsStatus={aiSettingsStatus}
             aiReviewConfigLoadError={aiReviewConfigLoadError}
             handleSaveAiSettings={handleSaveAiSettings}
+            maskAccountEmail={maskAccountEmail}
+            setMaskAccountEmail={setMaskAccountEmail}
             opencodeSidecarStatus={opencodeSidecarStatus}
             opencodeSidecarLoadError={opencodeSidecarLoadError}
             aiApiKeyInput={aiApiKeyInput}
@@ -470,6 +516,9 @@ function App() {
           onRenameRepo={handleRenameRepo}
           onRemoveRepo={handleRemoveRepo}
           onOpenSettings={() => openSettings("connections")}
+          appServerAccountStatus={appServerAccountStatus}
+          appServerAccountLoadError={appServerAccountLoadError}
+          maskAccountEmail={maskAccountEmail}
         />
 
         <SidebarInset class="bg-transparent p-2 md:p-3">
@@ -496,38 +545,55 @@ function App() {
               compareResult={compareResult}
               showDiffViewer={showDiffViewer}
               selectedBaseRef={selectedBaseRef}
+              activeReviewScope={activeReviewScope}
+              setActiveReviewScope={setActiveReviewScope}
               selectedDiffTheme={selectedDiffTheme}
               diffAnnotations={diffAnnotations}
-              aiChunkReviews={aiChunkReviews}
-              aiFindings={aiFindings}
-              aiProgressEvents={aiProgressEvents}
-              threadMessagesLoadError={threadMessagesLoadError}
-              aiPrompt={aiPrompt}
-              setAiPrompt={setAiPrompt}
-              handleAskAiFollowUp={handleAskAiFollowUp}
-              branchPopoverOpen={branchPopoverOpen}
-              setBranchPopoverOpen={setBranchPopoverOpen}
-              workspaceBranches={workspaceBranches}
-              workspaceBranchesLoading={() => workspaceBranches.loading}
-              currentWorkspaceBranch={currentWorkspaceBranch}
-              branchSearchQuery={branchSearchQuery}
-              setBranchSearchQuery={setBranchSearchQuery}
-              filteredWorkspaceBranches={filteredWorkspaceBranches}
-              branchActionBusy={branchActionBusy}
-              handleCheckoutBranch={handleCheckoutBranch}
-              workspaceBranchLoadError={workspaceBranchLoadError}
-              branchCreateMode={branchCreateMode}
-              handleCreateAndCheckoutBranch={handleCreateAndCheckoutBranch}
-              setBranchSearchInputRef={setBranchSearchInputRef}
-              setBranchCreateInputRef={setBranchCreateInputRef}
-              newBranchName={newBranchName}
-              setNewBranchName={setNewBranchName}
-              setBranchCreateMode={setBranchCreateMode}
-              canCreateBranch={canCreateBranch}
-              handleStartCreateBranch={handleStartCreateBranch}
+              handleStartAiReviewOnFullDiff={handleStartAiReviewOnFullDiff}
             />
           </section>
         </SidebarInset>
+        <WorkspaceReviewSidebar
+          activeReviewScope={activeReviewScope}
+          setActiveReviewScope={setActiveReviewScope}
+          aiChunkReviews={aiChunkReviews}
+          aiFindings={aiFindings}
+          aiProgressEvents={aiProgressEvents}
+          reviewRuns={reviewRuns}
+          selectedRunId={selectedRunId}
+          setSelectedRunId={setSelectedRunId}
+          reviewWorkbenchTab={reviewWorkbenchTab}
+          setReviewWorkbenchTab={setReviewWorkbenchTab}
+          threadMessagesLoadError={threadMessagesLoadError}
+          threadMessages={threadMessages}
+          aiPrompt={aiPrompt}
+          setAiPrompt={setAiPrompt}
+          handleAskAiFollowUp={handleAskAiFollowUp}
+          aiReviewBusy={aiReviewBusy}
+          compareBusy={compareBusy}
+          selectedWorkspace={selectedWorkspace}
+          hasReviewStarted={hasReviewStarted}
+          branchPopoverOpen={branchPopoverOpen}
+          setBranchPopoverOpen={setBranchPopoverOpen}
+          workspaceBranches={workspaceBranches}
+          workspaceBranchesLoading={() => workspaceBranches.loading}
+          currentWorkspaceBranch={currentWorkspaceBranch}
+          branchSearchQuery={branchSearchQuery}
+          setBranchSearchQuery={setBranchSearchQuery}
+          filteredWorkspaceBranches={filteredWorkspaceBranches}
+          branchActionBusy={branchActionBusy}
+          handleCheckoutBranch={handleCheckoutBranch}
+          workspaceBranchLoadError={workspaceBranchLoadError}
+          branchCreateMode={branchCreateMode}
+          handleCreateAndCheckoutBranch={handleCreateAndCheckoutBranch}
+          setBranchSearchInputRef={setBranchSearchInputRef}
+          setBranchCreateInputRef={setBranchCreateInputRef}
+          newBranchName={newBranchName}
+          setNewBranchName={setNewBranchName}
+          setBranchCreateMode={setBranchCreateMode}
+          canCreateBranch={canCreateBranch}
+          handleStartCreateBranch={handleStartCreateBranch}
+        />
       </Show>
     </SidebarProvider>
   );

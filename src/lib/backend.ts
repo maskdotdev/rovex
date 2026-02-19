@@ -248,6 +248,37 @@ export type OpencodeSidecarStatus = {
   detail: string | null;
 };
 
+export type AppServerRateLimitWindow = {
+  usedPercent: number;
+  resetsAt: number | null;
+  windowDurationMins: number | null;
+};
+
+export type AppServerCredits = {
+  balance: string | null;
+  hasCredits: boolean;
+  unlimited: boolean;
+};
+
+export type AppServerRateLimits = {
+  limitId: string | null;
+  limitName: string | null;
+  planType: string | null;
+  primary: AppServerRateLimitWindow | null;
+  secondary: AppServerRateLimitWindow | null;
+  credits: AppServerCredits | null;
+};
+
+export type AppServerAccountStatus = {
+  available: boolean;
+  requiresOpenaiAuth: boolean;
+  accountType: string | null;
+  email: string | null;
+  planType: string | null;
+  rateLimits: AppServerRateLimits | null;
+  detail: string | null;
+};
+
 export function backendHealth() {
   return invoke<BackendHealth>("backend_health");
 }
@@ -330,6 +361,10 @@ export function setAiReviewSettings(input: SetAiReviewSettingsInput) {
 
 export function getOpencodeSidecarStatus() {
   return invoke<OpencodeSidecarStatus>("get_opencode_sidecar_status");
+}
+
+export function getAppServerAccountStatus() {
+  return invoke<AppServerAccountStatus>("get_app_server_account_status");
 }
 
 export function generateAiReview(input: GenerateAiReviewInput) {

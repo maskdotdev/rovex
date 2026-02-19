@@ -67,6 +67,8 @@ type SettingsViewProps = {
   aiSettingsStatus: Accessor<string | null>;
   aiReviewConfigLoadError: Accessor<string | null>;
   handleSaveAiSettings: (event: Event) => void | Promise<void>;
+  maskAccountEmail: Accessor<boolean>;
+  setMaskAccountEmail: Setter<boolean>;
   opencodeSidecarStatus: Accessor<OpencodeSidecarStatus | undefined>;
   opencodeSidecarLoadError: Accessor<string | null>;
   aiApiKeyInput: Accessor<string>;
@@ -127,6 +129,8 @@ export function SettingsView(props: SettingsViewProps) {
     aiSettingsStatus,
     aiReviewConfigLoadError,
     handleSaveAiSettings,
+    maskAccountEmail,
+    setMaskAccountEmail,
     opencodeSidecarStatus,
     opencodeSidecarLoadError,
     aiApiKeyInput,
@@ -171,12 +175,41 @@ export function SettingsView(props: SettingsViewProps) {
                         <Show
                           when={activeSettingsTab() === "environments"}
                           fallback={
-                            <section class="animate-fade-up mt-10 max-w-3xl rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6" style={{ "animation-delay": "0.08s" }}>
-                              <p class="text-[15px] font-medium text-neutral-200">{selectedSettingsItem().label}</p>
-                              <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
-                                This section is ready for settings controls. Select Connections or Environments to configure active integrations.
-                              </p>
-                            </section>
+                            <Show
+                              when={activeSettingsTab() === "general"}
+                              fallback={
+                                <section class="animate-fade-up mt-10 max-w-3xl rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6" style={{ "animation-delay": "0.08s" }}>
+                                  <p class="text-[15px] font-medium text-neutral-200">{selectedSettingsItem().label}</p>
+                                  <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
+                                    This section is ready for settings controls. Select Connections or Environments to configure active integrations.
+                                  </p>
+                                </section>
+                              }
+                            >
+                              <section class="animate-fade-up mt-10 max-w-3xl rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6" style={{ "animation-delay": "0.08s" }}>
+                                <p class="text-[15px] font-medium text-neutral-200">Privacy</p>
+                                <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
+                                  Control whether Codex account email fragments are visible in Settings sidebar account widgets.
+                                </p>
+
+                                <label class="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-white/[0.06] bg-white/[0.015] p-4">
+                                  <input
+                                    type="checkbox"
+                                    checked={maskAccountEmail()}
+                                    onChange={(event) => setMaskAccountEmail(event.currentTarget.checked)}
+                                    class="mt-0.5 h-4 w-4 rounded border-white/[0.3] bg-transparent accent-amber-500"
+                                  />
+                                  <span>
+                                    <span class="block text-[13.5px] font-medium text-neutral-200">
+                                      Hide account email
+                                    </span>
+                                    <span class="mt-1 block text-[12.5px] leading-relaxed text-neutral-500">
+                                      When enabled, the sidebar account label shows <span class="font-mono text-neutral-400">Hidden</span> instead of your 4-character account tag.
+                                    </span>
+                                  </span>
+                                </label>
+                              </section>
+                            </Show>
                           }
                         >
                           <section class="animate-fade-up mt-10 max-w-3xl rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6" style={{ "animation-delay": "0.08s" }}>
@@ -315,7 +348,6 @@ export function SettingsView(props: SettingsViewProps) {
                                   </div>
                                 </>
                               </Show>
-
                               <div class="mt-3 flex flex-wrap items-center gap-3">
                                 <Button
                                   type="submit"

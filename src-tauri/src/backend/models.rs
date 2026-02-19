@@ -362,3 +362,42 @@ pub struct OpencodeSidecarStatus {
     pub version: Option<String>,
     pub detail: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppServerRateLimitWindow {
+    pub used_percent: i64,
+    pub resets_at: Option<i64>,
+    pub window_duration_mins: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppServerCredits {
+    pub balance: Option<String>,
+    pub has_credits: bool,
+    pub unlimited: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppServerRateLimits {
+    pub limit_id: Option<String>,
+    pub limit_name: Option<String>,
+    pub plan_type: Option<String>,
+    pub primary: Option<AppServerRateLimitWindow>,
+    pub secondary: Option<AppServerRateLimitWindow>,
+    pub credits: Option<AppServerCredits>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppServerAccountStatus {
+    pub available: bool,
+    pub requires_openai_auth: bool,
+    pub account_type: Option<String>,
+    pub email: Option<String>,
+    pub plan_type: Option<String>,
+    pub rate_limits: Option<AppServerRateLimits>,
+    pub detail: Option<String>,
+}

@@ -15,7 +15,8 @@ use tokio::process::Command as TokioCommand;
 
 use super::{
     providers::{provider_client, ProviderDeviceAuthorizationPoll},
-    AddThreadMessageInput, AiReviewChunk, AiReviewConfig, AiReviewFinding, AppState, BackendHealth,
+    AddThreadMessageInput, AiReviewChunk, AiReviewConfig, AiReviewFinding, AppServerAccountStatus,
+    AppServerCredits, AppServerRateLimitWindow, AppServerRateLimits, AppState, BackendHealth,
     CheckoutWorkspaceBranchInput, CheckoutWorkspaceBranchResult, CloneRepositoryInput,
     CloneRepositoryResult, CodeIntelSyncInput, CodeIntelSyncResult, CompareWorkspaceDiffInput,
     CompareWorkspaceDiffResult, ConnectProviderInput, CreateThreadInput,
@@ -57,6 +58,7 @@ const DEFAULT_OPENCODE_PROVIDER: &str = "openai";
 const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-5";
 const DEFAULT_OPENCODE_AGENT: &str = "plan";
 const DEFAULT_APP_SERVER_COMMAND: &str = "codex";
+const DEFAULT_APP_SERVER_STATUS_TIMEOUT_MS: u64 = 5_000;
 const OPENCODE_SIDECAR_NAME: &str = "opencode";
 const AI_REVIEW_PROGRESS_EVENT: &str = "rovex://ai-review-progress";
 const MAX_CHUNK_FILE_CONTEXT_CHARS: usize = 6_000;
@@ -1045,6 +1047,82 @@ fn resolve_app_server_model(review_model: &str) -> String {
     review_model.trim().to_string()
 }
 
+fn parse_app_server_optional_string(value: Option<&serde_json::Value>) -> Option<String> {
+    value
+        .and_then(|entry| entry.as_str())
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn parse_app_server_optional_i64(value: Option<&serde_json::Value>) -> Option<i64> {
+    value.and_then(|entry| {
+        entry
+            .as_i64()
+            .or_else(|| entry.as_u64().and_then(|number| i64::try_from(number).ok()))
+    })
+}
+
+fn parse_app_server_rate_limit_window(
+    value: Option<&serde_json::Value>,
+) -> Option<AppServerRateLimitWindow> {
+    let entry = value?.as_object()?;
+    let used_percent = parse_app_server_optional_i64(entry.get("usedPercent"))?;
+    Some(AppServerRateLimitWindow {
+        used_percent,
+        resets_at: parse_app_server_optional_i64(entry.get("resetsAt")),
+        window_duration_mins: parse_app_server_optional_i64(entry.get("windowDurationMins")),
+    })
+}
+
+fn parse_app_server_credits(value: Option<&serde_json::Value>) -> Option<AppServerCredits> {
+    let entry = value?.as_object()?;
+    Some(AppServerCredits {
+        balance: parse_app_server_optional_string(entry.get("balance")),
+        has_credits: entry
+            .get("hasCredits")
+            .and_then(|field| field.as_bool())
+            .unwrap_or(false),
+        unlimited: entry
+            .get("unlimited")
+            .and_then(|field| field.as_bool())
+            .unwrap_or(false),
+    })
+}
+
+fn parse_app_server_rate_limits(value: &serde_json::Value) -> Option<AppServerRateLimits> {
+    let entry = value.as_object()?;
+    Some(AppServerRateLimits {
+        limit_id: parse_app_server_optional_string(entry.get("limitId")),
+        limit_name: parse_app_server_optional_string(entry.get("limitName")),
+        plan_type: parse_app_server_optional_string(entry.get("planType")),
+        primary: parse_app_server_rate_limit_window(entry.get("primary")),
+        secondary: parse_app_server_rate_limit_window(entry.get("secondary")),
+        credits: parse_app_server_credits(entry.get("credits")),
+    })
+}
+
+fn parse_app_server_rate_limits_result(result: &serde_json::Value) -> Option<AppServerRateLimits> {
+    if let Some(entries) = result
+        .get("rateLimitsByLimitId")
+        .and_then(|value| value.as_object())
+    {
+        if let Some(codex_limits) = entries.get("codex").and_then(parse_app_server_rate_limits) {
+            return Some(codex_limits);
+        }
+
+        for value in entries.values() {
+            if let Some(parsed) = parse_app_server_rate_limits(value) {
+                return Some(parsed);
+            }
+        }
+    }
+
+    result
+        .get("rateLimits")
+        .and_then(parse_app_server_rate_limits)
+}
+
 fn json_rpc_id_matches(message: &serde_json::Value, expected_id: i64) -> bool {
     message
         .get("id")
@@ -1187,8 +1265,8 @@ async fn write_json_rpc_message(
     stdin: &mut tokio::process::ChildStdin,
     payload: &serde_json::Value,
 ) -> Result<(), String> {
-    let mut bytes =
-        serde_json::to_vec(payload).map_err(|error| format!("Failed to encode JSON-RPC request: {error}"))?;
+    let mut bytes = serde_json::to_vec(payload)
+        .map_err(|error| format!("Failed to encode JSON-RPC request: {error}"))?;
     bytes.push(b'\n');
     stdin
         .write_all(&bytes)
@@ -1797,12 +1875,16 @@ async fn generate_review_with_app_server(
             }),
         )
         .await?;
-        let thread_result = wait_for_json_rpc_result(&mut lines, thread_start_request_id, deadline)
-            .await?;
+        let thread_result =
+            wait_for_json_rpc_result(&mut lines, thread_start_request_id, deadline).await?;
         let thread_id = thread_result
             .pointer("/thread/id")
             .and_then(|value| value.as_str())
-            .or_else(|| thread_result.get("threadId").and_then(|value| value.as_str()))
+            .or_else(|| {
+                thread_result
+                    .get("threadId")
+                    .and_then(|value| value.as_str())
+            })
             .or_else(|| thread_result.get("id").and_then(|value| value.as_str()))
             .ok_or_else(|| "Codex app-server did not return a thread id.".to_string())?;
 
@@ -1821,8 +1903,8 @@ async fn generate_review_with_app_server(
             }),
         )
         .await?;
-        let turn_result = wait_for_json_rpc_result(&mut lines, turn_start_request_id, deadline)
-            .await?;
+        let turn_result =
+            wait_for_json_rpc_result(&mut lines, turn_start_request_id, deadline).await?;
         let expected_turn_id = turn_result
             .pointer("/turn/id")
             .cloned()
@@ -1880,7 +1962,9 @@ async fn generate_review_with_app_server(
         let review = latest_text
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| "Codex app-server completed without returning assistant output.".to_string())?;
+            .ok_or_else(|| {
+                "Codex app-server completed without returning assistant output.".to_string()
+            })?;
         Ok((review, resolved_model.clone()))
     }
     .await;
@@ -2876,7 +2960,7 @@ pub async fn set_ai_review_settings(
         "app-server" | "app_server" | "codex" => "app-server".to_string(),
         _ => {
             return Err(
-                "Review provider must be 'openai', 'opencode', or 'app-server'.".to_string()
+                "Review provider must be 'openai', 'opencode', or 'app-server'.".to_string(),
             )
         }
     };
@@ -2918,6 +3002,175 @@ pub async fn set_ai_review_settings(
     }
 
     Ok(current_ai_review_config())
+}
+
+#[tauri::command]
+pub async fn get_app_server_account_status() -> Result<AppServerAccountStatus, String> {
+    let unavailable = |detail: String| AppServerAccountStatus {
+        available: false,
+        requires_openai_auth: false,
+        account_type: None,
+        email: None,
+        plan_type: None,
+        rate_limits: None,
+        detail: Some(detail),
+    };
+
+    let command_name = env::var(ROVEX_APP_SERVER_COMMAND_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_APP_SERVER_COMMAND.to_string());
+
+    let mut child = match TokioCommand::new(&command_name)
+        .arg("app-server")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            return Ok(unavailable(format!(
+                "Failed to start Codex app-server with '{} app-server': {error}",
+                command_name
+            )))
+        }
+    };
+
+    let mut stdin = match child.stdin.take() {
+        Some(stdin) => stdin,
+        None => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Ok(unavailable(
+                "Failed to open Codex app-server stdin.".to_string(),
+            ));
+        }
+    };
+    let stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Ok(unavailable(
+                "Failed to open Codex app-server stdout.".to_string(),
+            ));
+        }
+    };
+    let mut lines = BufReader::new(stdout).lines();
+
+    let timeout_ms = parse_env_u64(
+        ROVEX_REVIEW_TIMEOUT_MS_ENV,
+        DEFAULT_APP_SERVER_STATUS_TIMEOUT_MS,
+        500,
+    );
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+
+    let status_result: Result<AppServerAccountStatus, String> = async {
+        write_json_rpc_message(
+            &mut stdin,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "clientInfo": {
+                        "name": "rovex",
+                        "version": env!("CARGO_PKG_VERSION"),
+                    },
+                    "capabilities": {},
+                }
+            }),
+        )
+        .await?;
+        let _ = wait_for_json_rpc_result(&mut lines, 1, deadline).await?;
+
+        write_json_rpc_message(
+            &mut stdin,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "initialized",
+                "params": {},
+            }),
+        )
+        .await?;
+
+        write_json_rpc_message(
+            &mut stdin,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "account/read",
+                "params": {
+                    "refreshToken": false,
+                }
+            }),
+        )
+        .await?;
+        let account_result = wait_for_json_rpc_result(&mut lines, 2, deadline).await?;
+
+        let requires_openai_auth = account_result
+            .get("requiresOpenaiAuth")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let account = account_result
+            .get("account")
+            .and_then(|value| value.as_object());
+        let account_type =
+            parse_app_server_optional_string(account.and_then(|value| value.get("type")));
+        let email = parse_app_server_optional_string(account.and_then(|value| value.get("email")));
+        let account_plan_type =
+            parse_app_server_optional_string(account.and_then(|value| value.get("planType")));
+
+        write_json_rpc_message(
+            &mut stdin,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "account/rateLimits/read",
+                "params": serde_json::Value::Null,
+            }),
+        )
+        .await?;
+        let (rate_limits, rate_limit_detail) =
+            match wait_for_json_rpc_result(&mut lines, 3, deadline).await {
+                Ok(rate_limits_result) => (
+                    parse_app_server_rate_limits_result(&rate_limits_result),
+                    None,
+                ),
+                Err(error) => (
+                    None,
+                    Some(format!("Unable to load Codex rate limits: {error}")),
+                ),
+            };
+
+        let plan_type = account_plan_type.clone().or_else(|| {
+            rate_limits
+                .as_ref()
+                .and_then(|limits| limits.plan_type.clone())
+        });
+
+        Ok(AppServerAccountStatus {
+            available: true,
+            requires_openai_auth,
+            account_type,
+            email,
+            plan_type,
+            rate_limits,
+            detail: rate_limit_detail,
+        })
+    }
+    .await;
+
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+
+    match status_result {
+        Ok(status) => Ok(status),
+        Err(error) => Ok(unavailable(error)),
+    }
 }
 
 #[tauri::command]
