@@ -15,17 +15,10 @@ import {
   Settings,
   Trash2,
 } from "lucide-solid";
+import * as Dialog from "@kobalte/core/dialog";
 import * as Popover from "@kobalte/core/popover";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/button";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/sheet";
 import {
   Sidebar,
   SidebarContent,
@@ -138,6 +131,25 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
     const numeric = Number(value ?? 0);
     if (!Number.isFinite(numeric)) return 0;
     return Math.max(0, Math.min(100, Math.round(numeric)));
+  };
+
+  const usageTone = (leftPercent: number) => {
+    if (leftPercent >= 30) {
+      return {
+        barClass: "bg-emerald-400/80",
+        textClass: "text-emerald-300",
+      };
+    }
+    if (leftPercent >= 10) {
+      return {
+        barClass: "bg-amber-400/80",
+        textClass: "text-amber-300",
+      };
+    }
+    return {
+      barClass: "bg-rose-400/80",
+      textClass: "text-rose-300",
+    };
   };
 
   const [reviewSheetOpen, setReviewSheetOpen] = createSignal(false);
@@ -427,37 +439,40 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
             <span class="text-[14px] font-medium">Settings</span>
           </Popover.Trigger>
           <Popover.Portal>
-            <Popover.Content class="z-50 w-[340px] rounded-[22px] border border-white/[0.08] bg-[linear-gradient(156deg,rgba(24,25,30,0.98)_0%,rgba(16,17,21,0.98)_100%)] p-4 shadow-[0_28px_80px_rgba(0,0,0,0.56)] backdrop-blur-xl outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0">
-              <div class="flex items-center gap-2.5 px-2 py-1">
+            <Popover.Content class="z-50 w-[320px] rounded-[18px] border border-white/[0.08] bg-[linear-gradient(156deg,rgba(24,25,30,0.98)_0%,rgba(16,17,21,0.98)_100%)] p-3 shadow-[0_24px_64px_rgba(0,0,0,0.52)] backdrop-blur-xl outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0">
+              <div class="flex items-center gap-2 px-1.5 py-0.5">
                 <CircleUser class="size-4 text-neutral-500" />
-                <p class="truncate text-[15px] font-medium text-neutral-300">{accountEmailLabel()}</p>
+                <p class="truncate text-[13.5px] font-medium text-neutral-300">{accountEmailLabel()}</p>
               </div>
-              <div class="mt-0.5 flex items-center gap-2.5 px-2 py-1">
+              <div class="mt-0.5 flex items-center gap-2 px-1.5 py-0.5">
                 <BadgeCheck class="size-4 text-neutral-500" />
-                <p class="text-[15px] text-neutral-400">{accountTypeLabel()}</p>
+                <p class="text-[13.5px] text-neutral-400">{accountTypeLabel()}</p>
+              </div>
+              <div class="mt-0.5 px-1.5 text-[11.5px] text-neutral-500">
+                Plan: <span class="font-medium text-neutral-300">{props.appServerAccountStatus()?.planType ?? "Unknown"}</span>
               </div>
 
-              <div class="my-3 h-px bg-white/[0.08]" />
+              <div class="my-2 h-px bg-white/[0.08]" />
 
               <button
                 type="button"
-                class="flex h-11 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-neutral-100 transition-colors hover:bg-white/[0.06]"
+                class="flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-neutral-100 transition-colors hover:bg-white/[0.06]"
                 onClick={handleOpenSettingsFromMenu}
               >
                 <Settings class="size-4 text-neutral-400" />
-                <span class="text-[15px] font-medium">Settings</span>
+                <span class="text-[13.5px] font-medium">Settings</span>
               </button>
 
-              <div class="my-3 h-px bg-white/[0.08]" />
+              <div class="my-2 h-px bg-white/[0.08]" />
 
               <button
                 type="button"
-                class="flex h-10 w-full items-center justify-between rounded-lg px-2.5 text-left text-neutral-100 transition-colors hover:bg-white/[0.05]"
+                class="flex h-9 w-full items-center justify-between rounded-lg px-2 text-left text-neutral-100 transition-colors hover:bg-white/[0.05]"
                 onClick={() => setRateLimitsExpanded((open) => !open)}
               >
-                <div class="flex items-center gap-2.5">
+                <div class="flex items-center gap-2">
                   <Gauge class="size-4 text-neutral-300" />
-                  <span class="text-[15px] font-medium">Rate limits remaining</span>
+                  <span class="text-[13.5px] font-medium">Rate limits remaining</span>
                 </div>
                 <ChevronDown
                   class={`size-4 text-neutral-500 transition-transform ${rateLimitsExpanded() ? "rotate-180" : ""}`}
@@ -465,20 +480,31 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
               </button>
 
               <Show when={rateLimitsExpanded()}>
-                <div class="mt-1 space-y-2.5">
+                <div class="mt-1.5 space-y-2">
+                  <p class="px-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-500">
+                    Codex usage
+                  </p>
                   <Show when={usageWindows().fiveHourWindow}>
                     {(window) => {
                       const used = clampPercent(window().usedPercent);
                       const left = clampPercent(100 - used);
+                      const tone = usageTone(left);
                       return (
-                        <div class="flex items-baseline gap-3 pl-8 pr-1">
-                          <p class="w-12 text-[13px] font-semibold text-neutral-100">5h</p>
-                          <p class="ml-auto text-[13px] font-semibold tabular-nums text-neutral-300">
-                            {left}%
-                          </p>
-                          <p class="w-[78px] text-right text-[13px] tabular-nums text-neutral-400">
-                            {formatQuotaResetTime(window().resetsAt)}
-                          </p>
+                        <div class="rounded-lg border border-white/[0.08] bg-white/[0.02] px-2.5 py-2">
+                          <div class="flex items-baseline justify-between gap-2">
+                            <p class="text-[12.5px] font-semibold text-neutral-200">Primary (5h)</p>
+                            <p class={`text-[12px] font-medium tabular-nums ${tone.textClass}`}>{left}% left</p>
+                          </div>
+                          <div class="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/[0.08]">
+                            <div
+                              class={`h-full rounded-full transition-[width] duration-300 ${tone.barClass}`}
+                              style={{ width: `${used}%` }}
+                            />
+                          </div>
+                          <div class="mt-1 flex items-center justify-between gap-2 text-[11px] text-neutral-500">
+                            <p class="tabular-nums">{used}% used / {left}% left</p>
+                            <p class="tabular-nums">resets {formatQuotaResetTime(window().resetsAt)}</p>
+                          </div>
                         </div>
                       );
                     }}
@@ -487,44 +513,57 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                     {(window) => {
                       const used = clampPercent(window().usedPercent);
                       const left = clampPercent(100 - used);
+                      const tone = usageTone(left);
                       return (
-                        <div class="flex items-baseline gap-3 pl-8 pr-1">
-                          <p class="w-12 text-[13px] font-semibold text-neutral-100">Weekly</p>
-                          <p class="ml-auto text-[13px] font-semibold tabular-nums text-neutral-300">
-                            {left}%
-                          </p>
-                          <p class="w-[78px] text-right text-[13px] tabular-nums text-neutral-400">
-                            {formatQuotaResetDate(window().resetsAt)}
-                          </p>
+                        <div class="rounded-lg border border-white/[0.08] bg-white/[0.02] px-2.5 py-2">
+                          <div class="flex items-baseline justify-between gap-2">
+                            <p class="text-[12.5px] font-semibold text-neutral-200">Secondary (Weekly)</p>
+                            <p class={`text-[12px] font-medium tabular-nums ${tone.textClass}`}>{left}% left</p>
+                          </div>
+                          <div class="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/[0.08]">
+                            <div
+                              class={`h-full rounded-full transition-[width] duration-300 ${tone.barClass}`}
+                              style={{ width: `${used}%` }}
+                            />
+                          </div>
+                          <div class="mt-1 flex items-center justify-between gap-2 text-[11px] text-neutral-500">
+                            <p class="tabular-nums">{used}% used / {left}% left</p>
+                            <p class="tabular-nums">resets {formatQuotaResetDate(window().resetsAt)}</p>
+                          </div>
                         </div>
                       );
                     }}
                   </Show>
+                  <Show when={props.appServerAccountStatus()?.detail}>
+                    {(detail) => (
+                      <p class="px-2 text-[11px] leading-relaxed text-neutral-500">{detail()}</p>
+                    )}
+                  </Show>
                   <button
                     type="button"
-                    class="flex h-9 w-full items-center justify-between rounded-lg px-2.5 pl-8 text-left text-neutral-300 transition-colors hover:bg-white/[0.05] hover:text-neutral-100"
+                    class="flex h-8 w-full items-center justify-between rounded-lg px-2 text-left text-neutral-300 transition-colors hover:bg-white/[0.05] hover:text-neutral-100"
                     onClick={() => void handleOpenRateLimitsDocs()}
                   >
-                    <span class="text-[14px] font-medium">Learn more</span>
+                    <span class="text-[13px] font-medium">Learn more</span>
                     <ExternalLink class="size-3.5 text-neutral-500" />
                   </button>
                 </div>
               </Show>
 
-              <div class="my-3 h-px bg-white/[0.08]" />
+              <div class="my-2 h-px bg-white/[0.08]" />
 
               <button
                 type="button"
-                class="flex h-10 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-neutral-100 transition-colors hover:bg-white/[0.05]"
+                class="flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-neutral-100 transition-colors hover:bg-white/[0.05]"
                 onClick={() => void handleSwitchAccountFromMenu()}
               >
                 <LogOut class="size-4 text-neutral-400" />
-                <span class="text-[15px] font-medium">Log out</span>
+                <span class="text-[13.5px] font-medium">Log out</span>
               </button>
 
               <Show when={props.appServerAccountLoadError()}>
                 {(error) => (
-                  <p class="mt-2 px-2 text-[11.5px] text-rose-300/90">{error()}</p>
+                  <p class="mt-1.5 px-2 text-[11px] text-rose-300/90">{error()}</p>
                 )}
               </Show>
             </Popover.Content>
@@ -532,7 +571,7 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
         </Popover.Root>
       </SidebarFooter>
       </Sidebar>
-      <Sheet
+      <Dialog.Root
         open={reviewSheetOpen()}
         onOpenChange={(open) => {
           setReviewSheetOpen(open);
@@ -541,80 +580,88 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
           }
         }}
       >
-        <SheetContent
-          position="right"
-          class="w-full border-l border-white/[0.08] bg-[#16171b] p-0 text-neutral-100 sm:max-w-[30rem]"
-        >
-          <div class="flex h-full flex-col">
-            <SheetHeader class="border-b border-white/[0.06] px-6 py-5 text-left">
-              <SheetTitle class="text-xl font-semibold text-neutral-100">New review</SheetTitle>
-              <SheetDescription class="mt-1 text-[13px] leading-relaxed text-neutral-400">
-                Define what you are reviewing and what ref to compare against for{" "}
-                <span class="font-semibold text-neutral-200">{reviewSheetRepoLabel()}</span>.
-              </SheetDescription>
-            </SheetHeader>
-            <form
-              class="flex flex-1 flex-col px-6 py-5"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void handleCreateReviewFromSheet();
-              }}
-            >
-              <div class="space-y-5">
-                <div class="space-y-1.5">
-                  <label class="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-500">
-                    What are we reviewing?
-                  </label>
-                  <textarea
-                    value={reviewGoalInput()}
-                    onInput={(event) => setReviewGoalInput(event.currentTarget.value)}
-                    rows={4}
-                    placeholder="Example: API pagination edge cases and error handling"
-                    class="w-full resize-none rounded-xl border border-white/[0.08] bg-black/20 px-3 py-2.5 text-[13px] leading-relaxed text-neutral-100 outline-none ring-0 transition-colors placeholder:text-neutral-600 focus:border-amber-300/60"
-                  />
+        <Dialog.Portal>
+          <Dialog.Overlay class="fixed inset-0 z-50 bg-black/70 backdrop-blur-[1px] data-[expanded=]:animate-in data-[closed=]:animate-out data-[closed=]:fade-out-0 data-[expanded=]:fade-in-0" />
+          <div class="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+            <Dialog.Content class="w-full max-w-[40rem] overflow-hidden rounded-2xl border border-white/[0.08] bg-[#16171b] text-neutral-100 shadow-[0_28px_80px_rgba(0,0,0,0.56)] outline-none ring-0">
+              <div class="flex h-full flex-col">
+                <div class="border-b border-white/[0.06] px-6 py-5 text-left">
+                  <Dialog.Title class="text-xl font-semibold text-neutral-100">New review</Dialog.Title>
+                  <Dialog.Description class="mt-1 text-[13px] leading-relaxed text-neutral-400">
+                    Define what you are reviewing and what ref to compare against for{" "}
+                    <span class="font-semibold text-neutral-200">{reviewSheetRepoLabel()}</span>.
+                  </Dialog.Description>
                 </div>
-                <div class="space-y-1.5">
-                  <label class="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-500">
-                    Against what exactly?
-                  </label>
-                  <input
-                    type="text"
-                    value={reviewBaseRefInput()}
-                    onInput={(event) => setReviewBaseRefInput(event.currentTarget.value)}
-                    placeholder="main"
-                    class="h-10 w-full rounded-xl border border-white/[0.08] bg-black/20 px-3 text-[13px] text-neutral-100 outline-none ring-0 transition-colors placeholder:text-neutral-600 focus:border-amber-300/60"
-                  />
-                </div>
-              </div>
-              <Show when={reviewDraftError()}>
-                {(message) => <p class="mt-3 text-[12px] text-rose-300/90">{message()}</p>}
-              </Show>
-              <SheetFooter class="mt-auto border-t border-white/[0.06] pt-5">
-                <div class="flex w-full flex-col gap-2 sm:flex-row sm:justify-end">
-                  <Show when={activeReviewDefaults()}>
+                <form
+                  class="px-6 py-5"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void handleCreateReviewFromSheet();
+                  }}
+                >
+                  <div class="space-y-5">
+                    <div class="space-y-1.5">
+                      <label class="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-500">
+                        What are we reviewing?
+                      </label>
+                      <textarea
+                        value={reviewGoalInput()}
+                        onInput={(event) => setReviewGoalInput(event.currentTarget.value)}
+                        rows={4}
+                        placeholder="Example: API pagination edge cases and error handling"
+                        class="w-full resize-none rounded-xl border border-white/[0.08] bg-black/20 px-3 py-2.5 text-[13px] leading-relaxed text-neutral-100 outline-none ring-0 transition-colors placeholder:text-neutral-600 focus:border-amber-300/60"
+                      />
+                    </div>
+                    <div class="space-y-1.5">
+                      <label class="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-500">
+                        Against what exactly?
+                      </label>
+                      <input
+                        type="text"
+                        value={reviewBaseRefInput()}
+                        onInput={(event) => setReviewBaseRefInput(event.currentTarget.value)}
+                        placeholder="main"
+                        class="h-10 w-full rounded-xl border border-white/[0.08] bg-black/20 px-3 text-[13px] text-neutral-100 outline-none ring-0 transition-colors placeholder:text-neutral-600 focus:border-amber-300/60"
+                      />
+                    </div>
+                  </div>
+                  <Show when={reviewDraftError()}>
+                    {(message) => <p class="mt-3 text-[12px] text-rose-300/90">{message()}</p>}
+                  </Show>
+                  <div class="mt-5 flex w-full flex-col gap-2 border-t border-white/[0.06] pt-5 sm:flex-row sm:justify-end">
                     <Button
                       type="button"
-                      variant="outline"
+                      variant="ghost"
+                      class="w-full sm:w-auto"
+                      onClick={closeCreateReviewSheet}
+                    >
+                      Cancel
+                    </Button>
+                    <Show when={activeReviewDefaults()}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        class="w-full sm:w-auto"
+                        disabled={props.providerBusy()}
+                        onClick={() => void handleQuickReviewFromSheet()}
+                      >
+                        Quick review
+                      </Button>
+                    </Show>
+                    <Button
+                      type="submit"
                       class="w-full sm:w-auto"
                       disabled={props.providerBusy()}
-                      onClick={() => void handleQuickReviewFromSheet()}
                     >
-                      Quick review
+                      {props.providerBusy() ? "Creating..." : "Start review"}
                     </Button>
-                  </Show>
-                  <Button
-                    type="submit"
-                    class="w-full sm:w-auto"
-                    disabled={props.providerBusy()}
-                  >
-                    {props.providerBusy() ? "Creating..." : "Start review"}
-                  </Button>
-                </div>
-              </SheetFooter>
-            </form>
+                  </div>
+                </form>
+              </div>
+            </Dialog.Content>
           </div>
-        </SheetContent>
-      </Sheet>
+        </Dialog.Portal>
+      </Dialog.Root>
     </>
   );
 }
