@@ -35,6 +35,10 @@ The backend lives in `src-tauri/src/backend` and is exposed through Tauri comman
 The app reads `.env` at startup and initializes tables automatically.
 If Turso env vars are missing, the app falls back to a local libsql database instead of crashing.
 
+Diff performance profiling:
+- `compare_workspace_diff` now returns a `profile` payload with per-stage timings.
+- Set `localStorage['rovex.profile.diff'] = '1'` in the UI devtools console to show diff parse/render profiling in the diff toolbar.
+
 When `ROVEX_REVIEW_PROVIDER=opencode`, AI review launches the bundled OpenCode sidecar (`src-tauri/tauri.conf.json > bundle.externalBin`) and talks to it over HTTP for session creation and prompt execution.
 See `src-tauri/binaries/README.md` for sidecar binary layout and build-time copy behavior.
 If you package on CI, set `ROVEX_OPENCODE_BIN` so `src-tauri/build.rs` can copy a pinned OpenCode binary for the target triple.

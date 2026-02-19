@@ -7,7 +7,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, OnceLock,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use reqwest::{Client, StatusCode};
@@ -26,14 +26,15 @@ use super::{
     AppServerRateLimitWindow, AppServerRateLimits, AppState, BackendHealth, CancelAiReviewRunInput,
     CancelAiReviewRunResult, CheckoutWorkspaceBranchInput, CheckoutWorkspaceBranchResult,
     CloneRepositoryInput, CloneRepositoryResult, CodeIntelSyncInput, CodeIntelSyncResult,
-    CompareWorkspaceDiffInput, CompareWorkspaceDiffResult, ConnectProviderInput, CreateThreadInput,
-    CreateWorkspaceBranchInput, GenerateAiFollowUpInput, GenerateAiFollowUpResult,
-    GenerateAiReviewInput, GenerateAiReviewResult, GetAiReviewRunInput, ListAiReviewRunsInput,
-    ListAiReviewRunsResult, ListWorkspaceBranchesInput, ListWorkspaceBranchesResult, Message,
-    MessageRole, OpencodeSidecarStatus, PollProviderDeviceAuthInput, PollProviderDeviceAuthResult,
-    ProviderConnection, ProviderDeviceAuthStatus, ProviderKind, SetAiReviewApiKeyInput,
-    SetAiReviewSettingsInput, StartAiReviewRunInput, StartAiReviewRunResult,
-    StartProviderDeviceAuthInput, StartProviderDeviceAuthResult, Thread, WorkspaceBranch,
+    CompareWorkspaceDiffInput, CompareWorkspaceDiffProfile, CompareWorkspaceDiffResult,
+    ConnectProviderInput, CreateThreadInput, CreateWorkspaceBranchInput, GenerateAiFollowUpInput,
+    GenerateAiFollowUpResult, GenerateAiReviewInput, GenerateAiReviewResult, GetAiReviewRunInput,
+    ListAiReviewRunsInput, ListAiReviewRunsResult, ListWorkspaceBranchesInput,
+    ListWorkspaceBranchesResult, Message, MessageRole, OpencodeSidecarStatus,
+    PollProviderDeviceAuthInput, PollProviderDeviceAuthResult, ProviderConnection,
+    ProviderDeviceAuthStatus, ProviderKind, SetAiReviewApiKeyInput, SetAiReviewSettingsInput,
+    StartAiReviewRunInput, StartAiReviewRunResult, StartProviderDeviceAuthInput,
+    StartProviderDeviceAuthResult, Thread, WorkspaceBranch,
 };
 
 const DEFAULT_LIMIT: i64 = 50;
@@ -57,6 +58,8 @@ const DEFAULT_REVIEW_MODEL: &str = "gpt-4.1-mini";
 const DEFAULT_REVIEW_BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_REVIEW_MAX_DIFF_CHARS: usize = 120_000;
 const DEFAULT_REVIEW_TIMEOUT_MS: u64 = 120_000;
+const MAX_COMPARE_DIFF_BYTES: usize = 4_000_000;
+const COMPARE_ENABLE_RENAMES: bool = true;
 const DEFAULT_FOLLOW_UP_HISTORY_CHARS: usize = 40_000;
 const MAX_FOLLOW_UP_MESSAGES: i64 = 40;
 const DEFAULT_OPENCODE_HOSTNAME: &str = "127.0.0.1";
@@ -421,7 +424,12 @@ fn resolve_suggested_base_ref(
 ) -> String {
     if let Some(origin_head) = read_git_trimmed_if_success(
         repo_path,
-        &["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+        &[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
     ) {
         if origin_head != "origin/HEAD" && git_ref_exists(repo_path, &origin_head) {
             return origin_head;
@@ -527,6 +535,19 @@ fn parse_env_usize(name: &str, fallback: usize, min: usize) -> usize {
         .and_then(|value| value.trim().parse::<usize>().ok())
         .filter(|value| *value >= min)
         .unwrap_or(fallback)
+}
+
+fn truncate_utf8_by_bytes(value: &str, max_bytes: usize) -> (String, bool) {
+    if value.len() <= max_bytes {
+        return (value.to_string(), false);
+    }
+
+    let mut end = max_bytes.min(value.len());
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+
+    (value[..end].to_string(), true)
 }
 
 fn truncate_chars(value: &str, max_chars: usize) -> (String, bool) {
@@ -1219,7 +1240,11 @@ fn parse_optional_json_vec<T: DeserializeOwned>(raw: Option<String>) -> Vec<T> {
 }
 
 fn parse_bool_i64(value: bool) -> i64 {
-    if value { 1 } else { 0 }
+    if value {
+        1
+    } else {
+        0
+    }
 }
 
 fn parse_ai_review_run_from_row(row: &libsql::Row) -> Result<AiReviewRun, String> {
@@ -1596,10 +1621,12 @@ async fn finalize_ai_review_run(
             i64::try_from(result.diff_chars_total).unwrap_or(i64::MAX),
             parse_bool_i64(result.diff_truncated),
             error.map(ToOwned::to_owned),
-            serde_json::to_string(&result.chunks)
-                .map_err(|serialize_error| format!("Failed to serialize final chunks: {serialize_error}"))?,
-            serde_json::to_string(&result.findings)
-                .map_err(|serialize_error| format!("Failed to serialize final findings: {serialize_error}"))?,
+            serde_json::to_string(&result.chunks).map_err(|serialize_error| {
+                format!("Failed to serialize final chunks: {serialize_error}")
+            })?,
+            serde_json::to_string(&result.findings).map_err(|serialize_error| {
+                format!("Failed to serialize final findings: {serialize_error}")
+            })?,
             i64::try_from(result.chunks.len()).unwrap_or(i64::MAX),
             i64::try_from(result.chunks.len()).unwrap_or(i64::MAX),
             i64::try_from(result.findings.len()).unwrap_or(i64::MAX),
@@ -2956,7 +2983,8 @@ async fn execute_ai_review_generation(
     );
     let diff_chars_total = raw_diff.chars().count();
 
-    let reviewer_goal = if let Some(additional_focus) = as_non_empty_trimmed(input.prompt.as_deref())
+    let reviewer_goal = if let Some(additional_focus) =
+        as_non_empty_trimmed(input.prompt.as_deref())
     {
         format!(
             "{DEFAULT_REVIEWER_GOAL_PROMPT}\n\n---\n\nAdditional requested focus:\n{additional_focus}"
@@ -3088,7 +3116,8 @@ async fn execute_ai_review_generation(
             };
             if persist_progress {
                 if let Some(run_id) = run_id {
-                    emit_and_persist_ai_review_progress(app, state, run_id, chunk_start_event).await;
+                    emit_and_persist_ai_review_progress(app, state, run_id, chunk_start_event)
+                        .await;
                 }
             } else {
                 emit_ai_review_progress(app, &chunk_start_event);
@@ -3163,7 +3192,8 @@ async fn execute_ai_review_generation(
 
                 let mut chunk_findings = Vec::new();
                 if let Some(payload_findings) = payload.findings {
-                    for (finding_index, payload_finding) in payload_findings.into_iter().enumerate() {
+                    for (finding_index, payload_finding) in payload_findings.into_iter().enumerate()
+                    {
                         let title = payload_finding
                             .title
                             .as_deref()
@@ -3177,8 +3207,11 @@ async fn execute_ai_review_generation(
                             .map(str::trim)
                             .filter(|value| !value.is_empty())
                             .map(ToOwned::to_owned)
-                            .unwrap_or_else(|| "Potential issue detected in this diff chunk.".to_string());
-                        let side = normalize_annotation_side(payload_finding.side.as_deref()).to_string();
+                            .unwrap_or_else(|| {
+                                "Potential issue detected in this diff chunk.".to_string()
+                            });
+                        let side =
+                            normalize_annotation_side(payload_finding.side.as_deref()).to_string();
                         let line_number = resolve_line_number_for_chunk(
                             &chunk,
                             &side,
@@ -3189,7 +3222,13 @@ async fn execute_ai_review_generation(
                         };
 
                         let finding = AiReviewFinding {
-                            id: format!("{}:{}:{}:{}", chunk.id, side, line_number, finding_index + 1),
+                            id: format!(
+                                "{}:{}:{}:{}",
+                                chunk.id,
+                                side,
+                                line_number,
+                                finding_index + 1
+                            ),
                             file_path: chunk.file_path.clone(),
                             chunk_id: chunk.id.clone(),
                             chunk_index: chunk.chunk_index,
@@ -3198,8 +3237,11 @@ async fn execute_ai_review_generation(
                             line_number,
                             title,
                             body,
-                            severity: normalize_severity(payload_finding.severity.as_deref()).to_string(),
-                            confidence: payload_finding.confidence.map(|value| value.clamp(0.0, 1.0)),
+                            severity: normalize_severity(payload_finding.severity.as_deref())
+                                .to_string(),
+                            confidence: payload_finding
+                                .confidence
+                                .map(|value| value.clamp(0.0, 1.0)),
                         };
                         chunk_findings.push(finding.clone());
                         let finding_event = AiReviewProgressEvent {
@@ -3288,7 +3330,9 @@ async fn execute_ai_review_generation(
                     status: "chunk-failed".to_string(),
                     message: format!(
                         "Chunk review failed for {} chunk {}: {}",
-                        worker_error.chunk.file_path, worker_error.chunk.chunk_index, worker_error.message
+                        worker_error.chunk.file_path,
+                        worker_error.chunk.chunk_index,
+                        worker_error.message
                     ),
                     total_chunks,
                     completed_chunks,
@@ -4035,6 +4079,7 @@ pub async fn clone_repository(
 pub async fn compare_workspace_diff(
     input: CompareWorkspaceDiffInput,
 ) -> Result<CompareWorkspaceDiffResult, String> {
+    let started_at = Instant::now();
     let repo_path = resolve_workspace_repo_path(&input.workspace)?;
     ensure_git_repository(&repo_path)?;
 
@@ -4047,41 +4092,71 @@ pub async fn compare_workspace_diff(
 
     let should_fetch_origin =
         input.fetch_remote.unwrap_or(true) && requested_base_ref.starts_with("origin/");
+    let mut fetch_origin_ms = None;
     if should_fetch_origin {
+        let fetch_started_at = Instant::now();
         run_git(&repo_path, &["fetch", "--quiet", "origin"], "fetch origin")?;
+        fetch_origin_ms = Some(fetch_started_at.elapsed().as_millis() as u64);
     }
 
+    let resolve_base_ref_started_at = Instant::now();
     let base_ref = resolve_base_ref(&repo_path, requested_base_ref)?;
+    let resolve_base_ref_ms = resolve_base_ref_started_at.elapsed().as_millis() as u64;
+
+    let resolve_head_started_at = Instant::now();
     let head = run_git_trimmed(&repo_path, &["rev-parse", "HEAD"], "resolve HEAD")?;
+    let resolve_head_ms = resolve_head_started_at.elapsed().as_millis() as u64;
+
+    let resolve_merge_base_started_at = Instant::now();
     let merge_base = run_git_trimmed(
         &repo_path,
         &["merge-base", "HEAD", base_ref.as_str()],
         "resolve merge-base",
     )?;
+    let resolve_merge_base_ms = resolve_merge_base_started_at.elapsed().as_millis() as u64;
 
-    let diff_output = run_git(
-        &repo_path,
-        &[
-            "diff",
-            "--merge-base",
-            base_ref.as_str(),
-            "--no-color",
-            "--patch",
-            "--find-renames",
-            "--full-index",
-            "--binary",
-        ],
+    let mut diff_args = vec![
         "diff",
-    )?;
-    let diff = String::from_utf8_lossy(&diff_output.stdout).to_string();
+        "--merge-base",
+        base_ref.as_str(),
+        "--no-color",
+        "--no-ext-diff",
+        "--patch",
+    ];
+    if COMPARE_ENABLE_RENAMES {
+        diff_args.push("--find-renames");
+    } else {
+        diff_args.push("--no-renames");
+    }
 
+    let diff_started_at = Instant::now();
+    let diff_output = run_git(&repo_path, &diff_args, "diff")?;
+    let diff_ms = diff_started_at.elapsed().as_millis() as u64;
+    let raw_diff = String::from_utf8_lossy(&diff_output.stdout).to_string();
+    let diff_bytes_total = raw_diff.len();
+    let (diff, diff_truncated) = truncate_utf8_by_bytes(&raw_diff, MAX_COMPARE_DIFF_BYTES);
+    let diff_bytes_used = diff.len();
+
+    let numstat_started_at = Instant::now();
     let numstat_output = run_git(
         &repo_path,
         &["diff", "--merge-base", base_ref.as_str(), "--numstat"],
         "diff --numstat",
     )?;
+    let numstat_ms = numstat_started_at.elapsed().as_millis() as u64;
     let numstat = String::from_utf8_lossy(&numstat_output.stdout);
     let (files_changed, insertions, deletions) = parse_numstat(&numstat);
+    let total_ms = started_at.elapsed().as_millis() as u64;
+
+    let profile = CompareWorkspaceDiffProfile {
+        fetch_origin_ms,
+        resolve_base_ref_ms,
+        resolve_head_ms,
+        resolve_merge_base_ms,
+        diff_ms,
+        numstat_ms,
+        total_ms,
+    };
 
     Ok(CompareWorkspaceDiffResult {
         workspace: format_path(&repo_path),
@@ -4092,6 +4167,10 @@ pub async fn compare_workspace_diff(
         files_changed,
         insertions,
         deletions,
+        diff_truncated,
+        diff_bytes_used,
+        diff_bytes_total,
+        profile,
     })
 }
 
@@ -4505,7 +4584,8 @@ pub async fn start_ai_review_run(
         return Err("No reviewable diff hunks were found in this diff.".to_string());
     }
 
-    let reviewer_goal = if let Some(additional_focus) = as_non_empty_trimmed(input.prompt.as_deref())
+    let reviewer_goal = if let Some(additional_focus) =
+        as_non_empty_trimmed(input.prompt.as_deref())
     {
         format!(
             "{DEFAULT_REVIEWER_GOAL_PROMPT}\n\n---\n\nAdditional requested focus:\n{additional_focus}"
@@ -4638,8 +4718,9 @@ pub async fn start_ai_review_run(
                 } else {
                     "completed"
                 };
-                let _ = finalize_ai_review_run(&state, &run_id_for_task, &outcome.result, status, None)
-                    .await;
+                let _ =
+                    finalize_ai_review_run(&state, &run_id_for_task, &outcome.result, status, None)
+                        .await;
             }
             Err(error) => {
                 if error.to_lowercase().contains("canceled") {

@@ -11,14 +11,15 @@ pub use models::{
     AppServerRateLimitWindow, AppServerRateLimits, BackendHealth, CancelAiReviewRunInput,
     CancelAiReviewRunResult, CheckoutWorkspaceBranchInput, CheckoutWorkspaceBranchResult,
     CloneRepositoryInput, CloneRepositoryResult, CodeIntelSyncInput, CodeIntelSyncResult,
-    CompareWorkspaceDiffInput, CompareWorkspaceDiffResult, ConnectProviderInput, CreateThreadInput,
-    CreateWorkspaceBranchInput, GenerateAiFollowUpInput, GenerateAiFollowUpResult,
-    GenerateAiReviewInput, GenerateAiReviewResult, GetAiReviewRunInput, ListAiReviewRunsInput,
-    ListAiReviewRunsResult, ListWorkspaceBranchesInput, ListWorkspaceBranchesResult, Message,
-    MessageRole, OpencodeSidecarStatus, PollProviderDeviceAuthInput, PollProviderDeviceAuthResult,
-    ProviderConnection, ProviderDeviceAuthStatus, ProviderKind, SetAiReviewApiKeyInput,
-    SetAiReviewSettingsInput, StartAiReviewRunInput, StartAiReviewRunResult,
-    StartProviderDeviceAuthInput, StartProviderDeviceAuthResult, Thread, WorkspaceBranch,
+    CompareWorkspaceDiffInput, CompareWorkspaceDiffProfile, CompareWorkspaceDiffResult,
+    ConnectProviderInput, CreateThreadInput, CreateWorkspaceBranchInput, GenerateAiFollowUpInput,
+    GenerateAiFollowUpResult, GenerateAiReviewInput, GenerateAiReviewResult, GetAiReviewRunInput,
+    ListAiReviewRunsInput, ListAiReviewRunsResult, ListWorkspaceBranchesInput,
+    ListWorkspaceBranchesResult, Message, MessageRole, OpencodeSidecarStatus,
+    PollProviderDeviceAuthInput, PollProviderDeviceAuthResult, ProviderConnection,
+    ProviderDeviceAuthStatus, ProviderKind, SetAiReviewApiKeyInput, SetAiReviewSettingsInput,
+    StartAiReviewRunInput, StartAiReviewRunResult, StartProviderDeviceAuthInput,
+    StartProviderDeviceAuthResult, Thread, WorkspaceBranch,
 };
 
 use libsql::{Connection, Database};

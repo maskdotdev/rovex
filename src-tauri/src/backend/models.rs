@@ -192,6 +192,18 @@ pub struct CompareWorkspaceDiffInput {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CompareWorkspaceDiffProfile {
+    pub fetch_origin_ms: Option<u64>,
+    pub resolve_base_ref_ms: u64,
+    pub resolve_head_ms: u64,
+    pub resolve_merge_base_ms: u64,
+    pub diff_ms: u64,
+    pub numstat_ms: u64,
+    pub total_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CompareWorkspaceDiffResult {
     pub workspace: String,
     pub base_ref: String,
@@ -201,6 +213,10 @@ pub struct CompareWorkspaceDiffResult {
     pub files_changed: i64,
     pub insertions: i64,
     pub deletions: i64,
+    pub diff_truncated: bool,
+    pub diff_bytes_used: usize,
+    pub diff_bytes_total: usize,
+    pub profile: CompareWorkspaceDiffProfile,
 }
 
 #[derive(Debug, Clone, Deserialize)]

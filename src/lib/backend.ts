@@ -95,6 +95,16 @@ export type CompareWorkspaceDiffInput = {
   fetchRemote?: boolean;
 };
 
+export type CompareWorkspaceDiffProfile = {
+  fetchOriginMs: number | null;
+  resolveBaseRefMs: number;
+  resolveHeadMs: number;
+  resolveMergeBaseMs: number;
+  diffMs: number;
+  numstatMs: number;
+  totalMs: number;
+};
+
 export type CompareWorkspaceDiffResult = {
   workspace: string;
   baseRef: string;
@@ -104,6 +114,10 @@ export type CompareWorkspaceDiffResult = {
   filesChanged: number;
   insertions: number;
   deletions: number;
+  diffTruncated: boolean;
+  diffBytesUsed: number;
+  diffBytesTotal: number;
+  profile: CompareWorkspaceDiffProfile;
 };
 
 export type ListWorkspaceBranchesInput = {
