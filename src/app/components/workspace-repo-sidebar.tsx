@@ -27,7 +27,7 @@ import {
   SidebarSeparator,
 } from "@/components/sidebar";
 import { SidebarRow } from "@/app/components/sidebar-row";
-import type { RepoGroup } from "@/app/types";
+import type { RepoGroup, RepoReview } from "@/app/types";
 import type { AppServerAccountStatus } from "@/lib/backend";
 
 type WorkspaceRepoSidebarProps = {
@@ -46,6 +46,7 @@ type WorkspaceRepoSidebarProps = {
   setRepoMenuOpenState: (repoName: string, open: boolean) => void;
   onRenameRepo: (repo: RepoGroup) => void;
   onRemoveRepo: (repo: RepoGroup) => void | Promise<void>;
+  onRemoveReview: (repo: RepoGroup, review: RepoReview) => void | Promise<void>;
   onOpenSettings: () => void;
   appServerAccountStatus: Accessor<AppServerAccountStatus | undefined>;
   appServerAccountLoadError: Accessor<string | null>;
@@ -223,10 +224,10 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                         </Popover.Portal>
                       </Popover.Root>
                       <Show when={!props.isRepoCollapsed(repo.repoName)}>
-                        <SidebarMenuSub class="mt-0.5 border-white/[0.05]">
+                        <SidebarMenuSub class="mt-0.5 border-white/[0.05] pr-0">
                           <For each={repo.reviews}>
                             {(review) => (
-                              <SidebarMenuSubItem>
+                              <SidebarMenuSubItem class="group/review-item relative">
                                 <SidebarMenuSubButton
                                   as="button"
                                   type="button"
@@ -234,11 +235,24 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                                   class="h-8 w-full justify-between rounded-lg text-[13px] text-neutral-500 transition-all duration-150 data-[active=true]:bg-white/[0.06] data-[active=true]:text-neutral-200 hover:text-neutral-300"
                                   onClick={() => props.onSelectThread(review.id)}
                                 >
-                                  <span class="truncate">{review.title}</span>
-                                  <span class="shrink-0 text-[11px] tabular-nums text-neutral-600">
+                                  <span class="truncate pr-2">{review.title}</span>
+                                  <span class="shrink-0 text-[11px] tabular-nums text-neutral-600 transition-opacity duration-150 group-hover/review-item:opacity-0 group-focus-within/review-item:opacity-0">
                                     {review.age}
                                   </span>
                                 </SidebarMenuSubButton>
+                                <button
+                                  type="button"
+                                  class="absolute right-1 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-neutral-600 opacity-0 transition-all pointer-events-none group-hover/review-item:pointer-events-auto group-hover/review-item:opacity-100 group-focus-within/review-item:pointer-events-auto group-focus-within/review-item:opacity-100 hover:bg-rose-500/10 hover:text-rose-300"
+                                  aria-label={`Remove review ${review.title}`}
+                                  title={`Remove review ${review.title}`}
+                                  disabled={props.providerBusy()}
+                                  onClick={(event: MouseEvent) => {
+                                    event.stopPropagation();
+                                    void props.onRemoveReview(repo, review);
+                                  }}
+                                >
+                                  <Trash2 class="size-3.5" />
+                                </button>
                               </SidebarMenuSubItem>
                             )}
                           </For>
