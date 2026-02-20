@@ -7,8 +7,6 @@ import {
   type FileDiffOptions,
 } from "@pierre/diffs";
 import {
-  ChevronDown,
-  ChevronRight,
   Columns2,
   Hash,
   PaintBucket,
@@ -180,10 +178,22 @@ const diffStickyHeaderUnsafeCSS = `
   position: sticky;
   top: 0;
   z-index: 5;
+  cursor: pointer;
+  user-select: none;
   border-bottom: 1px solid color-mix(in lab, var(--diffs-bg) 92%, var(--diffs-fg));
   background: color-mix(in lab, var(--diffs-bg) 94%, black);
+  transition: background-color 140ms ease;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+}
+
+[data-diffs-header]:hover {
+  background: color-mix(in lab, var(--diffs-bg) 90%, black);
+}
+
+:host([data-rovex-collapsed="1"]) pre,
+:host([data-rovex-collapsed="1"]) [data-error-wrapper] {
+  display: none;
 }
 `;
 
@@ -263,13 +273,44 @@ function DiffFileCard(props: DiffFileCardProps) {
   const [shouldRender, setShouldRender] = createSignal(props.initiallyVisible);
   const [collapsed, setCollapsed] = createSignal(false);
   const [renderError, setRenderError] = createSignal<string | null>(null);
-  const displayPath = createMemo(
-    () => normalizeDiffPath(props.file.name) || normalizeDiffPath(props.file.prevName) || "(unknown)"
-  );
-  const statsLabel = createMemo(() => {
-    const lineCount = Math.max(props.file.unifiedLineCount, props.file.splitLineCount);
-    return `${props.file.hunks.length} hunks • ${lineCount} lines`;
-  });
+
+  let headerObserver: MutationObserver | undefined;
+
+  const bindHeaderToggle = () => {
+    const container = containerRef;
+    if (!container) return;
+    const fileContainer = container.querySelector("diffs-container");
+    if (!(fileContainer instanceof HTMLElement)) return;
+    const shadowRoot = fileContainer.shadowRoot;
+    if (!shadowRoot) return;
+    const header = shadowRoot.querySelector("[data-diffs-header]");
+    if (!(header instanceof HTMLElement)) return;
+    if (header.dataset.rovexCollapseBound === "1") return;
+
+    header.dataset.rovexCollapseBound = "1";
+    header.setAttribute("role", "button");
+    header.setAttribute("aria-expanded", collapsed() ? "false" : "true");
+    header.tabIndex = 0;
+    header.addEventListener("click", () => setCollapsed((current) => !current));
+    header.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      setCollapsed((current) => !current);
+    });
+
+    // Watch for the library replacing the header element after async
+    // syntax highlighting completes. When a new header is swapped in,
+    // re-bind the toggle so collapse keeps working.
+    if (!headerObserver) {
+      headerObserver = new MutationObserver(() => {
+        const currentHeader = shadowRoot.querySelector("[data-diffs-header]");
+        if (currentHeader instanceof HTMLElement && currentHeader.dataset.rovexCollapseBound !== "1") {
+          bindHeaderToggle();
+        }
+      });
+      headerObserver.observe(shadowRoot, { childList: true, subtree: false });
+    }
+  };
 
   createEffect(() => {
     const anchor = visibilityAnchorRef;
@@ -323,6 +364,7 @@ function DiffFileCard(props: DiffFileCardProps) {
         containerWrapper: container,
         lineAnnotations: useHugeFileFastPath ? EMPTY_LINE_ANNOTATIONS : props.lineAnnotations,
       });
+      bindHeaderToggle();
       const renderMs = performance.now() - renderStart;
       if (!profiledInitialRender) {
         props.onRendered?.(props.file.name, renderMs);
@@ -334,58 +376,47 @@ function DiffFileCard(props: DiffFileCardProps) {
     }
   });
 
+  createEffect(() => {
+    const container = containerRef;
+    if (!container) return;
+    const fileContainer = container.querySelector("diffs-container");
+    if (!(fileContainer instanceof HTMLElement)) return;
+    const header = fileContainer.shadowRoot?.querySelector("[data-diffs-header]");
+    if (header instanceof HTMLElement) {
+      header.setAttribute("aria-expanded", collapsed() ? "false" : "true");
+    }
+    if (collapsed()) {
+      fileContainer.setAttribute("data-rovex-collapsed", "1");
+      return;
+    }
+    fileContainer.removeAttribute("data-rovex-collapsed");
+  });
+
   onCleanup(() => {
+    headerObserver?.disconnect();
     instance?.cleanUp();
     containerRef?.replaceChildren();
   });
 
   return (
     <section class="rovex-diff-file">
-      <div class="flex w-full items-center justify-between px-3 py-2.5">
-        <span class="flex min-w-0 items-center gap-2">
-          <span class="truncate text-[12px] text-neutral-200">{displayPath()}</span>
-        </span>
-        <span class="ml-2 flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            class="rovex-diff-file-toggle"
-            aria-expanded={!collapsed()}
-            onClick={() => setCollapsed((current) => !current)}
-          >
-            <Show when={collapsed()} fallback={<ChevronDown class="size-3.5" />}>
-              <ChevronRight class="size-3.5" />
-            </Show>
-            <span>{collapsed() ? "Expand" : "Collapse"}</span>
-          </button>
-          <span class="text-[11px] text-neutral-400">{statsLabel()}</span>
-        </span>
-      </div>
       <div ref={visibilityAnchorRef}>
+        <Show when={renderError()}>
+          {(message) => (
+            <div class="mx-3 mb-3 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-[12px] text-rose-300/90">
+              Failed to render file diff: {message()}
+            </div>
+          )}
+        </Show>
         <Show
-          when={!collapsed()}
+          when={shouldRender()}
           fallback={
             <div class="rovex-diff-file-placeholder">
-              File diff collapsed.
+              Scroll to load this file diff.
             </div>
           }
         >
-          <Show when={renderError()}>
-            {(message) => (
-              <div class="mx-3 mb-3 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-[12px] text-rose-300/90">
-                Failed to render file diff: {message()}
-              </div>
-            )}
-          </Show>
-          <Show
-            when={shouldRender()}
-            fallback={
-              <div class="rovex-diff-file-placeholder">
-                Scroll to load this file diff.
-              </div>
-            }
-          >
-            <div ref={containerRef} />
-          </Show>
+          <div ref={containerRef} />
         </Show>
       </div>
     </section>
