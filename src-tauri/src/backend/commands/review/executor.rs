@@ -9,20 +9,19 @@ use std::{
 };
 
 use tauri::{AppHandle, State};
-use tokio::task::JoinSet;
+use tokio::{sync::mpsc, task::JoinSet};
 
 use super::super::common::{
     as_non_empty_trimmed, parse_env_u64, parse_env_usize, snippet, truncate_chars,
-    CHUNK_RETRY_BASE_DELAY_MS, CHUNK_RETRY_MAX_ATTEMPTS, DEFAULT_REVIEWER_GOAL_PROMPT,
-    DEFAULT_REVIEW_BASE_URL, DEFAULT_REVIEW_MAX_DIFF_CHARS, DEFAULT_REVIEW_MODEL,
-    DEFAULT_REVIEW_TIMEOUT_MS, MAX_PARALLEL_CHUNKS_PER_RUN, OPENAI_API_KEY_ENV,
-    ROVEX_REVIEW_BASE_URL_ENV, ROVEX_REVIEW_MAX_DIFF_CHARS_ENV, ROVEX_REVIEW_MODEL_ENV,
-    ROVEX_REVIEW_TIMEOUT_MS_ENV,
+    CHUNK_RETRY_BASE_DELAY_MS, CHUNK_RETRY_MAX_ATTEMPTS, DEFAULT_REVIEW_BASE_URL,
+    DEFAULT_REVIEW_MAX_DIFF_CHARS, DEFAULT_REVIEW_MODEL, DEFAULT_REVIEW_TIMEOUT_MS,
+    MAX_PARALLEL_CHUNKS_PER_RUN, OPENAI_API_KEY_ENV, ROVEX_REVIEW_BASE_URL_ENV,
+    ROVEX_REVIEW_MAX_DIFF_CHARS_ENV, ROVEX_REVIEW_MODEL_ENV, ROVEX_REVIEW_TIMEOUT_MS_ENV,
 };
 use super::super::threads::{load_thread_by_id, persist_thread_message};
 use super::diff_chunks::{
-    build_chunk_review_markdown, build_chunk_review_prompt, format_workspace_file_context,
-    normalize_annotation_side, normalize_severity, parse_chunk_review_payload, parse_diff_chunks,
+    build_chunk_review_prompt, format_workspace_file_context, normalize_annotation_side,
+    normalize_severity, parse_chunk_review_payload, parse_diff_file_chunks,
     resolve_line_number_for_chunk, DiffChunk,
 };
 use super::transports::{app_server, openai, opencode};
@@ -45,7 +44,68 @@ struct ChunkWorkerError {
 
 pub(crate) struct RunExecutionOutcome {
     pub(crate) result: GenerateAiReviewResult,
-    pub(crate) failed_chunks: usize,
+    pub(crate) had_errors: bool,
+}
+
+fn build_description_review_prompt(
+    reviewer_goal: &str,
+    workspace: &str,
+    base_ref: &str,
+    merge_base: &str,
+    head: &str,
+    diff_for_review: &str,
+    diff_truncated: bool,
+) -> String {
+    format!(
+        "Write a high-level code review description for this change set.\n\nFocus: {reviewer_goal}\nWorkspace: {workspace}\nBase ref: {base_ref}\nMerge base: {merge_base}\nHead: {head}\nDiff content truncated: {}\n\nReturn markdown with sections:\n1) Overview\n2) Important files\n3) Top risks\n4) Recommended next checks\n\nRules:\n- Keep this as a concise high-level narrative, not a per-file issue list.\n- Mention only the most important files and changes.\n- Avoid style nits.\n\nUnified diff:\n```diff\n{diff_for_review}\n```",
+        if diff_truncated { "yes" } else { "no" }
+    )
+}
+
+async fn generate_description_review_with_streaming<F>(
+    app: &AppHandle,
+    provider: ReviewProvider,
+    workspace: &str,
+    model: &str,
+    timeout_ms: u64,
+    openai_api_key: Option<&str>,
+    openai_base_url: Option<&str>,
+    prompt: &str,
+    on_delta: &mut F,
+) -> Result<(String, String), String>
+where
+    F: FnMut(&str),
+{
+    match provider {
+        ReviewProvider::OpenAi => {
+            let api_key = openai_api_key.ok_or_else(|| {
+                format!("Missing {OPENAI_API_KEY_ENV}. Add it to .env to enable AI review.")
+            })?;
+            let base_url = openai_base_url.unwrap_or(DEFAULT_REVIEW_BASE_URL);
+            let review = openai::generate_review_with_openai_streaming(
+                model, base_url, timeout_ms, api_key, prompt, on_delta,
+            )
+            .await?;
+            Ok((review, model.to_string()))
+        }
+        ReviewProvider::Opencode => {
+            let (review, resolved_model) =
+                opencode::generate_review_with_opencode(app, workspace, prompt, timeout_ms, model)
+                    .await?;
+            if !review.is_empty() {
+                for token in review.split_inclusive(char::is_whitespace) {
+                    on_delta(token);
+                }
+            }
+            Ok((review, resolved_model))
+        }
+        ReviewProvider::AppServer => {
+            app_server::generate_review_with_app_server_streaming(
+                workspace, prompt, timeout_ms, model, on_delta,
+            )
+            .await
+        }
+    }
 }
 
 async fn generate_chunk_review(
@@ -185,9 +245,9 @@ pub(crate) async fn execute_ai_review_generation(
     if raw_diff.is_empty() {
         return Err("There are no changes to review.".to_string());
     }
-    let diff_chunks = parse_diff_chunks(raw_diff);
+    let diff_chunks = parse_diff_file_chunks(raw_diff);
     if diff_chunks.is_empty() {
-        return Err("No reviewable diff hunks were found in this diff.".to_string());
+        return Err("No reviewable changed files were found in this diff.".to_string());
     }
 
     let review_provider = ReviewProvider::from_env()?;
@@ -208,23 +268,14 @@ pub(crate) async fn execute_ai_review_generation(
     );
     let diff_chars_total = raw_diff.chars().count();
 
-    let reviewer_goal = if let Some(additional_focus) =
-        as_non_empty_trimmed(input.prompt.as_deref())
-    {
-        format!(
-            "{DEFAULT_REVIEWER_GOAL_PROMPT}\n\n---\n\nAdditional requested focus:\n{additional_focus}"
-        )
-    } else {
-        DEFAULT_REVIEWER_GOAL_PROMPT.to_string()
-    };
+    let reviewer_goal = as_non_empty_trimmed(input.prompt.as_deref()).unwrap_or_else(|| {
+        "Review the changed files and report real bugs with actionable fixes.".to_string()
+    });
+    let request_summary = as_non_empty_trimmed(input.prompt.as_deref())
+        .map(|focus| format!("AI review request. Focus: {focus}"))
+        .unwrap_or_else(|| "AI review request for current diff.".to_string());
 
-    persist_thread_message(
-        state,
-        input.thread_id,
-        MessageRole::User,
-        &format!("AI review request: {reviewer_goal}"),
-    )
-    .await?;
+    persist_thread_message(state, input.thread_id, MessageRole::User, &request_summary).await?;
 
     let (openai_api_key, openai_base_url): (Option<String>, Option<String>) =
         if review_provider == ReviewProvider::OpenAi {
@@ -283,12 +334,27 @@ pub(crate) async fn execute_ai_review_generation(
     let mut failed_chunks = 0usize;
     let mut resolved_model = model.clone();
     let run_id_owned = run_id.map(ToOwned::to_owned);
+    let (description_diff_for_review, description_diff_truncated) =
+        truncate_chars(raw_diff, max_diff_chars);
+    diff_truncated |= description_diff_truncated;
+    let description_prompt = build_description_review_prompt(
+        &reviewer_goal,
+        workspace,
+        base_ref,
+        merge_base,
+        head,
+        &description_diff_for_review,
+        description_diff_truncated,
+    );
 
     let started_event = AiReviewProgressEvent {
         run_id: run_id_owned.clone(),
         thread_id: input.thread_id,
         status: "started".to_string(),
-        message: format!("Started chunked review for {} chunk(s).", total_chunks),
+        message: format!(
+            "Started review. Description stream and file issue checks are running for {} file(s).",
+            total_chunks
+        ),
         total_chunks,
         completed_chunks,
         chunk_id: None,
@@ -306,14 +372,78 @@ pub(crate) async fn execute_ai_review_generation(
         emit_ai_review_progress(app, &started_event);
     }
 
+    let description_started_event = AiReviewProgressEvent {
+        run_id: run_id_owned.clone(),
+        thread_id: input.thread_id,
+        status: "description-start".to_string(),
+        message: "Generating high-level description...".to_string(),
+        total_chunks,
+        completed_chunks,
+        chunk_id: None,
+        file_path: None,
+        chunk_index: None,
+        finding_count: None,
+        chunk: None,
+        finding: None,
+    };
+    if persist_progress {
+        if let Some(run_id) = run_id {
+            emit_and_persist_ai_review_progress(app, state, run_id, description_started_event)
+                .await;
+        }
+    } else {
+        emit_ai_review_progress(app, &description_started_event);
+    }
+
+    let (description_tx, mut description_rx) = mpsc::unbounded_channel::<String>();
+    let app_for_description = app.clone();
+    let workspace_for_description = workspace.to_string();
+    let model_for_description = model.clone();
+    let prompt_for_description = description_prompt.clone();
+    let openai_api_key_for_description = openai_api_key.clone();
+    let openai_base_url_for_description = openai_base_url.clone();
+    let description_provider = review_provider;
+    let mut description_task = tokio::spawn(async move {
+        let sender = description_tx;
+        let mut on_delta = move |delta: &str| {
+            if !delta.is_empty() {
+                let _ = sender.send(delta.to_string());
+            }
+        };
+        generate_description_review_with_streaming(
+            &app_for_description,
+            description_provider,
+            &workspace_for_description,
+            &model_for_description,
+            timeout_ms,
+            openai_api_key_for_description.as_deref(),
+            openai_base_url_for_description.as_deref(),
+            &prompt_for_description,
+            &mut on_delta,
+        )
+        .await
+    });
+    let mut description_task_done = false;
+    let mut description_stream_open = true;
+    let mut description_text = String::new();
+    let mut description_model: Option<String> = None;
+    let mut description_error: Option<String> = None;
+
     let mut join_set: JoinSet<Result<ChunkWorkerResult, ChunkWorkerError>> = JoinSet::new();
 
-    while !prepared_chunks.is_empty() || !join_set.is_empty() {
+    while !prepared_chunks.is_empty()
+        || !join_set.is_empty()
+        || !description_task_done
+        || description_stream_open
+    {
         if cancel_flag
             .map(|flag| flag.load(Ordering::Relaxed))
             .unwrap_or(false)
         {
             join_set.abort_all();
+            if !description_task_done {
+                description_task.abort();
+            }
             return Err("AI review run canceled.".to_string());
         }
 
@@ -327,8 +457,8 @@ pub(crate) async fn execute_ai_review_generation(
                 thread_id: input.thread_id,
                 status: "chunk-start".to_string(),
                 message: format!(
-                    "Reviewing {} chunk {}.",
-                    chunk_for_event.file_path, chunk_for_event.chunk_index
+                    "Reviewing {} (file {} of {}).",
+                    chunk_for_event.file_path, chunk_for_event.chunk_index, total_chunks
                 ),
                 total_chunks,
                 completed_chunks,
@@ -392,99 +522,53 @@ pub(crate) async fn execute_ai_review_generation(
             });
         }
 
-        let Some(join_result) = join_set.join_next().await else {
-            continue;
-        };
-
-        match join_result {
-            Ok(Ok(worker_result)) => {
-                let chunk = worker_result.chunk;
-                resolved_model = worker_result.model;
-                let payload = parse_chunk_review_payload(&worker_result.raw_chunk_review);
-                let summary = payload
-                    .summary
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(ToOwned::to_owned)
-                    .unwrap_or_else(|| {
-                        if worker_result.raw_chunk_review.trim().is_empty() {
-                            "No output returned for this chunk.".to_string()
-                        } else {
-                            snippet(worker_result.raw_chunk_review.trim(), 1_200)
-                        }
-                    });
-
-                let mut chunk_findings = Vec::new();
-                if let Some(payload_findings) = payload.findings {
-                    for (finding_index, payload_finding) in payload_findings.into_iter().enumerate()
-                    {
-                        let title = payload_finding
-                            .title
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())
-                            .map(ToOwned::to_owned)
-                            .unwrap_or_else(|| "Potential bug".to_string());
-                        let body = payload_finding
-                            .body
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())
-                            .map(ToOwned::to_owned)
-                            .unwrap_or_else(|| {
-                                "Potential issue detected in this diff chunk.".to_string()
-                            });
-                        let side =
-                            normalize_annotation_side(payload_finding.side.as_deref()).to_string();
-                        let line_number = resolve_line_number_for_chunk(
-                            &chunk,
-                            &side,
-                            payload_finding.line_number.or(payload_finding.line),
-                        );
-                        let Some(line_number) = line_number else {
-                            continue;
-                        };
-
-                        let finding = AiReviewFinding {
-                            id: format!(
-                                "{}:{}:{}:{}",
-                                chunk.id,
-                                side,
-                                line_number,
-                                finding_index + 1
-                            ),
-                            file_path: chunk.file_path.clone(),
-                            chunk_id: chunk.id.clone(),
-                            chunk_index: chunk.chunk_index,
-                            hunk_header: chunk.hunk_header.clone(),
-                            side: side.clone(),
-                            line_number,
-                            title,
-                            body,
-                            severity: normalize_severity(payload_finding.severity.as_deref())
-                                .to_string(),
-                            confidence: payload_finding
-                                .confidence
-                                .map(|value| value.clamp(0.0, 1.0)),
-                        };
-                        chunk_findings.push(finding.clone());
-                        let finding_event = AiReviewProgressEvent {
+        tokio::select! {
+            maybe_delta = description_rx.recv(), if description_stream_open => {
+                match maybe_delta {
+                    Some(delta) => {
+                        description_text.push_str(&delta);
+                        let delta_event = AiReviewProgressEvent {
                             run_id: run_id_owned.clone(),
                             thread_id: input.thread_id,
-                            status: "finding".to_string(),
-                            message: format!(
-                                "{}:{} {}",
-                                finding.file_path, finding.line_number, finding.title
-                            ),
+                            status: "description-delta".to_string(),
+                            message: delta,
                             total_chunks,
                             completed_chunks,
-                            chunk_id: Some(chunk.id.clone()),
-                            file_path: Some(chunk.file_path.clone()),
-                            chunk_index: Some(chunk.chunk_index),
-                            finding_count: Some(chunk_findings.len()),
+                            chunk_id: None,
+                            file_path: None,
+                            chunk_index: None,
+                            finding_count: Some(findings.len()),
                             chunk: None,
-                            finding: Some(finding),
+                            finding: None,
+                        };
+                        emit_ai_review_progress(app, &delta_event);
+                    }
+                    None => {
+                        description_stream_open = false;
+                    }
+                }
+            }
+            description_result = &mut description_task, if !description_task_done => {
+                description_task_done = true;
+                match description_result {
+                    Ok(Ok((review, model_used))) => {
+                        if description_text.trim().is_empty() {
+                            description_text = review;
+                        }
+                        description_model = Some(model_used);
+                        let description_complete_event = AiReviewProgressEvent {
+                            run_id: run_id_owned.clone(),
+                            thread_id: input.thread_id,
+                            status: "description-complete".to_string(),
+                            message: "Generated high-level description.".to_string(),
+                            total_chunks,
+                            completed_chunks,
+                            chunk_id: None,
+                            file_path: None,
+                            chunk_index: None,
+                            finding_count: Some(findings.len()),
+                            chunk: None,
+                            finding: None,
                         };
                         if persist_progress {
                             if let Some(run_id) = run_id {
@@ -492,113 +576,287 @@ pub(crate) async fn execute_ai_review_generation(
                                     app,
                                     state,
                                     run_id,
-                                    finding_event,
+                                    description_complete_event,
                                 )
                                 .await;
                             }
                         } else {
-                            emit_ai_review_progress(app, &finding_event);
+                            emit_ai_review_progress(app, &description_complete_event);
+                        }
+                    }
+                    Ok(Err(error)) => {
+                        description_error = Some(error.clone());
+                        let description_failed_event = AiReviewProgressEvent {
+                            run_id: run_id_owned.clone(),
+                            thread_id: input.thread_id,
+                            status: "description-failed".to_string(),
+                            message: format!("Description stream failed: {}", snippet(error.trim(), 300)),
+                            total_chunks,
+                            completed_chunks,
+                            chunk_id: None,
+                            file_path: None,
+                            chunk_index: None,
+                            finding_count: Some(findings.len()),
+                            chunk: None,
+                            finding: None,
+                        };
+                        if persist_progress {
+                            if let Some(run_id) = run_id {
+                                emit_and_persist_ai_review_progress(
+                                    app,
+                                    state,
+                                    run_id,
+                                    description_failed_event,
+                                )
+                                .await;
+                            }
+                        } else {
+                            emit_ai_review_progress(app, &description_failed_event);
+                        }
+                    }
+                    Err(join_error) => {
+                        let message = format!("Description stream worker failed: {join_error}");
+                        description_error = Some(message.clone());
+                        let description_failed_event = AiReviewProgressEvent {
+                            run_id: run_id_owned.clone(),
+                            thread_id: input.thread_id,
+                            status: "description-failed".to_string(),
+                            message,
+                            total_chunks,
+                            completed_chunks,
+                            chunk_id: None,
+                            file_path: None,
+                            chunk_index: None,
+                            finding_count: Some(findings.len()),
+                            chunk: None,
+                            finding: None,
+                        };
+                        if persist_progress {
+                            if let Some(run_id) = run_id {
+                                emit_and_persist_ai_review_progress(
+                                    app,
+                                    state,
+                                    run_id,
+                                    description_failed_event,
+                                )
+                                .await;
+                            }
+                        } else {
+                            emit_ai_review_progress(app, &description_failed_event);
                         }
                     }
                 }
+            }
+            join_result = join_set.join_next(), if !join_set.is_empty() => {
+                let Some(join_result) = join_result else {
+                    continue;
+                };
 
-                let chunk_review = AiReviewChunk {
-                    id: chunk.id.clone(),
-                    file_path: chunk.file_path.clone(),
-                    chunk_index: chunk.chunk_index,
-                    hunk_header: chunk.hunk_header.clone(),
-                    summary,
-                    findings: chunk_findings.clone(),
-                };
-                completed_chunks += 1;
-                findings.extend(chunk_findings);
-                chunk_reviews.push(chunk_review.clone());
-                let chunk_complete_event = AiReviewProgressEvent {
-                    run_id: run_id_owned.clone(),
-                    thread_id: input.thread_id,
-                    status: "chunk-complete".to_string(),
-                    message: format!(
-                        "Completed {} chunk {} with {} finding(s).",
-                        chunk.file_path,
-                        chunk.chunk_index,
-                        chunk_review.findings.len()
-                    ),
-                    total_chunks,
-                    completed_chunks,
-                    chunk_id: Some(chunk.id.clone()),
-                    file_path: Some(chunk.file_path.clone()),
-                    chunk_index: Some(chunk.chunk_index),
-                    finding_count: Some(chunk_review.findings.len()),
-                    chunk: Some(chunk_review),
-                    finding: None,
-                };
-                if persist_progress {
-                    if let Some(run_id) = run_id {
-                        emit_and_persist_ai_review_progress(
-                            app,
-                            state,
-                            run_id,
-                            chunk_complete_event,
-                        )
-                        .await;
+                match join_result {
+                    Ok(Ok(worker_result)) => {
+                        let chunk = worker_result.chunk;
+                        resolved_model = worker_result.model;
+                        let payload = parse_chunk_review_payload(&worker_result.raw_chunk_review);
+                        let summary = payload
+                            .summary
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(ToOwned::to_owned)
+                            .unwrap_or_else(|| {
+                                if worker_result.raw_chunk_review.trim().is_empty() {
+                                    "No output returned for this chunk.".to_string()
+                                } else {
+                                    snippet(worker_result.raw_chunk_review.trim(), 1_200)
+                                }
+                            });
+
+                        let mut chunk_findings = Vec::new();
+                        if let Some(payload_findings) = payload.findings {
+                            for (finding_index, payload_finding) in payload_findings.into_iter().enumerate()
+                            {
+                                let title = payload_finding
+                                    .title
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|value| !value.is_empty())
+                                    .map(ToOwned::to_owned)
+                                    .unwrap_or_else(|| "Potential bug".to_string());
+                                let body = payload_finding
+                                    .body
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|value| !value.is_empty())
+                                    .map(ToOwned::to_owned)
+                                    .unwrap_or_else(|| {
+                                        "Potential issue detected in this diff chunk.".to_string()
+                                    });
+                                let side =
+                                    normalize_annotation_side(payload_finding.side.as_deref()).to_string();
+                                let line_number = resolve_line_number_for_chunk(
+                                    &chunk,
+                                    &side,
+                                    payload_finding.line_number.or(payload_finding.line),
+                                );
+                                let Some(line_number) = line_number else {
+                                    continue;
+                                };
+
+                                let finding = AiReviewFinding {
+                                    id: format!(
+                                        "{}:{}:{}:{}",
+                                        chunk.id,
+                                        side,
+                                        line_number,
+                                        finding_index + 1
+                                    ),
+                                    file_path: chunk.file_path.clone(),
+                                    chunk_id: chunk.id.clone(),
+                                    chunk_index: chunk.chunk_index,
+                                    hunk_header: chunk.hunk_header.clone(),
+                                    side: side.clone(),
+                                    line_number,
+                                    title,
+                                    body,
+                                    severity: normalize_severity(payload_finding.severity.as_deref())
+                                        .to_string(),
+                                    confidence: payload_finding
+                                        .confidence
+                                        .map(|value| value.clamp(0.0, 1.0)),
+                                };
+                                chunk_findings.push(finding.clone());
+                                let finding_event = AiReviewProgressEvent {
+                                    run_id: run_id_owned.clone(),
+                                    thread_id: input.thread_id,
+                                    status: "finding".to_string(),
+                                    message: format!(
+                                        "{}:{} {}",
+                                        finding.file_path, finding.line_number, finding.title
+                                    ),
+                                    total_chunks,
+                                    completed_chunks,
+                                    chunk_id: Some(chunk.id.clone()),
+                                    file_path: Some(chunk.file_path.clone()),
+                                    chunk_index: Some(chunk.chunk_index),
+                                    finding_count: Some(chunk_findings.len()),
+                                    chunk: None,
+                                    finding: Some(finding),
+                                };
+                                if persist_progress {
+                                    if let Some(run_id) = run_id {
+                                        emit_and_persist_ai_review_progress(
+                                            app,
+                                            state,
+                                            run_id,
+                                            finding_event,
+                                        )
+                                        .await;
+                                    }
+                                } else {
+                                    emit_ai_review_progress(app, &finding_event);
+                                }
+                            }
+                        }
+
+                        let chunk_review = AiReviewChunk {
+                            id: chunk.id.clone(),
+                            file_path: chunk.file_path.clone(),
+                            chunk_index: chunk.chunk_index,
+                            hunk_header: chunk.hunk_header.clone(),
+                            summary,
+                            findings: chunk_findings.clone(),
+                        };
+                        completed_chunks += 1;
+                        findings.extend(chunk_findings);
+                        chunk_reviews.push(chunk_review.clone());
+                        let chunk_complete_event = AiReviewProgressEvent {
+                            run_id: run_id_owned.clone(),
+                            thread_id: input.thread_id,
+                            status: "chunk-complete".to_string(),
+                            message: format!(
+                                "Completed {} with {} finding(s).",
+                                chunk.file_path,
+                                chunk_review.findings.len()
+                            ),
+                            total_chunks,
+                            completed_chunks,
+                            chunk_id: Some(chunk.id.clone()),
+                            file_path: Some(chunk.file_path.clone()),
+                            chunk_index: Some(chunk.chunk_index),
+                            finding_count: Some(chunk_review.findings.len()),
+                            chunk: Some(chunk_review),
+                            finding: None,
+                        };
+                        if persist_progress {
+                            if let Some(run_id) = run_id {
+                                emit_and_persist_ai_review_progress(
+                                    app,
+                                    state,
+                                    run_id,
+                                    chunk_complete_event,
+                                )
+                                .await;
+                            }
+                        } else {
+                            emit_ai_review_progress(app, &chunk_complete_event);
+                        }
                     }
-                } else {
-                    emit_ai_review_progress(app, &chunk_complete_event);
-                }
-            }
-            Ok(Err(worker_error)) => {
-                completed_chunks += 1;
-                failed_chunks += 1;
-                let failed_event = AiReviewProgressEvent {
-                    run_id: run_id_owned.clone(),
-                    thread_id: input.thread_id,
-                    status: "chunk-failed".to_string(),
-                    message: format!(
-                        "Chunk review failed for {} chunk {}: {}",
-                        worker_error.chunk.file_path,
-                        worker_error.chunk.chunk_index,
-                        worker_error.message
-                    ),
-                    total_chunks,
-                    completed_chunks,
-                    chunk_id: Some(worker_error.chunk.id.clone()),
-                    file_path: Some(worker_error.chunk.file_path.clone()),
-                    chunk_index: Some(worker_error.chunk.chunk_index),
-                    finding_count: None,
-                    chunk: None,
-                    finding: None,
-                };
-                if persist_progress {
-                    if let Some(run_id) = run_id {
-                        emit_and_persist_ai_review_progress(app, state, run_id, failed_event).await;
+                    Ok(Err(worker_error)) => {
+                        completed_chunks += 1;
+                        failed_chunks += 1;
+                        let condensed_error = snippet(worker_error.message.trim(), 320);
+                        let failed_event = AiReviewProgressEvent {
+                            run_id: run_id_owned.clone(),
+                            thread_id: input.thread_id,
+                            status: "chunk-failed".to_string(),
+                            message: format!(
+                                "File review failed for {} (file {}): {}",
+                                worker_error.chunk.file_path,
+                                worker_error.chunk.chunk_index,
+                                condensed_error
+                            ),
+                            total_chunks,
+                            completed_chunks,
+                            chunk_id: Some(worker_error.chunk.id.clone()),
+                            file_path: Some(worker_error.chunk.file_path.clone()),
+                            chunk_index: Some(worker_error.chunk.chunk_index),
+                            finding_count: None,
+                            chunk: None,
+                            finding: None,
+                        };
+                        if persist_progress {
+                            if let Some(run_id) = run_id {
+                                emit_and_persist_ai_review_progress(app, state, run_id, failed_event).await;
+                            }
+                        } else {
+                            emit_ai_review_progress(app, &failed_event);
+                        }
                     }
-                } else {
-                    emit_ai_review_progress(app, &failed_event);
-                }
-            }
-            Err(join_error) => {
-                completed_chunks += 1;
-                failed_chunks += 1;
-                let failed_event = AiReviewProgressEvent {
-                    run_id: run_id_owned.clone(),
-                    thread_id: input.thread_id,
-                    status: "chunk-failed".to_string(),
-                    message: format!("Chunk review worker failed: {join_error}"),
-                    total_chunks,
-                    completed_chunks,
-                    chunk_id: None,
-                    file_path: None,
-                    chunk_index: None,
-                    finding_count: None,
-                    chunk: None,
-                    finding: None,
-                };
-                if persist_progress {
-                    if let Some(run_id) = run_id {
-                        emit_and_persist_ai_review_progress(app, state, run_id, failed_event).await;
+                    Err(join_error) => {
+                        completed_chunks += 1;
+                        failed_chunks += 1;
+                        let failed_event = AiReviewProgressEvent {
+                            run_id: run_id_owned.clone(),
+                            thread_id: input.thread_id,
+                            status: "chunk-failed".to_string(),
+                            message: format!("Chunk review worker failed: {join_error}"),
+                            total_chunks,
+                            completed_chunks,
+                            chunk_id: None,
+                            file_path: None,
+                            chunk_index: None,
+                            finding_count: None,
+                            chunk: None,
+                            finding: None,
+                        };
+                        if persist_progress {
+                            if let Some(run_id) = run_id {
+                                emit_and_persist_ai_review_progress(app, state, run_id, failed_event).await;
+                            }
+                        } else {
+                            emit_ai_review_progress(app, &failed_event);
+                        }
                     }
-                } else {
-                    emit_ai_review_progress(app, &failed_event);
                 }
             }
         }
@@ -616,16 +874,32 @@ pub(crate) async fn execute_ai_review_generation(
             .then(left.id.cmp(&right.id))
     });
 
-    let mut review =
-        build_chunk_review_markdown(&reviewer_goal, &chunk_reviews, &findings, diff_truncated);
-    if failed_chunks > 0 {
-        review.push_str(&format!(
-            "\n\n## Run Notes\n- {failed_chunks} chunk(s) failed during review and were skipped after retries."
-        ));
+    let mut review = description_text.trim().to_string();
+    if review.is_empty() {
+        review = format!(
+            "Analyzed {} file(s). Found {} issue(s).",
+            total_chunks,
+            findings.len()
+        );
+    }
+    if failed_chunks > 0 || description_error.is_some() {
+        review.push_str("\n\n## Run Notes");
+        if failed_chunks > 0 {
+            review.push_str(&format!(
+                "\n- {failed_chunks} file(s) failed during issue checks and were skipped after retries."
+            ));
+        }
+        if let Some(error) = description_error.as_ref() {
+            review.push_str(&format!(
+                "\n- High-level description stream failed: {}",
+                snippet(error.trim(), 240)
+            ));
+        }
     }
     persist_thread_message(state, input.thread_id, MessageRole::Assistant, &review).await?;
 
-    let completed_status = if failed_chunks > 0 {
+    let had_errors = failed_chunks > 0 || description_error.is_some();
+    let completed_status = if had_errors {
         "completed_with_errors"
     } else {
         "completed"
@@ -635,7 +909,7 @@ pub(crate) async fn execute_ai_review_generation(
         thread_id: input.thread_id,
         status: completed_status.to_string(),
         message: format!(
-            "Chunked review complete: {} chunk(s), {} finding(s), {} failed chunk(s).",
+            "File review complete: {} file(s), {} finding(s), {} failed file(s).",
             total_chunks,
             findings.len(),
             failed_chunks
@@ -673,7 +947,7 @@ pub(crate) async fn execute_ai_review_generation(
             files_changed: input.files_changed,
             insertions: input.insertions,
             deletions: input.deletions,
-            model: resolved_model,
+            model: description_model.unwrap_or(resolved_model),
             review,
             diff_chars_used,
             diff_chars_total,
@@ -681,7 +955,7 @@ pub(crate) async fn execute_ai_review_generation(
             chunks: chunk_reviews,
             findings,
         },
-        failed_chunks,
+        had_errors,
     })
 }
 

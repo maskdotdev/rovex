@@ -137,6 +137,28 @@ fn parse_app_server_models_result(result: &serde_json::Value) -> Vec<AppServerMo
     models
 }
 
+fn emit_app_server_stream_delta<F>(text: &str, streamed: &mut String, on_delta: &mut F)
+where
+    F: FnMut(&str),
+{
+    if text.is_empty() {
+        return;
+    }
+
+    if let Some(remaining) = text.strip_prefix(streamed.as_str()) {
+        if !remaining.is_empty() {
+            on_delta(remaining);
+            streamed.push_str(remaining);
+        }
+        return;
+    }
+
+    if streamed.is_empty() {
+        on_delta(text);
+        streamed.push_str(text);
+    }
+}
+
 fn json_rpc_id_matches(message: &serde_json::Value, expected_id: i64) -> bool {
     message
         .get("id")
@@ -340,6 +362,46 @@ pub(crate) async fn generate_review_with_app_server(
     timeout_ms: u64,
     review_model: &str,
 ) -> Result<(String, String), String> {
+    generate_review_with_app_server_internal::<fn(&str)>(
+        workspace,
+        prompt,
+        timeout_ms,
+        review_model,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn generate_review_with_app_server_streaming<F>(
+    workspace: &str,
+    prompt: &str,
+    timeout_ms: u64,
+    review_model: &str,
+    on_delta: &mut F,
+) -> Result<(String, String), String>
+where
+    F: FnMut(&str),
+{
+    generate_review_with_app_server_internal(
+        workspace,
+        prompt,
+        timeout_ms,
+        review_model,
+        Some(on_delta),
+    )
+    .await
+}
+
+async fn generate_review_with_app_server_internal<F>(
+    workspace: &str,
+    prompt: &str,
+    timeout_ms: u64,
+    review_model: &str,
+    mut on_delta: Option<&mut F>,
+) -> Result<(String, String), String>
+where
+    F: FnMut(&str),
+{
     let command_name = env::var(ROVEX_APP_SERVER_COMMAND_ENV)
         .ok()
         .map(|value| value.trim().to_string())
@@ -457,6 +519,7 @@ pub(crate) async fn generate_review_with_app_server(
             .or_else(|| turn_result.get("id").cloned());
 
         let mut latest_text: Option<String> = None;
+        let mut streamed_text = String::new();
         loop {
             let message = read_json_rpc_message(&mut lines, deadline).await?;
             if let Some(error) = extract_json_rpc_error_message(&message) {
@@ -471,8 +534,28 @@ pub(crate) async fn generate_review_with_app_server(
                     };
                     if is_assistant_item(item) {
                         if let Some(text) = extract_app_server_item_text(item) {
+                            if let Some(callback) = on_delta.as_deref_mut() {
+                                emit_app_server_stream_delta(&text, &mut streamed_text, callback);
+                            }
                             latest_text = Some(text);
                         }
+                    }
+                }
+                Some("item/updated") | Some("item/delta") => {
+                    let Some(item) = message
+                        .pointer("/params/item")
+                        .or_else(|| message.pointer("/params/delta"))
+                    else {
+                        continue;
+                    };
+                    if !is_assistant_item(item) {
+                        continue;
+                    }
+                    if let Some(text) = extract_app_server_item_text(item) {
+                        if let Some(callback) = on_delta.as_deref_mut() {
+                            emit_app_server_stream_delta(&text, &mut streamed_text, callback);
+                        }
+                        latest_text = Some(text);
                     }
                 }
                 Some("turn/completed") => {

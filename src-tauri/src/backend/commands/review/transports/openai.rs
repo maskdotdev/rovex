@@ -66,6 +66,8 @@ struct OpenAiChatRequest<'a> {
     model: &'a str,
     temperature: f32,
     messages: Vec<OpenAiChatMessage<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream: Option<bool>,
 }
 
 async fn generate_openai_chat_completion(
@@ -89,6 +91,7 @@ async fn generate_openai_chat_completion(
                 content: prompt,
             },
         ],
+        stream: None,
     };
 
     let endpoint = format!("{}/chat/completions", base_url.trim_end_matches('/'));
@@ -127,6 +130,150 @@ async fn generate_openai_chat_completion(
         .map_err(|error| format!("Failed to parse AI provider response: {error}"))?;
     let review = extract_chat_response_text(&body)
         .ok_or_else(|| "AI provider returned an empty response.".to_string())?;
+    Ok(review)
+}
+
+fn extract_chat_stream_delta_text(body: &serde_json::Value) -> Option<String> {
+    let content = body
+        .get("choices")?
+        .as_array()?
+        .first()?
+        .get("delta")?
+        .get("content")?;
+
+    if let Some(text) = content.as_str() {
+        if !text.is_empty() {
+            return Some(text.to_string());
+        }
+        return None;
+    }
+
+    let mut text_parts = Vec::new();
+    for part in content.as_array()? {
+        if let Some(text) = part.as_str() {
+            if !text.is_empty() {
+                text_parts.push(text.to_string());
+            }
+            continue;
+        }
+        if let Some(text) = part.get("text").and_then(|value| value.as_str()) {
+            if !text.is_empty() {
+                text_parts.push(text.to_string());
+            }
+            continue;
+        }
+        if let Some(text) = part
+            .get("text")
+            .and_then(|value| value.get("value"))
+            .and_then(|value| value.as_str())
+        {
+            if !text.is_empty() {
+                text_parts.push(text.to_string());
+            }
+        }
+    }
+
+    if text_parts.is_empty() {
+        None
+    } else {
+        Some(text_parts.join(""))
+    }
+}
+
+pub(crate) async fn generate_review_with_openai_streaming<F>(
+    model: &str,
+    base_url: &str,
+    timeout_ms: u64,
+    api_key: &str,
+    prompt: &str,
+    mut on_delta: F,
+) -> Result<String, String>
+where
+    F: FnMut(&str),
+{
+    let system_prompt = "You are a senior code reviewer. Provide a concise high-level review description of the change set. Focus on what changed, risky areas, and important files to inspect first. Do not enumerate every small detail.";
+    let request = OpenAiChatRequest {
+        model,
+        temperature: 0.2,
+        messages: vec![
+            OpenAiChatMessage {
+                role: "system",
+                content: system_prompt,
+            },
+            OpenAiChatMessage {
+                role: "user",
+                content: prompt,
+            },
+        ],
+        stream: Some(true),
+    };
+
+    let endpoint = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+    let client = Client::builder()
+        .timeout(Duration::from_millis(timeout_ms))
+        .build()
+        .map_err(|error| format!("Failed to initialize HTTP client: {error}"))?;
+
+    let mut response = client
+        .post(&endpoint)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Content-Type", "application/json")
+        .json(&request)
+        .send()
+        .await
+        .map_err(|error| format!("Failed to reach AI provider: {error}"))?;
+
+    if response.status() == StatusCode::UNAUTHORIZED {
+        return Err(format!(
+            "AI provider rejected the API key. Check {OPENAI_API_KEY_ENV}."
+        ));
+    }
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "AI provider returned {status}. Response: {}",
+            snippet(body.trim(), 300)
+        ));
+    }
+
+    let mut aggregate = String::new();
+    let mut buffered = String::new();
+
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| format!("Failed to read AI provider stream: {error}"))?
+    {
+        buffered.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(newline_index) = buffered.find('\n') {
+            let line = buffered[..newline_index].trim().to_string();
+            buffered.drain(..=newline_index);
+            if line.is_empty() {
+                continue;
+            }
+
+            let payload = line
+                .strip_prefix("data:")
+                .map(str::trim)
+                .unwrap_or(line.as_str());
+            if payload.is_empty() || payload == "[DONE]" {
+                continue;
+            }
+
+            let event: serde_json::Value = serde_json::from_str(payload)
+                .map_err(|error| format!("Failed to parse AI stream payload: {error}"))?;
+            if let Some(delta) = extract_chat_stream_delta_text(&event) {
+                aggregate.push_str(&delta);
+                on_delta(&delta);
+            }
+        }
+    }
+
+    let review = aggregate.trim().to_string();
+    if review.is_empty() {
+        return Err("AI provider returned an empty response.".to_string());
+    }
     Ok(review)
 }
 

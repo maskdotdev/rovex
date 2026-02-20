@@ -372,6 +372,89 @@ pub(crate) fn parse_chunk_review_payload(raw: &str) -> ChunkReviewPayload {
     }
 }
 
+fn split_patch_header_and_hunks(patch: &str) -> (Vec<String>, Vec<String>) {
+    let mut headers = Vec::new();
+    let mut hunks = Vec::new();
+    let mut in_hunk = false;
+
+    for line in patch.lines() {
+        if !in_hunk && line.starts_with("@@ ") {
+            in_hunk = true;
+        }
+        if in_hunk {
+            hunks.push(line.to_string());
+        } else {
+            headers.push(line.to_string());
+        }
+    }
+
+    (headers, hunks)
+}
+
+pub(crate) fn parse_diff_file_chunks(diff: &str) -> Vec<DiffChunk> {
+    let mut chunks = parse_diff_chunks(diff);
+    if chunks.is_empty() {
+        return Vec::new();
+    }
+
+    chunks.sort_by(|left, right| {
+        left.file_path
+            .cmp(&right.file_path)
+            .then(left.chunk_index.cmp(&right.chunk_index))
+    });
+
+    let mut files = Vec::new();
+    let mut index = 0usize;
+    while index < chunks.len() {
+        let current_path = chunks[index].file_path.clone();
+        let start = index;
+        while index < chunks.len() && chunks[index].file_path == current_path {
+            index += 1;
+        }
+        let group = &chunks[start..index];
+        let first = &group[0];
+
+        let mut merged_headers: Vec<String> = Vec::new();
+        let mut merged_hunks: Vec<String> = Vec::new();
+        let mut addition_lines = BTreeSet::new();
+        let mut deletion_lines = BTreeSet::new();
+        for (group_index, chunk) in group.iter().enumerate() {
+            addition_lines.extend(chunk.addition_lines.iter().copied());
+            deletion_lines.extend(chunk.deletion_lines.iter().copied());
+            let (headers, hunks) = split_patch_header_and_hunks(&chunk.patch);
+            if group_index == 0 {
+                merged_headers = headers;
+            }
+            merged_hunks.extend(hunks);
+        }
+
+        let mut merged_patch_lines = Vec::new();
+        merged_patch_lines.extend(merged_headers);
+        merged_patch_lines.extend(merged_hunks);
+        let mut patch = if merged_patch_lines.is_empty() {
+            first.patch.clone()
+        } else {
+            merged_patch_lines.join("\n")
+        };
+        if !patch.is_empty() && !patch.ends_with('\n') {
+            patch.push('\n');
+        }
+
+        files.push(DiffChunk {
+            id: format!("{}#file-{}", first.file_path, files.len() + 1),
+            file_path: first.file_path.clone(),
+            previous_path: first.previous_path.clone(),
+            chunk_index: files.len() + 1,
+            hunk_header: first.hunk_header.clone(),
+            patch,
+            addition_lines: addition_lines.into_iter().collect(),
+            deletion_lines: deletion_lines.into_iter().collect(),
+        });
+    }
+
+    files
+}
+
 pub(crate) fn build_chunk_review_prompt(
     reviewer_goal: &str,
     workspace: &str,
@@ -409,15 +492,14 @@ pub(crate) fn build_chunk_review_prompt(
         .unwrap_or_default();
 
     format!(
-        "You are reviewing one diff chunk for bugs.\n\nReviewer goal: {reviewer_goal}\nWorkspace: {workspace}\nBase ref: {base_ref}\nMerge base: {merge_base}\nHead: {head}\nChunk ID: {}\nFile path: {}\nChunk index: {}\nHunk header: {}\nAllowed addition line numbers: {additions}\nAllowed deletion line numbers: {deletions}\nDiff chunk truncated: {}\n\nIMPORTANT:\n1) Treat this as a bug-finding task only (functional bugs, regressions, security, data loss, missing tests that hide bugs).\n2) If you are running in a tool-enabled environment, inspect relevant files in the workspace before deciding.\n3) Return STRICT JSON only. No markdown.\n4) JSON schema:\n{{\n  \"summary\": \"short chunk summary\",\n  \"findings\": [\n    {{\n      \"title\": \"short bug title\",\n      \"body\": \"why this is a bug and concrete fix/test guidance\",\n      \"severity\": \"critical|high|medium|low\",\n      \"confidence\": 0.0,\n      \"side\": \"additions|deletions\",\n      \"lineNumber\": 123\n    }}\n  ]\n}}\n5) Use an empty findings array when there is no clear bug.\n\nDiff chunk:\n```diff\n{patch_for_review}\n```{context_block}",
-        chunk.id,
+        "Review this changed file for bugs.\n\nFocus: {reviewer_goal}\nWorkspace: {workspace}\nBase ref: {base_ref}\nMerge base: {merge_base}\nHead: {head}\nFile path: {}\nFile index: {}\nAllowed addition line numbers: {additions}\nAllowed deletion line numbers: {deletions}\nDiff content truncated: {}\n\nReturn STRICT JSON only with this schema:\n{{\n  \"summary\": \"short summary of what changed in this file\",\n  \"findings\": [\n    {{\n      \"title\": \"bug title\",\n      \"body\": \"why this is a real bug and how to fix or test it\",\n      \"severity\": \"critical|high|medium|low\",\n      \"confidence\": 0.0,\n      \"side\": \"additions|deletions\",\n      \"lineNumber\": 123\n    }}\n  ]\n}}\n\nRules:\n- If there is no clear bug, return an empty findings array.\n- Do not include style nits.\n- Do not return markdown.\n\nFile diff:\n```diff\n{patch_for_review}\n```{context_block}",
         chunk.file_path,
         chunk.chunk_index,
-        chunk.hunk_header,
         if patch_truncated { "yes" } else { "no" }
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn build_chunk_review_markdown(
     reviewer_goal: &str,
     chunks: &[AiReviewChunk],
@@ -426,16 +508,19 @@ pub(crate) fn build_chunk_review_markdown(
 ) -> String {
     let mut lines = Vec::new();
     lines.push(format!(
-        "Chunked review complete for goal: {reviewer_goal}. {} chunk(s) analyzed.",
+        "AI review complete. {} file(s) analyzed.",
         chunks.len()
     ));
+    if !reviewer_goal.trim().is_empty() {
+        lines.push(format!("Focus: {}", reviewer_goal.trim()));
+    }
     lines.push(format!(
         "Findings: {}. Diff input truncated: {}.",
         findings.len(),
         if diff_truncated { "yes" } else { "no" }
     ));
     lines.push(String::new());
-    lines.push("## Findings By Chunk".to_string());
+    lines.push("## Findings by File".to_string());
 
     if findings.is_empty() {
         lines.push("- No clear bugs found in reviewed chunks.".to_string());
@@ -467,7 +552,7 @@ pub(crate) fn build_chunk_review_markdown(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_diff_chunks, resolve_line_number_for_chunk};
+    use super::{parse_diff_chunks, parse_diff_file_chunks, resolve_line_number_for_chunk};
 
     #[test]
     fn parse_diff_chunks_tracks_chunk_and_line_mappings() {
@@ -506,5 +591,31 @@ index 1111111..2222222 100644
         let chunk = parse_diff_chunks(diff).remove(0);
         let resolved = resolve_line_number_for_chunk(&chunk, "additions", Some(999));
         assert_eq!(resolved, Some(11));
+    }
+
+    #[test]
+    fn parse_diff_file_chunks_collapses_hunks_per_file() {
+        let diff = r#"diff --git a/src/main.rs b/src/main.rs
+index 1111111..2222222 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,2 +1,3 @@
+ line1
++line2_added
+ line3
+@@ -10,2 +11,3 @@
+ line10
++line11_added
+ line12
+"#;
+
+        let file_chunks = parse_diff_file_chunks(diff);
+        assert_eq!(file_chunks.len(), 1);
+        let chunk = &file_chunks[0];
+        assert_eq!(chunk.file_path, "src/main.rs");
+        assert!(chunk.patch.contains("@@ -1,2 +1,3 @@"));
+        assert!(chunk.patch.contains("@@ -10,2 +11,3 @@"));
+        assert!(chunk.addition_lines.contains(&2));
+        assert!(chunk.addition_lines.contains(&12));
     }
 }

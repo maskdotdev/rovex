@@ -9,11 +9,9 @@ use std::{
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::{Notify, Semaphore};
 
-use super::super::common::{
-    as_non_empty_trimmed, DEFAULT_REVIEWER_GOAL_PROMPT, MAX_PARALLEL_REVIEW_RUNS,
-};
+use super::super::common::{as_non_empty_trimmed, MAX_PARALLEL_REVIEW_RUNS};
 use super::super::threads::load_thread_by_id;
-use super::diff_chunks::parse_diff_chunks;
+use super::diff_chunks::parse_diff_file_chunks;
 use super::emit_and_persist_ai_review_progress;
 use super::{executor, store};
 use crate::backend::{
@@ -59,20 +57,13 @@ pub async fn start_ai_review_run(
     if raw_diff.is_empty() {
         return Err("There are no changes to review.".to_string());
     }
-    let total_chunks = parse_diff_chunks(raw_diff).len();
+    let total_chunks = parse_diff_file_chunks(raw_diff).len();
     if total_chunks == 0 {
-        return Err("No reviewable diff hunks were found in this diff.".to_string());
+        return Err("No reviewable changed files were found in this diff.".to_string());
     }
 
-    let reviewer_goal = if let Some(additional_focus) =
-        as_non_empty_trimmed(input.prompt.as_deref())
-    {
-        format!(
-            "{DEFAULT_REVIEWER_GOAL_PROMPT}\n\n---\n\nAdditional requested focus:\n{additional_focus}"
-        )
-    } else {
-        DEFAULT_REVIEWER_GOAL_PROMPT.to_string()
-    };
+    let reviewer_goal = as_non_empty_trimmed(input.prompt.as_deref())
+        .unwrap_or_else(|| "Review changed files and report actionable bugs.".to_string());
 
     let run_id = next_review_run_id();
     store::insert_ai_review_run(&state, &run_id, &input, &reviewer_goal, total_chunks).await?;
@@ -193,7 +184,7 @@ pub async fn start_ai_review_run(
 
         match outcome {
             Ok(outcome) => {
-                let status = if outcome.failed_chunks > 0 {
+                let status = if outcome.had_errors {
                     "completed_with_errors"
                 } else {
                     "completed"
