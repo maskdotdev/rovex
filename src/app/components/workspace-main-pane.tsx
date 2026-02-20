@@ -59,7 +59,7 @@ export function WorkspaceMainPane(props: WorkspaceMainPaneProps) {
   });
 
   return (
-    <div class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-6 py-4">
+    <div class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-6 pb-28 pt-4">
       <Show when={model.branchActionError()}>
         {(message) => (
           <div class="mb-3 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
@@ -110,14 +110,6 @@ export function WorkspaceMainPane(props: WorkspaceMainPaneProps) {
               {model.showDiffViewer() ? "Hide changes" : "Show changes"}
             </Button>
           </Show>
-          <Button
-            type="button"
-            size="sm"
-            disabled={model.compareBusy() || model.selectedWorkspace().length === 0}
-            onClick={() => void model.handleStartAiReviewOnFullDiff()}
-          >
-            Start review
-          </Button>
         </div>
       </div>
 
@@ -155,18 +147,32 @@ export function WorkspaceMainPane(props: WorkspaceMainPaneProps) {
                   </div>
                 }
               >
-                <LazyDiffViewer
-                  patch={result().diff}
-                  theme={model.selectedDiffTheme().theme}
-                  themeId={model.selectedDiffTheme().id}
-                  themeType="dark"
-                  annotations={model.diffAnnotations()}
-                />
+                <div class="rovex-diff-viewport">
+                  <LazyDiffViewer
+                    patch={result().diff}
+                    theme={model.selectedDiffTheme().theme}
+                    themeId={model.selectedDiffTheme().id}
+                    themeType="dark"
+                    annotations={model.diffAnnotations()}
+                  />
+                </div>
               </Suspense>
             </Show>
           </>
         )}
       </Show>
+
+      <div class="pointer-events-none fixed inset-x-0 bottom-4 z-30 flex justify-center px-4 md:bottom-6">
+        <Button
+          type="button"
+          size="sm"
+          class="pointer-events-auto shadow-[0_16px_40px_rgba(0,0,0,0.45)]"
+          disabled={model.compareBusy() || model.selectedWorkspace().length === 0}
+          onClick={() => void model.handleStartAiReviewOnFullDiff()}
+        >
+          Start review
+        </Button>
+      </div>
     </div>
   );
 }
