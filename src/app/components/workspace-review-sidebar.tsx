@@ -30,6 +30,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/tooltip";
 import { normalizeDiffPath, type ReviewScope } from "@/app/review-scope";
 import { formatReviewMessage } from "@/app/review-text";
 import type {
+  ReviewDiffFocusTarget,
   ReviewChatSharedDiffContext,
   ReviewRun,
   ReviewWorkbenchTab,
@@ -70,6 +71,8 @@ export type WorkspaceReviewSidebarModel = {
   aiReviewBusy: Accessor<boolean>;
   aiFollowUpBusy?: Accessor<boolean>;
   compareBusy: Accessor<boolean>;
+  setShowDiffViewer: Setter<boolean>;
+  setDiffFocusTarget: Setter<ReviewDiffFocusTarget | null>;
   selectedWorkspace: Accessor<string>;
   hasReviewStarted?: Accessor<boolean>;
   branchPopoverOpen: Accessor<boolean>;
@@ -289,9 +292,20 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                     type="button"
                     class="review-inline-action"
                     onClick={() => {
+                      const filePath = normalizeDiffPath(finding.filePath);
+                      const lineNumber = Number.isFinite(finding.lineNumber)
+                        ? Math.max(1, Math.floor(finding.lineNumber))
+                        : null;
+                      model.setShowDiffViewer(true);
                       model.setActiveReviewScope({
                         kind: "file",
-                        filePath: normalizeDiffPath(finding.filePath),
+                        filePath,
+                      });
+                      model.setDiffFocusTarget({
+                        filePath,
+                        lineNumber,
+                        findingId: finding.id || null,
+                        side: finding.side || null,
                       });
                     }}
                   >

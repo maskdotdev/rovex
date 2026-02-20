@@ -129,6 +129,12 @@ type DiffViewerProps = {
   themeId?: string;
   themeType?: "system" | "light" | "dark";
   showToolbar?: boolean;
+  focusTarget?: {
+    filePath: string;
+    lineNumber: number | null;
+    findingId: string | null;
+    side: "additions" | "deletions" | string | null;
+  } | null;
   collapseStateKey?: string;
   annotations?: DiffViewerAnnotation[];
   onAskAiAboutFile?: (filePath: string) => void;
@@ -322,6 +328,9 @@ function renderDiffAnnotation(annotation: DiffLineAnnotation<DiffViewerAnnotatio
 
   const root = document.createElement("div");
   root.className = `rovex-inline-annotation is-${metadata.severity || "medium"}`;
+  if (metadata.id) root.dataset.rovexAnnotationId = metadata.id;
+  root.dataset.rovexLineNumber = String(annotation.lineNumber);
+  root.dataset.rovexLineSide = annotation.side;
 
   const titleRow = document.createElement("div");
   titleRow.className = "rovex-inline-annotation-title";
@@ -733,7 +742,7 @@ function DiffFileCard(props: DiffFileCardProps) {
   });
 
   return (
-    <section class="rovex-diff-file">
+    <section class="rovex-diff-file" data-rovex-file-path={getNormalizedFilePath() || undefined}>
       <div ref={visibilityAnchorRef}>
         <Show when={renderError()}>
           {(message) => (
@@ -758,6 +767,7 @@ function DiffFileCard(props: DiffFileCardProps) {
 }
 
 export function DiffViewer(props: DiffViewerProps) {
+  let viewerRootRef: HTMLDivElement | undefined;
   const showToolbar = createMemo(() => props.showToolbar ?? true);
   const themeClass = createMemo(() =>
     props.themeId?.trim() ? `rovex-diff-theme-${props.themeId}` : ""
@@ -1002,8 +1012,140 @@ export function DiffViewer(props: DiffViewerProps) {
     });
   };
 
+  createEffect(() => {
+    const focusTarget = props.focusTarget;
+    if (!focusTarget) return;
+
+    const targetFilePath = normalizeDiffPath(focusTarget.filePath);
+    if (!targetFilePath) return;
+    if (files().length === 0) return;
+
+    const focusFindingId = focusTarget.findingId?.trim() || "";
+    const focusLineNumber =
+      typeof focusTarget.lineNumber === "number" && Number.isFinite(focusTarget.lineNumber)
+        ? Math.max(1, Math.floor(focusTarget.lineNumber))
+        : null;
+    const normalizeFocusSide = (side: string | null | undefined) => {
+      const value = side?.trim().toLowerCase();
+      if (!value) return null;
+      if (value === "additions" || value === "addition" || value === "added") {
+        return "additions" as const;
+      }
+      if (value === "deletions" || value === "deletion" || value === "removed") {
+        return "deletions" as const;
+      }
+      return null;
+    };
+    const focusLineSide = normalizeFocusSide(focusTarget.side);
+    const wantsLineFocus = focusFindingId.length > 0 || focusLineNumber != null;
+
+    const escapeSelectorValue = (value: string) =>
+      typeof CSS !== "undefined" && typeof CSS.escape === "function"
+        ? CSS.escape(value)
+        : value.replace(/"/g, '\\"');
+
+    setCollapsedFilePaths((current) => {
+      if (!current.has(targetFilePath)) return current;
+      const next = new Set(current);
+      next.delete(targetFilePath);
+      return next;
+    });
+
+    let canceled = false;
+    const maxAttempts = 12;
+    const focusFileAndLine = (attempt: number) => {
+      if (canceled) return;
+      const viewerRoot = viewerRootRef;
+      if (!viewerRoot) return;
+      const escapedPath = escapeSelectorValue(targetFilePath);
+      const targetFile = viewerRoot.querySelector<HTMLElement>(
+        `[data-rovex-file-path="${escapedPath}"]`
+      );
+      if (!targetFile) {
+        if (attempt < maxAttempts) {
+          requestAnimationFrame(() => focusFileAndLine(attempt + 1));
+        }
+        return;
+      }
+
+      targetFile.scrollIntoView({
+        behavior: attempt === 0 ? "smooth" : "auto",
+        block: "start",
+        inline: "nearest",
+      });
+
+      if (!wantsLineFocus) return;
+
+      const fileDiffContainer = targetFile.querySelector("diffs-container");
+      const shadowRoot =
+        fileDiffContainer instanceof HTMLElement ? fileDiffContainer.shadowRoot : null;
+      const searchRoots: ParentNode[] = shadowRoot ? [shadowRoot, targetFile] : [targetFile];
+
+      let lineTarget: HTMLElement | null = null;
+      if (focusFindingId.length > 0) {
+        const escapedFindingId = escapeSelectorValue(focusFindingId);
+        for (const root of searchRoots) {
+          lineTarget = root.querySelector<HTMLElement>(
+            `[data-rovex-annotation-id="${escapedFindingId}"]`
+          );
+          if (lineTarget) break;
+        }
+      }
+      if (!lineTarget && focusLineNumber != null) {
+        const annotationLineSelector =
+          focusLineSide != null
+            ? `[data-rovex-line-side="${focusLineSide}"][data-rovex-line-number="${focusLineNumber}"]`
+            : `[data-rovex-line-number="${focusLineNumber}"]`;
+        for (const root of searchRoots) {
+          lineTarget = root.querySelector<HTMLElement>(annotationLineSelector);
+          if (lineTarget) break;
+        }
+      }
+
+      if (!lineTarget && focusLineNumber != null) {
+        const sideType =
+          focusLineSide === "additions"
+            ? "change-addition"
+            : focusLineSide === "deletions"
+              ? "change-deletion"
+              : null;
+        const rowSelector =
+          sideType != null
+            ? `[data-line="${focusLineNumber}"][data-line-type="${sideType}"]`
+            : `[data-line="${focusLineNumber}"]`;
+        for (const root of searchRoots) {
+          lineTarget = root.querySelector<HTMLElement>(rowSelector);
+          if (lineTarget) break;
+        }
+      }
+
+      if (lineTarget) {
+        lineTarget.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+          inline: "nearest",
+        });
+        return;
+      }
+
+      if (!shadowRoot && attempt < maxAttempts) {
+        requestAnimationFrame(() => focusFileAndLine(attempt + 1));
+        return;
+      }
+
+      if (attempt < maxAttempts) {
+        requestAnimationFrame(() => focusFileAndLine(attempt + 1));
+      }
+    };
+
+    queueMicrotask(() => focusFileAndLine(0));
+    onCleanup(() => {
+      canceled = true;
+    });
+  });
+
   return (
-    <div class={themeClass()}>
+    <div ref={viewerRootRef} class={themeClass()}>
       <Show when={parseError()}>
         {(message) => (
           <div class="mb-3 rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-[13px] text-rose-300/90">

@@ -43,3 +43,10 @@ export type ReviewChatSharedDiffContext = {
   diff: string;
   truncated: boolean;
 };
+
+export type ReviewDiffFocusTarget = {
+  filePath: string;
+  lineNumber: number | null;
+  findingId: string | null;
+  side: "additions" | "deletions" | string | null;
+};

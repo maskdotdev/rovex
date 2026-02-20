@@ -115,6 +115,10 @@ export function buildReviewActionArgs(s: AppState): Parameters<typeof useReviewA
       setBranchActionError: s.setBranchActionError,
       refetchWorkspaceBranches: s.refetchWorkspaceBranches,
     },
+    editor: {
+      fileOpenWith: s.fileOpenWith,
+      ghosttyOpenCommand: s.ghosttyOpenCommand,
+    },
     ai: {
       prompt: s.aiPrompt,
       setPrompt: s.setAiPrompt,
@@ -189,6 +193,7 @@ export function buildAppEffectsArgs(
     aiReviewBusy: s.aiReviewBusy,
     setAiRunElapsedSeconds: s.setAiRunElapsedSeconds,
     setActiveReviewScope: s.setActiveReviewScope,
+    setDiffFocusTarget: s.setDiffFocusTarget,
     setReviewRuns: s.setReviewRuns,
     selectedRunId: s.selectedRunId,
     setSelectedRunId: s.setSelectedRunId,
@@ -196,6 +201,8 @@ export function buildAppEffectsArgs(
     maskAccountEmail: s.maskAccountEmail,
     reviewSidebarCollapsed: s.reviewSidebarCollapsed,
     setReviewSidebarCollapsed: s.setReviewSidebarCollapsed,
+    fileOpenWith: s.fileOpenWith,
+    ghosttyOpenCommand: s.ghosttyOpenCommand,
     reviewDefaultsByRepo: s.reviewDefaultsByRepo,
     handleCompareSelectedReview: reviewActions.handleCompareSelectedReview,
   };

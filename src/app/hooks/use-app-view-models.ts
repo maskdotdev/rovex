@@ -19,6 +19,7 @@ type BuildAppViewModelsArgs = {
     | "handleStartAiReviewOnFullDiff"
     | "handleCancelAiReviewRun"
     | "handlePrepareAiFollowUpForFile"
+    | "handleOpenFileInEditor"
     | "handleAskAiFollowUp"
   >;
 };
@@ -82,6 +83,10 @@ function buildSettingsViewModel(s: AppState, p: ProviderActions): SettingsViewMo
     handleRefreshAppServerAccountStatus: p.handleRefreshAppServerAccountStatus,
     maskAccountEmail: s.maskAccountEmail,
     setMaskAccountEmail: s.setMaskAccountEmail,
+    fileOpenWith: s.fileOpenWith,
+    setFileOpenWith: s.setFileOpenWith,
+    ghosttyOpenCommand: s.ghosttyOpenCommand,
+    setGhosttyOpenCommand: s.setGhosttyOpenCommand,
     opencodeSidecarStatus: s.opencodeSidecarStatus,
     opencodeSidecarLoadError: s.opencodeSidecarLoadError,
     aiApiKeyInput: s.aiApiKeyInput,
@@ -157,7 +162,9 @@ function buildWorkspaceMainPaneModel(
     setActiveReviewScope: s.setActiveReviewScope,
     selectedDiffTheme: s.selectedDiffTheme,
     diffAnnotations: s.diffAnnotations,
+    diffFocusTarget: s.diffFocusTarget,
     handlePrepareAiFollowUpForFile: r.handlePrepareAiFollowUpForFile,
+    handleOpenFileInEditor: r.handleOpenFileInEditor,
     handleStartAiReviewOnFullDiff: r.handleStartAiReviewOnFullDiff,
   };
 }
@@ -189,6 +196,8 @@ function buildWorkspaceReviewSidebarModel(
     aiReviewBusy: s.aiReviewBusy,
     aiFollowUpBusy: s.aiFollowUpBusy,
     compareBusy: s.compareBusy,
+    setShowDiffViewer: s.setShowDiffViewer,
+    setDiffFocusTarget: s.setDiffFocusTarget,
     selectedWorkspace: s.selectedWorkspace,
     branchPopoverOpen: s.branchPopoverOpen,
     setBranchPopoverOpen: s.setBranchPopoverOpen,

@@ -16,6 +16,7 @@ import {
   type ReviewScope,
 } from "@/app/review-scope";
 import { formatReviewMessage } from "@/app/review-text";
+import type { ReviewDiffFocusTarget } from "@/app/review-types";
 import type { DiffThemePreset } from "@/app/types";
 import type { CompareWorkspaceDiffResult } from "@/lib/backend";
 
@@ -39,6 +40,7 @@ export type WorkspaceMainPaneModel = {
   setActiveReviewScope: Setter<ReviewScope>;
   selectedDiffTheme: Accessor<DiffThemePreset>;
   diffAnnotations: Accessor<DiffViewerAnnotation[]>;
+  diffFocusTarget: Accessor<ReviewDiffFocusTarget | null>;
 };
 
 type WorkspaceMainPaneProps = {
@@ -177,6 +179,7 @@ export function WorkspaceMainPane(props: WorkspaceMainPaneProps) {
                     theme={model.selectedDiffTheme().theme}
                     themeId={model.selectedDiffTheme().id}
                     themeType="dark"
+                    focusTarget={model.diffFocusTarget()}
                     collapseStateKey={diffCollapseStateKey()}
                     annotations={model.diffAnnotations()}
                     onAskAiAboutFile={model.handlePrepareAiFollowUpForFile}

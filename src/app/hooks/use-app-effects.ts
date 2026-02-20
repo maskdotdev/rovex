@@ -3,6 +3,8 @@ import { listen } from "@tauri-apps/api/event";
 import {
   ACCOUNT_EMAIL_MASK_STORAGE_KEY,
   DIFF_THEME_STORAGE_KEY,
+  FILE_OPEN_WITH_STORAGE_KEY,
+  GHOSTTY_OPEN_COMMAND_STORAGE_KEY,
   KNOWN_REPO_WORKSPACES_STORAGE_KEY,
   REPO_REVIEW_DEFAULTS_STORAGE_KEY,
   REPO_DISPLAY_NAME_STORAGE_KEY,
@@ -24,6 +26,7 @@ import {
   resolveReviewRunStatusFromProgress,
 } from "@/app/hooks/review-run-sync";
 import type {
+  ReviewDiffFocusTarget,
   ReviewChatSharedDiffContext,
   ReviewRun,
   ReviewWorkbenchTab,
@@ -72,6 +75,7 @@ type UseAppEffectsArgs = {
   aiReviewBusy: Accessor<boolean>;
   setAiRunElapsedSeconds: Setter<number>;
   setActiveReviewScope: Setter<ReviewScope>;
+  setDiffFocusTarget: Setter<ReviewDiffFocusTarget | null>;
   setReviewRuns: Setter<ReviewRun[]>;
   selectedRunId: Accessor<string | null>;
   setSelectedRunId: Setter<string | null>;
@@ -79,6 +83,8 @@ type UseAppEffectsArgs = {
   maskAccountEmail: Accessor<boolean>;
   reviewSidebarCollapsed: Accessor<boolean>;
   setReviewSidebarCollapsed: Setter<boolean>;
+  fileOpenWith: Accessor<string>;
+  ghosttyOpenCommand: Accessor<string>;
   reviewDefaultsByRepo: Accessor<Record<string, RepoReviewDefaults>>;
   handleCompareSelectedReview: () => void | Promise<void>;
 };
@@ -163,6 +169,21 @@ export function useAppEffects(args: UseAppEffectsArgs) {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
+    window.localStorage.setItem(FILE_OPEN_WITH_STORAGE_KEY, args.fileOpenWith());
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    const normalized = args.ghosttyOpenCommand().trim();
+    if (!normalized) {
+      window.localStorage.removeItem(GHOSTTY_OPEN_COMMAND_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(GHOSTTY_OPEN_COMMAND_STORAGE_KEY, normalized);
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
     window.localStorage.setItem(
       REPO_REVIEW_DEFAULTS_STORAGE_KEY,
       JSON.stringify(args.reviewDefaultsByRepo())
@@ -204,6 +225,7 @@ export function useAppEffects(args: UseAppEffectsArgs) {
     args.setAiFindings([]);
     args.setAiProgressEvents([]);
     args.setActiveReviewScope(createFullReviewScope());
+    args.setDiffFocusTarget(null);
     args.setReviewRuns([]);
     args.setSelectedRunId(null);
     args.setReviewWorkbenchTab("description");
