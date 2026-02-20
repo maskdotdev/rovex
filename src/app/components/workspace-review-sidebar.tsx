@@ -1,4 +1,12 @@
-import { For, Show, createMemo, type Accessor, type Setter } from "solid-js";
+import {
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  type Accessor,
+  type Setter,
+} from "solid-js";
 import {
   AlertTriangle,
   Check,
@@ -18,6 +26,7 @@ import {
   SidebarGroup,
 } from "@/components/sidebar";
 import { TextField, TextFieldInput } from "@/components/text-field";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/tooltip";
 import { normalizeDiffPath, type ReviewScope } from "@/app/review-scope";
 import { formatReviewMessage } from "@/app/review-text";
 import type {
@@ -105,10 +114,38 @@ const reviewWorkbenchTabs = [
 const tabShowsRunActivity = (tabId: ReviewWorkbenchTab) =>
   tabId === "description" || tabId === "issues";
 
+const REVIEW_ISSUE_CARD_EXPANDED_STORAGE_KEY =
+  "rovex.workspace.review-issue-card-expanded";
+
+function readStoredExpandedIssueCards(): Record<string, boolean> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(REVIEW_ISSUE_CARD_EXPANDED_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+    const next: Record<string, boolean> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === "boolean") next[key] = value;
+    }
+    return next;
+  } catch {
+    return {};
+  }
+}
+
+function getPathLeaf(path: string) {
+  const segments = path.split(/[\\/]/).filter(Boolean);
+  return segments[segments.length - 1] ?? path;
+}
+
 export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
   const model = props.model;
   const isCollapsed = createMemo(() => model.reviewSidebarCollapsed?.() ?? false);
   const isFollowUpBusy = createMemo(() => model.aiFollowUpBusy?.() ?? model.aiReviewBusy());
+  const [expandedIssueCards, setExpandedIssueCards] = createSignal<Record<string, boolean>>(
+    readStoredExpandedIssueCards()
+  );
   const derived = useWorkspaceReviewSidebarViewModel({
     reviewRuns: model.reviewRuns,
     selectedRunId: model.selectedRunId,
@@ -138,11 +175,30 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
         .find((run) => run.status === "queued" || run.status === "running") ?? null
     );
   });
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      REVIEW_ISSUE_CARD_EXPANDED_STORAGE_KEY,
+      JSON.stringify(expandedIssueCards())
+    );
+  });
 
   let tabRefs: Array<HTMLButtonElement | undefined> = [];
   const branchPopoverContentId = "workspace-branch-picker-popover";
   const branchSearchInputId = "workspace-branch-search-input";
   const branchCreateInputId = "workspace-branch-create-input";
+  const issueCardExpandKey = (card: IssueFileCard) => normalizeDiffPath(card.filePath) || card.id;
+  const isIssueCardExpanded = (card: IssueFileCard) => {
+    const key = issueCardExpandKey(card);
+    return expandedIssueCards()[key] ?? true;
+  };
+  const toggleIssueCardExpanded = (card: IssueFileCard) => {
+    const key = issueCardExpandKey(card);
+    setExpandedIssueCards((current) => ({
+      ...current,
+      [key]: !(current[key] ?? true),
+    }));
+  };
   const renderIssueFileCard = (card: IssueFileCard) => (
     <article
       class={`rounded-lg border px-3 py-2 ${
@@ -154,34 +210,56 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
       }`}
     >
       <div class="flex items-center justify-between gap-2">
-        <p class="truncate text-[12px] font-medium text-neutral-200">{card.filePath}</p>
-        <Show
-          when={card.status === "running"}
-          fallback={
-            <Show
-              when={card.status === "clean"}
-              fallback={
-                <Show
-                  when={card.status === "failed"}
-                  fallback={
-                    <span class="text-[11px] text-amber-200/90">
-                      {card.findings.length} issue{card.findings.length === 1 ? "" : "s"}
-                    </span>
-                  }
-                >
-                  <AlertTriangle class="size-4 text-rose-300/90" />
-                </Show>
-              }
+        <Tooltip openDelay={120} closeDelay={90}>
+          <TooltipTrigger class="block min-w-0 flex-1 text-left">
+            <p class="truncate text-left text-[12px] font-medium text-neutral-200">
+              {getPathLeaf(card.filePath)}
+            </p>
+          </TooltipTrigger>
+          <TooltipContent class="max-w-[28rem] break-all text-[11px]">{card.filePath}</TooltipContent>
+        </Tooltip>
+        <div class="flex items-center gap-2">
+          <Show when={card.status === "issues" || card.status === "failed"}>
+            <button
+              type="button"
+              class="inline-flex items-center justify-center rounded-md border border-white/[0.08] bg-black/20 p-1 text-neutral-400 transition-colors hover:text-neutral-200"
+              aria-label={isIssueCardExpanded(card) ? "Collapse issue details" : "Expand issue details"}
+              aria-expanded={isIssueCardExpanded(card)}
+              onClick={() => toggleIssueCardExpanded(card)}
             >
-              <CheckCircle2 class="size-4 text-emerald-300/90" />
-            </Show>
-          }
-        >
-          <LoaderCircle class="size-4 animate-spin text-amber-300/90" />
-        </Show>
+              <ChevronRight
+                class={`size-3.5 transition-transform ${isIssueCardExpanded(card) ? "rotate-90" : ""}`}
+              />
+            </button>
+          </Show>
+          <Show
+            when={card.status === "running"}
+            fallback={
+              <Show
+                when={card.status === "clean"}
+                fallback={
+                  <Show
+                    when={card.status === "failed"}
+                    fallback={
+                      <span class="text-[11px] text-amber-200/90">
+                        {card.findings.length} issue{card.findings.length === 1 ? "" : "s"}
+                      </span>
+                    }
+                  >
+                    <AlertTriangle class="size-4 text-rose-300/90" />
+                  </Show>
+                }
+              >
+                <CheckCircle2 class="size-4 text-emerald-300/90" />
+              </Show>
+            }
+          >
+            <LoaderCircle class="size-4 animate-spin text-amber-300/90" />
+          </Show>
+        </div>
       </div>
 
-      <Show when={card.status === "issues" || card.status === "failed"}>
+      <Show when={(card.status === "issues" || card.status === "failed") && isIssueCardExpanded(card)}>
         <div class="mt-2 space-y-2">
           <Show when={card.status === "failed"}>
             <p class="review-stream-message text-[12px] text-rose-300/90">
@@ -481,18 +559,25 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                 fallback={<p class="review-empty-state">{issuesEmptyMessage()}</p>}
               >
                 <div class="space-y-2 overflow-y-auto pr-1">
-                  <For each={flaggedIssueFileCards()}>{(card) => renderIssueFileCard(card)}</For>
+                  <Show when={flaggedIssueFileCards().length > 0}>
+                    <>
+                      <p class="px-1 text-[10px] uppercase tracking-[0.08em] text-neutral-500">
+                        Files with issues ({flaggedIssueFileCards().length})
+                      </p>
+                      <For each={flaggedIssueFileCards()}>
+                        {(card) => renderIssueFileCard(card)}
+                      </For>
+                    </>
+                  </Show>
                   <Show when={cleanIssueFileCards().length > 0}>
-                    <details class="rounded-lg border border-white/[0.07] bg-white/[0.015] px-3 py-2">
-                      <summary class="cursor-pointer select-none text-[12px] font-medium text-neutral-300">
+                    <>
+                      <p class="px-1 pt-1 text-[10px] uppercase tracking-[0.08em] text-neutral-500">
                         Files without issues ({cleanIssueFileCards().length})
-                      </summary>
-                      <div class="mt-2 space-y-2">
-                        <For each={cleanIssueFileCards()}>
-                          {(card) => renderIssueFileCard(card)}
-                        </For>
-                      </div>
-                    </details>
+                      </p>
+                      <For each={cleanIssueFileCards()}>
+                        {(card) => renderIssueFileCard(card)}
+                      </For>
+                    </>
                   </Show>
                 </div>
               </Show>
