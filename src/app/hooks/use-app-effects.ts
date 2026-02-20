@@ -18,6 +18,11 @@ import type {
   CompareWorkspaceDiffResult,
 } from "@/lib/backend";
 import { createFullReviewScope, type ReviewScope } from "@/app/review-scope";
+import {
+  hasActiveReviewRuns,
+  mergePersistedReviewRuns,
+  resolveReviewRunStatusFromProgress,
+} from "@/app/hooks/review-run-sync";
 import type {
   ReviewChatSharedDiffContext,
   ReviewRun,
@@ -135,25 +140,12 @@ export function useAppEffects(args: UseAppEffectsArgs) {
   createEffect(() => {
     const runs = args.persistedReviewRuns();
     if (!runs) return;
-    args.setReviewRuns(
-      runs.map((run) => ({
-        id: run.runId,
-        status: run.status as ReviewRun["status"],
-        scope: createFullReviewScope(),
-        scopeLabel: run.scopeLabel?.trim() || "AI review run",
-        startedAt: Date.parse(run.startedAt ?? run.createdAt) || Date.now(),
-        endedAt: run.endedAt ? Date.parse(run.endedAt) || Date.now() : null,
-        model: run.model,
-        review: run.review,
-        diffTruncated: run.diffTruncated,
-        error: run.error,
-        progressEvents: run.progressEvents,
-        chunks: run.chunks,
-        findings: run.findings,
-      }))
-    );
-    const hasActiveRun = runs.some((run) => run.status === "queued" || run.status === "running");
-    args.setAiReviewBusy(hasActiveRun);
+    let mergedRuns: ReviewRun[] = [];
+    args.setReviewRuns((current) => {
+      mergedRuns = mergePersistedReviewRuns(current, runs);
+      return mergedRuns;
+    });
+    args.setAiReviewBusy(hasActiveReviewRuns(mergedRuns));
   });
 
   createEffect(() => {
@@ -436,6 +428,20 @@ export function useAppEffects(args: UseAppEffectsArgs) {
           nextRun = {
             ...nextRun,
             error: nextRun.error ?? payload.message,
+          };
+        }
+
+        const resolvedStatus = resolveReviewRunStatusFromProgress(
+          nextRun.status,
+          nextRun.progressEvents
+        );
+        if (resolvedStatus !== nextRun.status) {
+          nextRun = {
+            ...nextRun,
+            status: resolvedStatus,
+            endedAt:
+              nextRun.endedAt ??
+              (resolvedStatus === "queued" || resolvedStatus === "running" ? null : Date.now()),
           };
         }
 
