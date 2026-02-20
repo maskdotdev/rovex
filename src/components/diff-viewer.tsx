@@ -514,8 +514,15 @@ function toLineTargetFromSelectedRange(
   range: SelectedLineRange | null
 ): DiffViewerLineTarget | null {
   if (!range) return null;
-  const sideCandidate = range.endSide ?? range.side;
-  if (sideCandidate !== "additions" && sideCandidate !== "deletions") {
+  const normalizeSide = (value: unknown): "additions" | "deletions" | null =>
+    value === "additions" || value === "deletions" ? value : null;
+  const startSide = normalizeSide(range.side);
+  const endSide = normalizeSide(range.endSide);
+  if (startSide != null && endSide != null && startSide !== endSide) {
+    return null;
+  }
+  const sideCandidate = endSide ?? startSide;
+  if (sideCandidate == null) {
     return null;
   }
   return normalizeLineTarget({
@@ -524,6 +531,22 @@ function toLineTargetFromSelectedRange(
     lineNumber: range.start,
     endLineNumber: range.end,
   });
+}
+
+function isLineTargetRange(target: DiffViewerLineTarget) {
+  return target.endLineNumber != null && target.endLineNumber !== target.lineNumber;
+}
+
+function doesLineTargetMatchRange(
+  rangeTarget: DiffViewerLineTarget,
+  lineTarget: DiffViewerLineTarget
+) {
+  if (!isLineTargetRange(rangeTarget)) return false;
+  if (rangeTarget.filePath !== lineTarget.filePath || rangeTarget.side !== lineTarget.side) {
+    return false;
+  }
+  const rangeEnd = rangeTarget.endLineNumber ?? rangeTarget.lineNumber;
+  return lineTarget.lineNumber >= rangeTarget.lineNumber && lineTarget.lineNumber <= rangeEnd;
 }
 
 function renderDiffAnnotation(annotation: DiffLineAnnotation<DiffViewerAnnotationMetadata>) {
@@ -1080,27 +1103,26 @@ function DiffFileCard(props: DiffFileCardProps) {
             target,
           });
           props.onLineSelectionChange?.(target);
+          if (target && isLineTargetRange(target)) {
+            props.onAddCommentForSelection?.(target);
+          }
         },
         onLineClick: (lineEvent) => {
-          const lineType = lineEvent.lineType;
-          if (lineType !== "change-addition" && lineType !== "change-deletion") return;
           const normalizedPath = getNormalizedFilePath();
           if (!normalizedPath) return;
           props.onLineClick?.({
             filePath: normalizedPath,
             lineNumber: lineEvent.lineNumber,
-            side: lineEvent.annotationSide,
+            side: lineEvent.annotationSide === "deletions" ? "deletions" : "additions",
           });
         },
         onLineNumberClick: (lineEvent) => {
-          const lineType = lineEvent.lineType;
-          if (lineType !== "change-addition" && lineType !== "change-deletion") return;
           const normalizedPath = getNormalizedFilePath();
           if (!normalizedPath) return;
           props.onLineNumberClick?.({
             filePath: normalizedPath,
             lineNumber: lineEvent.lineNumber,
-            side: lineEvent.annotationSide,
+            side: lineEvent.annotationSide === "deletions" ? "deletions" : "additions",
           });
         },
       };
@@ -1229,9 +1251,18 @@ export function DiffViewer(props: DiffViewerProps) {
   const handleLineNumberClick = (target: DiffViewerLineTarget) => {
     const normalizedTarget = normalizeLineTarget(target);
     if (!normalizedTarget) return;
+    const pendingTarget = pendingSelectionTarget();
+    const nextTarget =
+      pendingTarget && doesLineTargetMatchRange(pendingTarget, normalizedTarget)
+        ? pendingTarget
+        : normalizedTarget;
     setPendingSelectionTarget(null);
+    if (isLineTargetRange(nextTarget)) {
+      setCommentTarget(nextTarget);
+      return;
+    }
     setCommentTarget((current) => (
-      areLineTargetsEqual(current, normalizedTarget) ? null : normalizedTarget
+      areLineTargetsEqual(current, nextTarget) ? null : nextTarget
     ));
   };
 
@@ -1266,7 +1297,7 @@ export function DiffViewer(props: DiffViewerProps) {
       normalizedTarget: target,
     });
     if (!target) return;
-    setPendingSelectionTarget(null);
+    setPendingSelectionTarget(target);
     setCommentTarget(target);
   };
 
@@ -1820,7 +1851,7 @@ export function DiffViewer(props: DiffViewerProps) {
             </Show>
             <Show when={lineNumbers()}>
               <span class="text-[11px] text-neutral-500/90">
-                Click or drag changed lines to comment
+                Click any diff line or drag line numbers to comment on ranges
               </span>
             </Show>
           </div>
