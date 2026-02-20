@@ -144,7 +144,7 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
       id="review-workbench-sidebar"
       side="right"
       collapsible="none"
-      class={`w-[23rem] overflow-hidden border-0 bg-transparent px-2.5 py-2 transition-[width,opacity,padding] duration-200 ease-linear [&_[data-sidebar=sidebar]]:rounded-2xl [&_[data-sidebar=sidebar]]:border [&_[data-sidebar=sidebar]]:border-white/[0.06] [&_[data-sidebar=sidebar]]:bg-white/[0.02] ${
+      class={`h-svh max-h-svh w-[23rem] shrink-0 overflow-hidden border-0 bg-transparent px-2.5 py-2 transition-[width,opacity,padding] duration-200 ease-linear [&_[data-sidebar=sidebar]]:rounded-2xl [&_[data-sidebar=sidebar]]:border [&_[data-sidebar=sidebar]]:border-white/[0.06] [&_[data-sidebar=sidebar]]:bg-white/[0.02] ${
         isCollapsed() ? "w-0 px-0 py-0 opacity-0 pointer-events-none" : "opacity-100"
       }`}
     >
