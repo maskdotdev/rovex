@@ -178,6 +178,8 @@ textarea:focus {
   color: rgba(255, 255, 255, 0.54);
 }
 
+
+
 .rovex-diff-icon-controls {
   display: flex;
   align-items: center;
@@ -211,6 +213,7 @@ textarea:focus {
 .rovex-diff-file {
   display: flex;
   flex-direction: column;
+  position: relative;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 0.8rem;
   background: rgba(255, 255, 255, 0.02);
@@ -312,49 +315,219 @@ textarea:focus {
   color: rgba(255, 255, 255, 0.48);
 }
 
+/* ─────────────────────────────────────────────────
+   Inline annotation cards – AI findings & comments
+   ───────────────────────────────────────────────── */
 .rovex-inline-annotation {
-  margin: 0.35rem 0.45rem;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-left-width: 3px;
-  border-radius: 0.6rem;
-  background: rgba(11, 16, 23, 0.92);
-  padding: 0.42rem 0.52rem;
+  margin: 0.38rem 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.65rem;
+  background:
+    radial-gradient(ellipse 100% 120% at 10% 0%, rgba(255, 255, 255, 0.04), transparent 50%),
+    #131518;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  padding: 0.52rem 0.68rem;
+  font-family: "DM Sans", "Avenir Next", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
-.rovex-inline-annotation.is-critical {
-  border-left-color: rgba(255, 82, 82, 0.95);
+/* ─── Comment composer card ─── */
+.rovex-inline-annotation.is-comment-composer {
+  padding: 0;
+  overflow: hidden;
 }
 
-.rovex-inline-annotation.is-high {
-  border-left-color: rgba(255, 140, 102, 0.95);
-}
-
-.rovex-inline-annotation.is-medium {
-  border-left-color: rgba(242, 201, 76, 0.95);
-}
-
-.rovex-inline-annotation.is-low {
-  border-left-color: rgba(116, 209, 159, 0.95);
-}
-
+/* ── AI finding & user comment text ── */
 .rovex-inline-annotation-title {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  color: rgba(244, 247, 255, 0.95);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.40);
 }
 
 .rovex-inline-annotation-body {
-  margin-top: 0.2rem;
-  font-size: 0.72rem;
-  line-height: 1.35;
-  color: rgba(220, 228, 240, 0.86);
+  margin-top: 0.3rem;
+  font-size: 0.78rem;
+  line-height: 1.52;
+  letter-spacing: -0.01em;
+  color: rgba(255, 255, 255, 0.74);
 }
 
 .rovex-inline-annotation-footer {
-  margin-top: 0.26rem;
-  font-size: 0.65rem;
-  color: rgba(168, 180, 200, 0.65);
+  margin-top: 0.34rem;
+  font-size: 0.6rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.24);
+}
+
+/* ─── Composer: header row ─── */
+.rovex-composer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.42rem 0.52rem 0.38rem 0.68rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.rovex-composer-header-label {
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  color: rgba(255, 255, 255, 0.46);
+}
+
+.rovex-composer-header-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.3rem;
+  height: 1.3rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.32);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.rovex-composer-header-chevron:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.62);
+}
+
+/* ─── Composer: formatting toolbar ─── */
+.rovex-composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.12rem;
+  padding: 0.3rem 0.62rem;
+}
+
+.rovex-composer-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.52rem;
+  height: 1.52rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.32rem;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.30);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.rovex-composer-toolbar-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.rovex-composer-toolbar-btn:active {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* ─── Composer: separator ─── */
+.rovex-composer-separator {
+  height: 1px;
+  margin: 0 0.62rem;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.07) 20%,
+    rgba(255, 255, 255, 0.07) 80%,
+    transparent
+  );
+}
+
+/* ─── Composer: textarea ─── */
+.rovex-inline-comment-textarea {
+  width: 100%;
+  min-height: 5.5rem;
+  resize: vertical;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.9);
+  padding: 0.52rem 0.68rem;
+  font-family: "DM Sans", "Avenir Next", system-ui, sans-serif;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+}
+
+.rovex-inline-comment-textarea:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.rovex-inline-comment-textarea::placeholder {
+  color: rgba(255, 255, 255, 0.22);
+}
+
+/* ─── Composer: bottom action bar ─── */
+.rovex-composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.38rem 0.62rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.rovex-composer-actions-left,
+.rovex-composer-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 0.32rem;
+}
+
+.rovex-composer-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.26rem 0.52rem;
+  border: 0;
+  border-radius: 0.38rem;
+  background: transparent;
+  font-family: "DM Sans", "Avenir Next", system-ui, sans-serif;
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  color: rgba(255, 255, 255, 0.42);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.rovex-composer-action-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.76);
+}
+
+.rovex-composer-action-btn:active {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.rovex-composer-action-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.rovex-composer-action-btn.is-chat svg {
+  opacity: 0.7;
+}
+
+.rovex-inline-comment-hint {
+  font-size: 0.6rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.16);
+  user-select: none;
 }
 
 .branch-picker-trigger {

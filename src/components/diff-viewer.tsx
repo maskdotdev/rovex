@@ -10,7 +10,6 @@ import {
 import {
   Columns2,
   Hash,
-  MessageSquare,
   PaintBucket,
   Rows3,
   Sparkles,
@@ -167,9 +166,12 @@ type DiffViewerAnnotationMetadata = {
   title: string;
   body: string;
   severity: string;
+  lineLabel: string;
   onInput: (value: string) => void;
   onSubmit: (value: string) => void;
   onCancel: () => void;
+  onAddToChat?: () => void;
+  onSuggest?: () => void;
   submitting: boolean;
 };
 
@@ -543,67 +545,143 @@ function renderDiffAnnotation(annotation: DiffLineAnnotation<DiffViewerAnnotatio
     });
     root.classList.add("is-comment-composer");
 
-    const titleRow = document.createElement("div");
-    titleRow.className = "rovex-inline-annotation-title";
-    titleRow.textContent = metadata.title;
-    root.appendChild(titleRow);
+    /* ── Header: line range + collapse ── */
+    const header = document.createElement("div");
+    header.className = "rovex-composer-header";
+    const headerLabel = document.createElement("span");
+    headerLabel.className = "rovex-composer-header-label";
+    headerLabel.textContent = `Lines ${metadata.lineLabel.replace(/^L/, "").replace(/-L/, "–")}`;
+    header.appendChild(headerLabel);
+    const headerChevron = document.createElement("button");
+    headerChevron.type = "button";
+    headerChevron.className = "rovex-composer-header-chevron";
+    headerChevron.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
+    headerChevron.title = "Collapse";
+    headerChevron.addEventListener("click", () => metadata.onCancel());
+    header.appendChild(headerChevron);
+    root.appendChild(header);
 
-    const form = document.createElement("form");
-    form.className = "rovex-inline-comment-form";
-    const submitButton = document.createElement("button");
+    /* ── Formatting toolbar ── */
+    const toolbar = document.createElement("div");
+    toolbar.className = "rovex-composer-toolbar";
+    const toolbarItems: Array<{ label: string; icon: string; wrap: [string, string] }> = [
+      { label: "Bold", icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/><path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/></svg>`, wrap: ["**", "**"] },
+      { label: "Italic", icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/></svg>`, wrap: ["_", "_"] },
+      { label: "Code", icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`, wrap: ["`", "`"] },
+      { label: "Code block", icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="14" y2="13"/></svg>`, wrap: ["```\n", "\n```"] },
+      { label: "Link", icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`, wrap: ["[", "](url)"] },
+      { label: "Quote", icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V21z"/><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z"/></svg>`, wrap: ["> ", ""] },
+    ];
+    // Create textarea early so toolbar buttons can reference it for formatting
+    const textareaRef = document.createElement("textarea");
+    for (const item of toolbarItems) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "rovex-composer-toolbar-btn";
+      btn.title = item.label;
+      btn.innerHTML = item.icon;
+      btn.addEventListener("click", () => {
+        if (!textareaRef) return;
+        const start = textareaRef.selectionStart;
+        const end = textareaRef.selectionEnd;
+        const text = textareaRef.value;
+        const selected = text.slice(start, end);
+        const replacement = `${item.wrap[0]}${selected || item.label.toLowerCase()}${item.wrap[1]}`;
+        textareaRef.value = text.slice(0, start) + replacement + text.slice(end);
+        metadata.onInput(textareaRef.value);
+        const cursorPos = selected
+          ? start + replacement.length
+          : start + item.wrap[0].length + item.label.toLowerCase().length;
+        textareaRef.focus();
+        textareaRef.setSelectionRange(
+          selected ? start + item.wrap[0].length : start + item.wrap[0].length,
+          selected ? start + item.wrap[0].length + selected.length : cursorPos,
+        );
+      });
+      toolbar.appendChild(btn);
+    }
+    root.appendChild(toolbar);
 
-    const textarea = document.createElement("textarea");
-    textarea.className = "rovex-inline-comment-textarea";
-    textarea.placeholder = "Leave a comment";
-    textarea.value = metadata.body;
-    textarea.rows = 4;
-    textarea.disabled = metadata.submitting;
-    textarea.addEventListener("input", () => {
-      metadata.onInput(textarea.value);
-      submitButton.disabled = textarea.value.trim().length === 0;
+    /* ── Separator ── */
+    const sep = document.createElement("div");
+    sep.className = "rovex-composer-separator";
+    root.appendChild(sep);
+
+    /* ── Textarea (borderless inside card) ── */
+    textareaRef.className = "rovex-inline-comment-textarea";
+    textareaRef.placeholder = "Leave a comment...";
+    textareaRef.value = metadata.body;
+    textareaRef.rows = 4;
+    textareaRef.disabled = metadata.submitting;
+    textareaRef.addEventListener("input", () => {
+      metadata.onInput(textareaRef.value);
     });
-    textarea.addEventListener("keydown", (event) => {
+    textareaRef.addEventListener("keydown", (event) => {
       if (metadata.submitting) return;
       if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
         event.preventDefault();
-        const value = textarea.value.trim();
+        const value = textareaRef.value.trim();
         if (value.length === 0) return;
         metadata.onSubmit(value);
       }
     });
-    form.appendChild(textarea);
+    root.appendChild(textareaRef);
 
+    /* ── Bottom action bar ── */
     const actions = document.createElement("div");
-    actions.className = "rovex-inline-comment-actions";
+    actions.className = "rovex-composer-actions";
 
-    submitButton.type = "submit";
-    submitButton.className = "rovex-inline-comment-submit";
-    submitButton.textContent = metadata.submitting ? "Commenting..." : "Comment";
-    submitButton.disabled = metadata.submitting || metadata.body.trim().length === 0;
-    actions.appendChild(submitButton);
+    const actionsLeft = document.createElement("div");
+    actionsLeft.className = "rovex-composer-actions-left";
+
+    const suggestBtn = document.createElement("button");
+    suggestBtn.type = "button";
+    suggestBtn.className = "rovex-composer-action-btn";
+    suggestBtn.textContent = "Suggest";
+    suggestBtn.disabled = metadata.submitting;
+    suggestBtn.addEventListener("click", () => {
+      if (metadata.onSuggest) {
+        metadata.onSuggest();
+      }
+    });
+    actionsLeft.appendChild(suggestBtn);
+
+    if (metadata.onAddToChat) {
+      const addToChatBtn = document.createElement("button");
+      addToChatBtn.type = "button";
+      addToChatBtn.className = "rovex-composer-action-btn is-chat";
+      addToChatBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>Add to Chat</span>`;
+      addToChatBtn.disabled = metadata.submitting;
+      addToChatBtn.addEventListener("click", () => metadata.onAddToChat?.());
+      actionsLeft.appendChild(addToChatBtn);
+    }
+    actions.appendChild(actionsLeft);
+
+    const actionsRight = document.createElement("div");
+    actionsRight.className = "rovex-composer-actions-right";
+
+    const isMac = navigator.platform?.toLowerCase().includes("mac") ?? false;
+    const shortcutHint = document.createElement("span");
+    shortcutHint.className = "rovex-inline-comment-hint";
+    shortcutHint.textContent = `${isMac ? "⌘" : "Ctrl"}+Enter to comment`;
+    actionsRight.appendChild(shortcutHint);
 
     const cancelButton = document.createElement("button");
     cancelButton.type = "button";
-    cancelButton.className = "rovex-inline-comment-cancel";
+    cancelButton.className = "rovex-composer-action-btn";
     cancelButton.textContent = "Cancel";
     cancelButton.disabled = metadata.submitting;
     cancelButton.addEventListener("click", () => metadata.onCancel());
-    actions.appendChild(cancelButton);
+    actionsRight.appendChild(cancelButton);
 
-    form.appendChild(actions);
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      if (metadata.submitting) return;
-      const value = textarea.value.trim();
-      if (value.length === 0) return;
-      metadata.onSubmit(value);
-    });
-    root.appendChild(form);
+    actions.appendChild(actionsRight);
+    root.appendChild(actions);
+
     queueMicrotask(() => {
       if (metadata.submitting) return;
-      if (!textarea.isConnected) return;
-      textarea.focus();
-      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      if (!textareaRef.isConnected) return;
+      textareaRef.focus();
+      textareaRef.setSelectionRange(textareaRef.value.length, textareaRef.value.length);
     });
     return root;
   }
@@ -658,12 +736,6 @@ function DiffFileCard(props: DiffFileCardProps) {
   const [shouldRender, setShouldRender] = createSignal(props.initiallyVisible);
   const [collapsed, setCollapsed] = createSignal(props.initiallyCollapsed ?? false);
   const [renderError, setRenderError] = createSignal<string | null>(null);
-  const [floatingSelectionButtonTop, setFloatingSelectionButtonTop] = createSignal<number | null>(null);
-  const [floatingSelectionButtonLeft, setFloatingSelectionButtonLeft] = createSignal<number | null>(
-    null
-  );
-  const [floatingSelectionTarget, setFloatingSelectionTarget] =
-    createSignal<DiffViewerLineTarget | null>(null);
 
   debugLog("init", {
     initiallyVisible: props.initiallyVisible,
@@ -846,14 +918,6 @@ function DiffFileCard(props: DiffFileCardProps) {
     return normalizeDiffPath(props.file.prevName);
   };
 
-  const selectedTargetForFile = createMemo<DiffViewerLineTarget | null>(() => {
-    const target = props.pendingSelectionTarget;
-    if (!target) return null;
-    const filePath = getNormalizedFilePath();
-    if (!filePath || target.filePath !== filePath) return null;
-    return target;
-  });
-
   const setCollapsedState = (nextCollapsed: boolean) => {
     setCollapsed((current) => {
       if (current === nextCollapsed) return current;
@@ -931,110 +995,6 @@ function DiffFileCard(props: DiffFileCardProps) {
     props.file.name;
     props.file.prevName;
     setCollapsed(props.initiallyCollapsed ?? false);
-  });
-
-  createEffect(() => {
-    const selectedTarget = selectedTargetForFile();
-    const visible = shouldRender();
-    if (!selectedTarget || !visible || collapsed()) {
-      setFloatingSelectionButtonTop(null);
-      setFloatingSelectionButtonLeft(null);
-      setFloatingSelectionTarget(null);
-      return;
-    }
-
-    let disposed = false;
-    const updateFloatingButtonPosition = () => {
-      if (disposed) return;
-      const section = sectionRef;
-      const container = containerRef;
-      if (!section || !container) {
-        setFloatingSelectionButtonTop(null);
-        setFloatingSelectionButtonLeft(null);
-        setFloatingSelectionTarget(null);
-        return;
-      }
-      const fileContainer = container.querySelector("diffs-container");
-      const shadowRoot =
-        fileContainer instanceof HTMLElement ? fileContainer.shadowRoot : null;
-      if (!shadowRoot) {
-        setFloatingSelectionButtonTop(null);
-        setFloatingSelectionButtonLeft(null);
-        setFloatingSelectionTarget(null);
-        return;
-      }
-
-      const selectedRows = Array.from(
-        shadowRoot.querySelectorAll<HTMLElement>("[data-selected-line]")
-      );
-      const changedSelectedRows = selectedRows.filter((row) => {
-        const lineType = row.dataset.lineType;
-        return (
-          lineType === "change-addition" ||
-          lineType === "change-additions" ||
-          lineType === "change-deletion"
-        );
-      });
-      setFloatingSelectionTarget(selectedTarget);
-
-      let anchorRow: HTMLElement | null =
-        changedSelectedRows.find((row) => {
-          const rowLine = Number(row.dataset.line);
-          if (!Number.isFinite(rowLine)) return false;
-          const endLine = selectedTarget.endLineNumber ?? selectedTarget.lineNumber;
-          if (rowLine < selectedTarget.lineNumber || rowLine > endLine) return false;
-          const expectedType =
-            selectedTarget.side === "additions" ? "change-addition" : "change-deletion";
-          const rowType = row.dataset.lineType;
-          if (expectedType === "change-addition") {
-            return rowType === "change-addition" || rowType === "change-additions";
-          }
-          return rowType === expectedType;
-        }) ??
-        changedSelectedRows[0] ??
-        selectedRows[0] ??
-        null;
-
-      if (!anchorRow) {
-        const sideLineSelector =
-          selectedTarget.side === "additions"
-            ? `[data-line="${selectedTarget.lineNumber}"][data-line-type="change-addition"],[data-line="${selectedTarget.lineNumber}"][data-line-type="change-additions"]`
-            : `[data-line="${selectedTarget.lineNumber}"][data-line-type="change-deletion"]`;
-        anchorRow = shadowRoot.querySelector<HTMLElement>(sideLineSelector);
-      }
-      if (!anchorRow) {
-        anchorRow = shadowRoot.querySelector<HTMLElement>(
-          `[data-line="${selectedTarget.lineNumber}"]`
-        );
-      }
-      if (!anchorRow) {
-        setFloatingSelectionButtonTop(null);
-        setFloatingSelectionButtonLeft(null);
-        setFloatingSelectionTarget(null);
-        return;
-      }
-
-      const sectionRect = section.getBoundingClientRect();
-      const anchorRect = anchorRow.getBoundingClientRect();
-      const computedTop = anchorRect.top - sectionRect.top + anchorRect.height / 2;
-      const computedLeft = Math.max(8, anchorRect.left - sectionRect.left - 30);
-      setFloatingSelectionButtonTop(Math.max(18, computedTop));
-      setFloatingSelectionButtonLeft(computedLeft);
-    };
-
-    const rafId = requestAnimationFrame(updateFloatingButtonPosition);
-    const handleWindowLayoutChange = () => updateFloatingButtonPosition();
-    window.addEventListener("scroll", handleWindowLayoutChange, true);
-    window.addEventListener("resize", handleWindowLayoutChange);
-    onCleanup(() => {
-      disposed = true;
-      cancelAnimationFrame(rafId);
-      window.removeEventListener("scroll", handleWindowLayoutChange, true);
-      window.removeEventListener("resize", handleWindowLayoutChange);
-      setFloatingSelectionButtonTop(null);
-      setFloatingSelectionButtonLeft(null);
-      setFloatingSelectionTarget(null);
-    });
   });
 
   createEffect(() => {
@@ -1218,43 +1178,7 @@ function DiffFileCard(props: DiffFileCardProps) {
       class="rovex-diff-file"
       data-rovex-file-path={getNormalizedFilePath() || undefined}
     >
-      <Show when={floatingSelectionTarget()} keyed>
-        {(target) => (
-          <Show when={floatingSelectionButtonTop() != null && floatingSelectionButtonLeft() != null}>
-            <button
-              type="button"
-              class="rovex-diff-selection-comment-button rovex-diff-selection-comment-button-float"
-              style={{
-                top: `${floatingSelectionButtonTop()}px`,
-                left: `${floatingSelectionButtonLeft()}px`,
-              }}
-              aria-label={`Add comment on ${getLineTargetLabel(target)}`}
-              title={`Add comment on ${getLineTargetLabel(target)}`}
-              onPointerDown={(event) => {
-                event.stopPropagation();
-              }}
-              onMouseDown={(event) => {
-                event.stopPropagation();
-              }}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                logDiffCommentEvent("floating comment button clicked", {
-                  target,
-                  top: floatingSelectionButtonTop(),
-                  left: floatingSelectionButtonLeft(),
-                });
-                if (!props.onAddCommentForSelection) {
-                  logDiffCommentEvent("floating comment button missing handler");
-                }
-                props.onAddCommentForSelection?.(target);
-              }}
-            >
-              <MessageSquare class="size-3.5" />
-            </button>
-          </Show>
-        )}
-      </Show>
+      {/* Floating selection button removed — comment composer opens on line click */}
       <div ref={visibilityAnchorRef}>
         <Show when={renderError()}>
           {(message) => (
@@ -1586,12 +1510,24 @@ export function DiffViewer(props: DiffViewerProps) {
           metadata: {
             source: "composer",
             id: `comment-draft:${locationKey}`,
-            title: `Add comment (${getLineTargetLabel(activeTarget)})`,
+            title: "Add comment",
+            lineLabel: getLineTargetLabel(activeTarget),
             body: draftBody,
             severity: "note",
             onInput: (value) => handleCommentDraftInput(activeTarget, value),
             onSubmit: (value) => handleCommentDraftSubmit(activeTarget, value),
             onCancel: () => handleCommentDraftCancel(activeTarget),
+            onAddToChat: props.onAskAiAboutFile
+              ? () => {
+                  const body = (draftValuesByLocation()[locationKey] ?? "").trim();
+                  const filePath = activeTarget.filePath;
+                  const lineRef = getLineTargetLabel(activeTarget);
+                  const prompt = body.length > 0
+                    ? `Re: ${filePath} ${lineRef} — ${body}`
+                    : `Discuss ${filePath} ${lineRef}`;
+                  props.onAskAiAboutFile?.(prompt);
+                }
+              : undefined,
             submitting: submittingDraftLocations().has(locationKey),
           },
         });
