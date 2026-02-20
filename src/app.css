@@ -240,18 +240,29 @@ textarea:focus {
 }
 
 .rovex-diff-collapse-toggle-icon {
-  width: 0.42rem;
-  height: 0.42rem;
+  width: 0.8rem;
+  height: 0.8rem;
   display: inline-block;
+  position: relative;
+}
+
+.rovex-diff-collapse-toggle-icon::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0.46rem;
+  height: 0.46rem;
+  box-sizing: border-box;
   border-right: 2px solid currentColor;
   border-bottom: 2px solid currentColor;
-  transform: rotate(45deg) translateY(-1px);
+  transform: translate(-50%, -50%) rotate(45deg);
   transform-origin: 50% 50%;
   transition: transform 180ms ease;
 }
 
-.rovex-diff-collapse-toggle[data-collapsed="1"] .rovex-diff-collapse-toggle-icon {
-  transform: rotate(-45deg) translateX(1px);
+.rovex-diff-collapse-toggle[data-collapsed="1"] .rovex-diff-collapse-toggle-icon::before {
+  transform: translate(-50%, -50%) rotate(-45deg);
 }
 
 .rovex-diff-file-placeholder {
