@@ -1,4 +1,12 @@
-import { Show, Suspense, createEffect, lazy, type Accessor, type Setter } from "solid-js";
+import {
+  Show,
+  Suspense,
+  createEffect,
+  createMemo,
+  lazy,
+  type Accessor,
+  type Setter,
+} from "solid-js";
 import { LoaderCircle } from "lucide-solid";
 import { Button } from "@/components/button";
 import type { DiffViewerAnnotation } from "@/components/diff-viewer";
@@ -22,6 +30,7 @@ export type WorkspaceMainPaneModel = {
   compareBusy: Accessor<boolean>;
   selectedWorkspace: Accessor<string>;
   handlePrepareAiFollowUpForFile: (filePath: string) => void;
+  handleOpenFileInEditor: (filePath: string) => void | Promise<void>;
   handleStartAiReviewOnFullDiff: () => void | Promise<void>;
   compareResult: Accessor<CompareWorkspaceDiffResult | null>;
   showDiffViewer: Accessor<boolean>;
@@ -43,6 +52,11 @@ const LazyDiffViewer = lazy(async () => {
 
 export function WorkspaceMainPane(props: WorkspaceMainPaneProps) {
   const model = props.model;
+  const diffCollapseStateKey = createMemo(() => {
+    const result = model.compareResult();
+    if (!result) return "";
+    return `${result.workspace}::${result.baseRef}::${result.mergeBase}::${result.head}`;
+  });
 
   createEffect(() => {
     const result = model.compareResult();
@@ -163,8 +177,10 @@ export function WorkspaceMainPane(props: WorkspaceMainPaneProps) {
                     theme={model.selectedDiffTheme().theme}
                     themeId={model.selectedDiffTheme().id}
                     themeType="dark"
+                    collapseStateKey={diffCollapseStateKey()}
                     annotations={model.diffAnnotations()}
                     onAskAiAboutFile={model.handlePrepareAiFollowUpForFile}
+                    onOpenFile={model.handleOpenFileInEditor}
                   />
                 </div>
               </Suspense>

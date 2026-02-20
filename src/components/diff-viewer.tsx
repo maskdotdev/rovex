@@ -129,17 +129,22 @@ type DiffViewerProps = {
   themeId?: string;
   themeType?: "system" | "light" | "dark";
   showToolbar?: boolean;
+  collapseStateKey?: string;
   annotations?: DiffViewerAnnotation[];
   onAskAiAboutFile?: (filePath: string) => void;
+  onOpenFile?: (filePath: string) => void | Promise<void>;
 };
 
 type DiffFileCardProps = {
   file: FileDiffMetadata;
   initiallyVisible: boolean;
+  initiallyCollapsed?: boolean;
   fastMode: boolean;
   options: DiffRenderOptions;
   lineAnnotations: DiffLineAnnotation<DiffViewerAnnotationMetadata>[];
+  onCollapsedChange?: (filePath: string, collapsed: boolean) => void;
   onAskAiAboutFile?: (filePath: string) => void;
+  onOpenFile?: (filePath: string) => void | Promise<void>;
   onRendered?: (filePath: string, renderMs: number) => void;
 };
 
@@ -177,6 +182,7 @@ const FAST_INITIAL_VISIBLE_FILES = 1;
 const DIFF_PROFILE_STORAGE_KEY = "rovex.profile.diff";
 const DIFF_COLLAPSE_DEBUG_STORAGE_KEY = "rovex.debug.diff-collapse";
 const DIFF_UNIFIED_STYLE_STORAGE_KEY = "rovex.diff.unified-style";
+const DIFF_COLLAPSED_FILES_STORAGE_PREFIX = "rovex.diff.collapsed-files.";
 const EMPTY_LINE_ANNOTATIONS: DiffLineAnnotation<DiffViewerAnnotationMetadata>[] = [];
 const diffCollapseUnsafeCSS = `
 :host([data-rovex-collapsed="1"]) pre,
@@ -190,6 +196,19 @@ const diffCollapseUnsafeCSS = `
   z-index: 3;
   background: rgba(11, 16, 23, 0.94);
   backdrop-filter: blur(3px);
+}
+
+[data-diffs-header][data-rovex-openable="1"] [data-header-content] [data-title],
+[data-diffs-header][data-rovex-openable="1"] [data-header-content] [data-prev-name] {
+  cursor: pointer;
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: color-mix(in lab, var(--diffs-fg) 40%, transparent);
+}
+
+[data-diffs-header][data-rovex-openable="1"] [data-header-content] [data-title]:hover,
+[data-diffs-header][data-rovex-openable="1"] [data-header-content] [data-prev-name]:hover {
+  text-decoration-color: color-mix(in lab, var(--diffs-fg) 80%, transparent);
 }
 `;
 let diffCollapseCardCounter = 0;
@@ -251,6 +270,52 @@ function normalizeDiffPath(path: string | null | undefined) {
   return normalized;
 }
 
+function areStringSetsEqual(left: Set<string>, right: Set<string>) {
+  if (left.size !== right.size) return false;
+  for (const entry of left) {
+    if (!right.has(entry)) return false;
+  }
+  return true;
+}
+
+function getDiffCollapsedFilesStorageKey(scope: string) {
+  return `${DIFF_COLLAPSED_FILES_STORAGE_PREFIX}${encodeURIComponent(scope)}`;
+}
+
+function readStoredCollapsedFilePaths(scope: string) {
+  if (!scope) return new Set<string>();
+  try {
+    const raw = globalThis.localStorage?.getItem(getDiffCollapsedFilesStorageKey(scope));
+    if (!raw) return new Set<string>();
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return new Set<string>();
+    const paths = new Set<string>();
+    for (const entry of parsed) {
+      if (typeof entry !== "string") continue;
+      const normalized = normalizeDiffPath(entry);
+      if (normalized) paths.add(normalized);
+    }
+    return paths;
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function writeStoredCollapsedFilePaths(scope: string, paths: Set<string>) {
+  if (!scope) return;
+  const storageKey = getDiffCollapsedFilesStorageKey(scope);
+  try {
+    if (paths.size === 0) {
+      globalThis.localStorage?.removeItem(storageKey);
+      return;
+    }
+    const serialized = JSON.stringify([...paths].sort((left, right) => left.localeCompare(right)));
+    globalThis.localStorage?.setItem(storageKey, serialized);
+  } catch {
+    // Persisting this preference is best-effort only.
+  }
+}
+
 function renderDiffAnnotation(annotation: DiffLineAnnotation<DiffViewerAnnotationMetadata>) {
   const metadata = annotation.metadata;
   if (!metadata) return undefined;
@@ -298,7 +363,7 @@ function DiffFileCard(props: DiffFileCardProps) {
   let headerObserver: MutationObserver | undefined;
   let profiledInitialRender = false;
   const [shouldRender, setShouldRender] = createSignal(props.initiallyVisible);
-  const [collapsed, setCollapsed] = createSignal(false);
+  const [collapsed, setCollapsed] = createSignal(props.initiallyCollapsed ?? false);
   const [renderError, setRenderError] = createSignal<string | null>(null);
 
   debugLog("init", {
@@ -347,8 +412,21 @@ function DiffFileCard(props: DiffFileCardProps) {
       debugLog("header click ignored (action button target)");
       return;
     }
+    if (target instanceof Element && props.onOpenFile) {
+      const fileNameTarget = target.closest(
+        "[data-header-content] [data-title], [data-header-content] [data-prev-name]"
+      );
+      const filePath = getNormalizedFilePath();
+      if (fileNameTarget && filePath.length > 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        debugLog("header file name click opens file", { filePath });
+        props.onOpenFile(filePath);
+        return;
+      }
+    }
     debugLog("header click toggles");
-    setCollapsed((current) => !current);
+    toggleCollapsedState();
   };
 
   const handleHeaderKeydown = (event: KeyboardEvent) => {
@@ -363,7 +441,7 @@ function DiffFileCard(props: DiffFileCardProps) {
     }
     debugLog("header keydown toggles", { key: event.key });
     event.preventDefault();
-    setCollapsed((current) => !current);
+    toggleCollapsedState();
   };
 
   const bindHeaderInteraction = () => {
@@ -400,6 +478,12 @@ function DiffFileCard(props: DiffFileCardProps) {
       headerElement.addEventListener("keydown", handleHeaderKeydown);
       debugLog("bound header listeners");
     }
+    const canOpenFile = props.onOpenFile != null && getNormalizedFilePath().length > 0;
+    if (canOpenFile) {
+      nextHeader.dataset.rovexOpenable = "1";
+    } else {
+      delete nextHeader.dataset.rovexOpenable;
+    }
     syncHeaderAccessibility();
 
     if (headerObserver == null) {
@@ -425,7 +509,7 @@ function DiffFileCard(props: DiffFileCardProps) {
         event.preventDefault();
         event.stopPropagation();
         debugLog("metadata toggle button click");
-        setCollapsed((current) => !current);
+        toggleCollapsedState();
       });
       collapseToggleButton = button;
       debugLog("created collapse toggle button");
@@ -441,6 +525,21 @@ function DiffFileCard(props: DiffFileCardProps) {
     const normalizedName = normalizeDiffPath(props.file.name);
     if (normalizedName) return normalizedName;
     return normalizeDiffPath(props.file.prevName);
+  };
+
+  const setCollapsedState = (nextCollapsed: boolean) => {
+    setCollapsed((current) => {
+      if (current === nextCollapsed) return current;
+      const filePath = getNormalizedFilePath();
+      if (filePath) {
+        props.onCollapsedChange?.(filePath, nextCollapsed);
+      }
+      return nextCollapsed;
+    });
+  };
+
+  const toggleCollapsedState = () => {
+    setCollapsedState(!collapsed());
   };
 
   const getAskAiButton = () => {
@@ -500,6 +599,12 @@ function DiffFileCard(props: DiffFileCardProps) {
 
     return controls;
   };
+
+  createEffect(() => {
+    props.file.name;
+    props.file.prevName;
+    setCollapsed(props.initiallyCollapsed ?? false);
+  });
 
   createEffect(() => {
     const anchor = visibilityAnchorRef;
@@ -657,11 +762,13 @@ export function DiffViewer(props: DiffViewerProps) {
   const themeClass = createMemo(() =>
     props.themeId?.trim() ? `rovex-diff-theme-${props.themeId}` : ""
   );
+  const collapseStateScope = createMemo(() => props.collapseStateKey?.trim() ?? "");
   const profileEnabled = createMemo(() => isDiffProfileEnabled());
   const [lineWrap, setLineWrap] = createSignal(true);
   const [lineNumbers, setLineNumbers] = createSignal(true);
   const [unifiedStyle, setUnifiedStyle] = createSignal(getStoredUnifiedStylePreference());
   const [disableBackground, setDisableBackground] = createSignal(false);
+  const [collapsedFilePaths, setCollapsedFilePaths] = createSignal<Set<string>>(new Set());
   const [profileState, setProfileState] = createSignal<DiffViewerProfileState>({
     parseMs: 0,
     renderMs: 0,
@@ -824,6 +931,25 @@ export function DiffViewer(props: DiffViewerProps) {
   });
 
   createEffect(() => {
+    const scope = collapseStateScope();
+    if (!scope) {
+      setCollapsedFilePaths((current) => (current.size === 0 ? current : new Set<string>()));
+      return;
+    }
+
+    const storedPaths = readStoredCollapsedFilePaths(scope);
+    setCollapsedFilePaths((current) => (
+      areStringSetsEqual(current, storedPaths) ? current : storedPaths
+    ));
+  });
+
+  createEffect(() => {
+    const scope = collapseStateScope();
+    if (!scope) return;
+    writeStoredCollapsedFilePaths(scope, collapsedFilePaths());
+  });
+
+  createEffect(() => {
     setProfileState((current) => ({ ...current, parseMs: parsedDiff().parseMs }));
   });
 
@@ -857,6 +983,23 @@ export function DiffViewer(props: DiffViewerProps) {
     console.info(
       `[rovex diff profile] rendered ${filePath} in ${renderMs.toFixed(1)}ms`
     );
+  };
+
+  const handleFileCollapsedChange = (filePath: string, collapsed: boolean) => {
+    if (!collapseStateScope()) return;
+    const normalizedPath = normalizeDiffPath(filePath);
+    if (!normalizedPath) return;
+    setCollapsedFilePaths((current) => {
+      const hasPath = current.has(normalizedPath);
+      if (collapsed === hasPath) return current;
+      const next = new Set(current);
+      if (collapsed) {
+        next.add(normalizedPath);
+      } else {
+        next.delete(normalizedPath);
+      }
+      return next;
+    });
   };
 
   return (
@@ -970,14 +1113,20 @@ export function DiffViewer(props: DiffViewerProps) {
                 : primaryAnnotations.length === 0
                   ? previousAnnotations
                   : [...primaryAnnotations, ...previousAnnotations];
+            const normalizedFilePath = primaryPath || previousPath;
             return (
               <DiffFileCard
                 file={file}
                 initiallyVisible={index() < initialVisibleCount()}
+                initiallyCollapsed={
+                  normalizedFilePath.length > 0 && collapsedFilePaths().has(normalizedFilePath)
+                }
                 fastMode={fastMode()}
                 options={renderOptions()}
                 lineAnnotations={fileAnnotations}
+                onCollapsedChange={handleFileCollapsedChange}
                 onAskAiAboutFile={props.onAskAiAboutFile}
+                onOpenFile={props.onOpenFile}
                 onRendered={handleFileRendered}
               />
             );
