@@ -171,6 +171,7 @@ const HUGE_FILE_FAST_PATH_LINE_THRESHOLD = 2_000;
 const DEFAULT_INITIAL_VISIBLE_FILES = 3;
 const FAST_INITIAL_VISIBLE_FILES = 1;
 const DIFF_PROFILE_STORAGE_KEY = "rovex.profile.diff";
+const DIFF_COLLAPSE_DEBUG_STORAGE_KEY = "rovex.debug.diff-collapse";
 const EMPTY_LINE_ANNOTATIONS: DiffLineAnnotation<DiffViewerAnnotationMetadata>[] = [];
 const diffCollapseUnsafeCSS = `
 :host([data-rovex-collapsed="1"]) pre,
@@ -178,10 +179,19 @@ const diffCollapseUnsafeCSS = `
   display: none;
 }
 `;
+let diffCollapseCardCounter = 0;
 
 function isDiffProfileEnabled() {
   try {
     return globalThis.localStorage?.getItem(DIFF_PROFILE_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function isDiffCollapseDebugEnabled() {
+  try {
+    return globalThis.localStorage?.getItem(DIFF_COLLAPSE_DEBUG_STORAGE_KEY) === "1";
   } catch {
     return false;
   }
@@ -248,17 +258,35 @@ function renderDiffAnnotation(annotation: DiffLineAnnotation<DiffViewerAnnotatio
 }
 
 function DiffFileCard(props: DiffFileCardProps) {
+  const debugCardId = ++diffCollapseCardCounter;
+  const debugFileName = props.file.name;
+  const debugLog = (...args: unknown[]) => {
+    if (!isDiffCollapseDebugEnabled()) return;
+    console.debug(`[rovex diff collapse] #${debugCardId} ${debugFileName}`, ...args);
+  };
+
   let visibilityAnchorRef: HTMLDivElement | undefined;
   let containerRef: HTMLDivElement | undefined;
   let instance: FileDiff<DiffViewerAnnotationMetadata> | undefined;
   let collapseToggleButton: HTMLButtonElement | undefined;
+  let headerElement: HTMLElement | undefined;
+  let headerObserver: MutationObserver | undefined;
   let profiledInitialRender = false;
   const [shouldRender, setShouldRender] = createSignal(props.initiallyVisible);
   const [collapsed, setCollapsed] = createSignal(false);
   const [renderError, setRenderError] = createSignal<string | null>(null);
 
+  debugLog("init", {
+    initiallyVisible: props.initiallyVisible,
+    unifiedLines: props.file.unifiedLineCount,
+    splitLines: props.file.splitLineCount,
+  });
+
   const syncCollapseToggleButton = () => {
-    if (collapseToggleButton == null) return;
+    if (collapseToggleButton == null) {
+      debugLog("syncCollapseToggleButton skipped (no button)");
+      return;
+    }
     const isCollapsed = collapsed();
     collapseToggleButton.dataset.collapsed = isCollapsed ? "1" : "0";
     collapseToggleButton.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
@@ -267,6 +295,88 @@ function DiffFileCard(props: DiffFileCardProps) {
       isCollapsed ? "Expand file diff" : "Collapse file diff"
     );
     collapseToggleButton.title = isCollapsed ? "Expand file diff" : "Collapse file diff";
+    debugLog("syncCollapseToggleButton", {
+      collapsed: isCollapsed,
+      connected: collapseToggleButton.isConnected,
+    });
+  };
+
+  const syncHeaderAccessibility = () => {
+    if (headerElement == null) {
+      debugLog("syncHeaderAccessibility skipped (no header)");
+      return;
+    }
+    const isCollapsed = collapsed();
+    headerElement.setAttribute("role", "button");
+    headerElement.tabIndex = 0;
+    headerElement.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+    debugLog("syncHeaderAccessibility", { collapsed: isCollapsed });
+  };
+
+  const handleHeaderClick = (event: Event) => {
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest(".rovex-diff-collapse-toggle") != null
+    ) {
+      debugLog("header click ignored (toggle button target)");
+      return;
+    }
+    debugLog("header click toggles");
+    setCollapsed((current) => !current);
+  };
+
+  const handleHeaderKeydown = (event: KeyboardEvent) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    debugLog("header keydown toggles", { key: event.key });
+    event.preventDefault();
+    setCollapsed((current) => !current);
+  };
+
+  const bindHeaderInteraction = () => {
+    const container = containerRef;
+    if (!container) {
+      debugLog("bindHeaderInteraction skipped (no container)");
+      return;
+    }
+    const fileContainer = container.querySelector("diffs-container");
+    if (!(fileContainer instanceof HTMLElement)) {
+      debugLog("bindHeaderInteraction skipped (no fileContainer)");
+      return;
+    }
+    const shadowRoot = fileContainer.shadowRoot;
+    if (shadowRoot == null) {
+      debugLog("bindHeaderInteraction skipped (no shadowRoot)");
+      return;
+    }
+
+    const nextHeader = shadowRoot.querySelector("[data-diffs-header]");
+    if (!(nextHeader instanceof HTMLElement)) {
+      debugLog("bindHeaderInteraction skipped (no header)");
+      return;
+    }
+
+    if (headerElement !== nextHeader) {
+      if (headerElement != null) {
+        headerElement.removeEventListener("click", handleHeaderClick);
+        headerElement.removeEventListener("keydown", handleHeaderKeydown);
+        debugLog("rebound header listeners from replaced header");
+      }
+      headerElement = nextHeader;
+      headerElement.addEventListener("click", handleHeaderClick);
+      headerElement.addEventListener("keydown", handleHeaderKeydown);
+      debugLog("bound header listeners");
+    }
+    syncHeaderAccessibility();
+
+    if (headerObserver == null) {
+      headerObserver = new MutationObserver(() => {
+        debugLog("header observer mutation");
+        bindHeaderInteraction();
+      });
+      headerObserver.observe(shadowRoot, { childList: true, subtree: false });
+      debugLog("header observer attached");
+    }
   };
 
   const getCollapseToggleButton = () => {
@@ -277,39 +387,62 @@ function DiffFileCard(props: DiffFileCardProps) {
       const icon = document.createElement("span");
       icon.className = "rovex-diff-collapse-toggle-icon";
       icon.setAttribute("aria-hidden", "true");
-      icon.textContent = "⌄";
       button.appendChild(icon);
       button.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
+        debugLog("metadata toggle button click");
         setCollapsed((current) => !current);
       });
       collapseToggleButton = button;
+      debugLog("created collapse toggle button");
     }
     syncCollapseToggleButton();
+    debugLog("getCollapseToggleButton", {
+      connected: collapseToggleButton.isConnected,
+    });
     return collapseToggleButton;
   };
 
   createEffect(() => {
     const anchor = visibilityAnchorRef;
-    if (!anchor) return;
+    if (!anchor) {
+      debugLog("intersection setup skipped (no anchor)");
+      return;
+    }
+    debugLog("intersection setup", { fastMode: props.fastMode });
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) {
+          debugLog("intersection observed -> shouldRender true");
           setShouldRender(true);
         }
       },
       { rootMargin: props.fastMode ? "900px 0px" : "1400px 0px" }
     );
     observer.observe(anchor);
-    onCleanup(() => observer.disconnect());
+    onCleanup(() => {
+      debugLog("intersection cleanup");
+      observer.disconnect();
+    });
   });
 
   createEffect(() => {
-    if (!shouldRender() || collapsed()) return;
+    const visible = shouldRender();
+    const isCollapsed = collapsed();
+    debugLog("render effect tick", { shouldRender: visible, collapsed: isCollapsed });
+    if (!visible || isCollapsed) {
+      debugLog("render effect skip", {
+        reason: !visible ? "shouldRender=false" : "collapsed=true",
+      });
+      return;
+    }
 
     const container = containerRef;
-    if (!container) return;
+    if (!container) {
+      debugLog("render effect skip (no container)");
+      return;
+    }
 
     try {
       const fileLineCount = Math.max(props.file.unifiedLineCount, props.file.splitLineCount);
@@ -343,6 +476,8 @@ function DiffFileCard(props: DiffFileCardProps) {
         containerWrapper: container,
         lineAnnotations: useHugeFileFastPath ? EMPTY_LINE_ANNOTATIONS : props.lineAnnotations,
       });
+      debugLog("render complete");
+      bindHeaderInteraction();
       const renderMs = performance.now() - renderStart;
       if (!profiledInitialRender) {
         props.onRendered?.(props.file.name, renderMs);
@@ -355,19 +490,36 @@ function DiffFileCard(props: DiffFileCardProps) {
   });
 
   createEffect(() => {
+    debugLog("collapsed sync effect tick", { collapsed: collapsed() });
     syncCollapseToggleButton();
+    syncHeaderAccessibility();
     const container = containerRef;
-    if (!container) return;
+    if (!container) {
+      debugLog("collapsed sync skipped (no container)");
+      return;
+    }
     const fileContainer = container.querySelector("diffs-container");
-    if (!(fileContainer instanceof HTMLElement)) return;
+    if (!(fileContainer instanceof HTMLElement)) {
+      debugLog("collapsed sync skipped (no fileContainer)");
+      return;
+    }
     if (collapsed()) {
       fileContainer.setAttribute("data-rovex-collapsed", "1");
+      debugLog("applied collapsed host attr");
       return;
     }
     fileContainer.removeAttribute("data-rovex-collapsed");
+    debugLog("removed collapsed host attr");
   });
 
   onCleanup(() => {
+    debugLog("cleanup");
+    headerObserver?.disconnect();
+    if (headerElement != null) {
+      headerElement.removeEventListener("click", handleHeaderClick);
+      headerElement.removeEventListener("keydown", handleHeaderKeydown);
+      headerElement = undefined;
+    }
     instance?.cleanUp();
     containerRef?.replaceChildren();
   });

@@ -214,36 +214,44 @@ textarea:focus {
 }
 
 .rovex-diff-collapse-toggle {
-  width: 1.45rem;
-  height: 1.45rem;
+  width: 1.5rem;
+  height: 1.5rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 0.42rem;
+  background: rgba(255, 255, 255, 0.045);
   color: rgba(240, 244, 250, 0.82);
   line-height: 1;
   padding: 0;
-  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease;
 }
 
 .rovex-diff-collapse-toggle:hover {
-  border-color: rgba(255, 255, 255, 0.26);
-  background: rgba(255, 255, 255, 0.085);
+  border-color: rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.11);
   color: rgba(246, 249, 255, 0.96);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
 }
 
 .rovex-diff-collapse-toggle-icon {
+  width: 0.42rem;
+  height: 0.42rem;
   display: inline-block;
-  font-size: 0.92rem;
-  transform: rotate(0deg);
-  transform-origin: 50% 55%;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg) translateY(-1px);
+  transform-origin: 50% 50%;
   transition: transform 180ms ease;
 }
 
 .rovex-diff-collapse-toggle[data-collapsed="1"] .rovex-diff-collapse-toggle-icon {
-  transform: rotate(-90deg);
+  transform: rotate(-45deg) translateX(1px);
 }
 
 .rovex-diff-file-placeholder {
