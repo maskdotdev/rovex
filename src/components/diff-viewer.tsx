@@ -178,6 +178,14 @@ const diffCollapseUnsafeCSS = `
 :host([data-rovex-collapsed="1"]) [data-error-wrapper] {
   display: none;
 }
+
+[data-diffs-header] {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: rgba(11, 16, 23, 0.94);
+  backdrop-filter: blur(3px);
+}
 `;
 let diffCollapseCardCounter = 0;
 
