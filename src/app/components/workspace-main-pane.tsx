@@ -59,7 +59,7 @@ export function WorkspaceMainPane(props: WorkspaceMainPaneProps) {
   });
 
   return (
-    <div class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+    <div class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-6 py-4">
       <Show when={model.branchActionError()}>
         {(message) => (
           <div class="mb-3 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">

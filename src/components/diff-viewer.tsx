@@ -555,7 +555,7 @@ export function DiffViewer(props: DiffViewerProps) {
     props.themeId?.trim() ? `rovex-diff-theme-${props.themeId}` : ""
   );
   const profileEnabled = createMemo(() => isDiffProfileEnabled());
-  const [lineWrap, setLineWrap] = createSignal(false);
+  const [lineWrap, setLineWrap] = createSignal(true);
   const [lineNumbers, setLineNumbers] = createSignal(true);
   const [unifiedStyle, setUnifiedStyle] = createSignal(false);
   const [disableBackground, setDisableBackground] = createSignal(false);
