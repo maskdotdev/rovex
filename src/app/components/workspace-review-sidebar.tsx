@@ -25,7 +25,10 @@ import type {
   ReviewRun,
   ReviewWorkbenchTab,
 } from "@/app/review-types";
-import { useWorkspaceReviewSidebarViewModel } from "@/app/components/workspace-review-sidebar-view-model";
+import {
+  useWorkspaceReviewSidebarViewModel,
+  type IssueFileCard,
+} from "@/app/components/workspace-review-sidebar-view-model";
 import type {
   AiReviewChunk,
   AiReviewFinding,
@@ -119,6 +122,8 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
   const visibleFindings = derived.visibleFindings;
   const visibleProgressEvents = derived.visibleProgressEvents;
   const issueFileCards = derived.issueFileCards;
+  const flaggedIssueFileCards = derived.flaggedIssueFileCards;
+  const cleanIssueFileCards = derived.cleanIssueFileCards;
   const latestProgress = derived.latestProgress;
   const progressRatio = derived.progressRatio;
   const issuesEmptyMessage = derived.issuesEmptyMessage;
@@ -138,14 +143,112 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
   const branchPopoverContentId = "workspace-branch-picker-popover";
   const branchSearchInputId = "workspace-branch-search-input";
   const branchCreateInputId = "workspace-branch-create-input";
+  const renderIssueFileCard = (card: IssueFileCard) => (
+    <article
+      class={`rounded-lg border px-3 py-2 ${
+        card.status === "issues"
+          ? "border-amber-500/25 bg-amber-500/8"
+          : card.status === "failed"
+            ? "border-rose-500/25 bg-rose-500/8"
+            : "border-white/[0.07] bg-white/[0.02]"
+      }`}
+    >
+      <div class="flex items-center justify-between gap-2">
+        <p class="truncate text-[12px] font-medium text-neutral-200">{card.filePath}</p>
+        <Show
+          when={card.status === "running"}
+          fallback={
+            <Show
+              when={card.status === "clean"}
+              fallback={
+                <Show
+                  when={card.status === "failed"}
+                  fallback={
+                    <span class="text-[11px] text-amber-200/90">
+                      {card.findings.length} issue{card.findings.length === 1 ? "" : "s"}
+                    </span>
+                  }
+                >
+                  <AlertTriangle class="size-4 text-rose-300/90" />
+                </Show>
+              }
+            >
+              <CheckCircle2 class="size-4 text-emerald-300/90" />
+            </Show>
+          }
+        >
+          <LoaderCircle class="size-4 animate-spin text-amber-300/90" />
+        </Show>
+      </div>
+
+      <Show when={card.status === "issues" || card.status === "failed"}>
+        <div class="mt-2 space-y-2">
+          <Show when={card.status === "failed"}>
+            <p class="review-stream-message text-[12px] text-rose-300/90">
+              {formatReviewMessage(card.errorMessage ?? "Issue scan failed for this file.", 700)}
+            </p>
+          </Show>
+          <Show when={card.status === "issues" && card.summary.trim().length > 0}>
+            <p class="review-stream-message text-[12px] text-neutral-300">
+              {formatReviewMessage(card.summary, 900)}
+            </p>
+          </Show>
+          <For each={card.findings}>
+            {(finding) => (
+              <div class="rounded-md border border-white/[0.08] bg-black/20 px-2.5 py-2">
+                <div class="mb-1 flex items-center justify-between gap-2">
+                  <p class="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-amber-200/90">
+                    {finding.severity}
+                  </p>
+                  <span class="text-[11px] text-neutral-400">{finding.lineNumber}</span>
+                </div>
+                <p class="text-[12.5px] font-medium text-neutral-200">{finding.title}</p>
+                <p class="review-stream-message mt-1 text-[12px] text-neutral-300">
+                  {formatReviewMessage(finding.body, 1_100)}
+                </p>
+                <div class="mt-2 flex items-center gap-2">
+                  <button
+                    type="button"
+                    class="review-inline-action"
+                    onClick={() => {
+                      model.setActiveReviewScope({
+                        kind: "file",
+                        filePath: normalizeDiffPath(finding.filePath),
+                      });
+                    }}
+                  >
+                    Jump to file
+                  </button>
+                  <button
+                    type="button"
+                    class="review-inline-action"
+                    onClick={() => {
+                      model.setReviewWorkbenchTab("chat");
+                      model.setAiPrompt(
+                        `Explain this issue and propose a fix: [${finding.severity}] ${finding.title} at ${finding.filePath}:${finding.lineNumber}`
+                      );
+                    }}
+                  >
+                    Ask AI
+                  </button>
+                </div>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+    </article>
+  );
 
   return (
     <Sidebar
       id="review-workbench-sidebar"
       side="right"
       collapsible="none"
-      class={`h-svh max-h-svh w-[23rem] shrink-0 overflow-hidden border-0 bg-transparent px-2.5 py-2 transition-[width,opacity,padding] duration-200 ease-linear [&_[data-sidebar=sidebar]]:rounded-2xl [&_[data-sidebar=sidebar]]:border [&_[data-sidebar=sidebar]]:border-white/[0.06] [&_[data-sidebar=sidebar]]:bg-white/[0.02] ${
-        isCollapsed() ? "w-0 px-0 py-0 opacity-0 pointer-events-none" : "opacity-100"
+      class={`h-svh max-h-svh shrink-0 overflow-hidden border-0 bg-transparent px-2.5 py-2 transition-[width,opacity,padding] duration-200 ease-linear [&_[data-sidebar=sidebar]]:rounded-2xl [&_[data-sidebar=sidebar]]:border [&_[data-sidebar=sidebar]]:border-white/[0.06] [&_[data-sidebar=sidebar]]:bg-white/[0.02] ${
+        isCollapsed()
+          ? "w-0 min-w-0 px-0 py-0 opacity-0 pointer-events-none"
+          : "w-[26rem] min-w-[26rem] opacity-100"
       }`}
     >
       <SidebarContent class="p-2">
@@ -378,108 +481,19 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                 fallback={<p class="review-empty-state">{issuesEmptyMessage()}</p>}
               >
                 <div class="space-y-2 overflow-y-auto pr-1">
-                  <For each={issueFileCards()}>
-                    {(card) => (
-                      <article
-                        class={`rounded-lg border px-3 py-2 ${
-                          card.status === "issues"
-                            ? "border-amber-500/25 bg-amber-500/8"
-                            : card.status === "failed"
-                              ? "border-rose-500/25 bg-rose-500/8"
-                              : "border-white/[0.07] bg-white/[0.02]"
-                        }`}
-                      >
-                        <div class="flex items-center justify-between gap-2">
-                          <p class="truncate text-[12px] font-medium text-neutral-200">
-                            {card.filePath}
-                          </p>
-                          <Show
-                            when={card.status === "running"}
-                            fallback={
-                              <Show
-                                when={card.status === "clean"}
-                                fallback={
-                                  <Show
-                                    when={card.status === "failed"}
-                                    fallback={
-                                      <span class="text-[11px] text-amber-200/90">
-                                        {card.findings.length} issue{card.findings.length === 1 ? "" : "s"}
-                                      </span>
-                                    }
-                                  >
-                                    <AlertTriangle class="size-4 text-rose-300/90" />
-                                  </Show>
-                                }
-                              >
-                                <CheckCircle2 class="size-4 text-emerald-300/90" />
-                              </Show>
-                            }
-                          >
-                            <LoaderCircle class="size-4 animate-spin text-amber-300/90" />
-                          </Show>
-                        </div>
-
-                        <Show when={card.status === "issues" || card.status === "failed"}>
-                          <div class="mt-2 space-y-2">
-                            <Show when={card.status === "failed"}>
-                              <p class="review-stream-message text-[12px] text-rose-300/90">
-                                {formatReviewMessage(card.errorMessage ?? "Issue scan failed for this file.", 700)}
-                              </p>
-                            </Show>
-                            <Show when={card.status === "issues" && card.summary.trim().length > 0}>
-                              <p class="review-stream-message text-[12px] text-neutral-300">
-                                {formatReviewMessage(card.summary, 900)}
-                              </p>
-                            </Show>
-                            <For each={card.findings}>
-                              {(finding) => (
-                                <div class="rounded-md border border-white/[0.08] bg-black/20 px-2.5 py-2">
-                                  <div class="mb-1 flex items-center justify-between gap-2">
-                                    <p class="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-amber-200/90">
-                                      {finding.severity}
-                                    </p>
-                                    <span class="text-[11px] text-neutral-400">
-                                      {finding.lineNumber}
-                                    </span>
-                                  </div>
-                                  <p class="text-[12.5px] font-medium text-neutral-200">{finding.title}</p>
-                                  <p class="review-stream-message mt-1 text-[12px] text-neutral-300">
-                                    {formatReviewMessage(finding.body, 1_100)}
-                                  </p>
-                                  <div class="mt-2 flex items-center gap-2">
-                                    <button
-                                      type="button"
-                                      class="review-inline-action"
-                                      onClick={() => {
-                                        model.setActiveReviewScope({
-                                          kind: "file",
-                                          filePath: normalizeDiffPath(finding.filePath),
-                                        });
-                                      }}
-                                    >
-                                      Jump to file
-                                    </button>
-                                    <button
-                                      type="button"
-                                      class="review-inline-action"
-                                      onClick={() => {
-                                        model.setReviewWorkbenchTab("chat");
-                                        model.setAiPrompt(
-                                          `Explain this issue and propose a fix: [${finding.severity}] ${finding.title} at ${finding.filePath}:${finding.lineNumber}`
-                                        );
-                                      }}
-                                    >
-                                      Ask AI
-                                    </button>
-                                  </div>
-                                </div>
-                              )}
-                            </For>
-                          </div>
-                        </Show>
-                      </article>
-                    )}
-                  </For>
+                  <For each={flaggedIssueFileCards()}>{(card) => renderIssueFileCard(card)}</For>
+                  <Show when={cleanIssueFileCards().length > 0}>
+                    <details class="rounded-lg border border-white/[0.07] bg-white/[0.015] px-3 py-2">
+                      <summary class="cursor-pointer select-none text-[12px] font-medium text-neutral-300">
+                        Files without issues ({cleanIssueFileCards().length})
+                      </summary>
+                      <div class="mt-2 space-y-2">
+                        <For each={cleanIssueFileCards()}>
+                          {(card) => renderIssueFileCard(card)}
+                        </For>
+                      </div>
+                    </details>
+                  </Show>
                 </div>
               </Show>
               </section>

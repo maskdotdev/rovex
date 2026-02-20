@@ -165,6 +165,12 @@ export function useWorkspaceReviewSidebarViewModel(model: WorkspaceReviewSidebar
   const issueFileCards = createMemo(() =>
     buildIssueFileCards(visibleProgressEvents(), visibleChunkReviews())
   );
+  const flaggedIssueFileCards = createMemo(() =>
+    issueFileCards().filter((card) => card.status !== "clean")
+  );
+  const cleanIssueFileCards = createMemo(() =>
+    issueFileCards().filter((card) => card.status === "clean")
+  );
   const latestProgress = createMemo(() => {
     const events = visibleProgressEvents();
     return events.length > 0 ? events[events.length - 1] : null;
@@ -204,6 +210,8 @@ export function useWorkspaceReviewSidebarViewModel(model: WorkspaceReviewSidebar
     visibleProgressEvents,
     sortedVisibleFindings,
     issueFileCards,
+    flaggedIssueFileCards,
+    cleanIssueFileCards,
     latestProgress,
     progressRatio,
     issuesEmptyMessage,
