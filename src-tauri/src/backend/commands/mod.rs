@@ -1,4 +1,5 @@
 mod common;
+mod editor;
 mod providers;
 mod review;
 mod threads;
@@ -13,10 +14,12 @@ use super::{
     BackendHealth, CancelAiReviewRunInput, CancelAiReviewRunResult, CheckoutWorkspaceBranchInput,
     CheckoutWorkspaceBranchResult, CloneRepositoryInput, CloneRepositoryResult, CodeIntelSyncInput,
     CodeIntelSyncResult, CompareWorkspaceDiffInput, CompareWorkspaceDiffResult,
-    ConnectProviderInput, CreateThreadInput, CreateWorkspaceBranchInput, GenerateAiFollowUpInput,
-    GenerateAiFollowUpResult, GenerateAiReviewInput, GenerateAiReviewResult, GetAiReviewRunInput,
-    ListAiReviewRunsInput, ListAiReviewRunsResult, ListWorkspaceBranchesInput,
-    ListWorkspaceBranchesResult, Message, OpencodeSidecarStatus, PollProviderDeviceAuthInput,
+    ConnectProviderInput, CreateInlineReviewCommentInput, CreateThreadInput,
+    CreateWorkspaceBranchInput, GenerateAiFollowUpInput, GenerateAiFollowUpResult,
+    GenerateAiReviewInput, GenerateAiReviewResult, GetAiReviewRunInput, InlineReviewComment,
+    ListAiReviewRunsInput, ListAiReviewRunsResult, ListInlineReviewCommentsInput,
+    ListInlineReviewCommentsResult, ListWorkspaceBranchesInput, ListWorkspaceBranchesResult,
+    Message, OpenFileInEditorInput, OpencodeSidecarStatus, PollProviderDeviceAuthInput,
     PollProviderDeviceAuthResult, ProviderConnection, ProviderKind, SetAiReviewApiKeyInput,
     SetAiReviewSettingsInput, StartAiReviewRunInput, StartAiReviewRunResult,
     StartProviderDeviceAuthInput, StartProviderDeviceAuthResult, Thread,
@@ -148,6 +151,11 @@ pub async fn create_workspace_branch(
 }
 
 #[tauri::command]
+pub async fn open_file_in_editor(input: OpenFileInEditorInput) -> Result<(), String> {
+    editor::open_file_in_editor(input).await
+}
+
+#[tauri::command]
 pub async fn get_ai_review_config() -> Result<super::AiReviewConfig, String> {
     review::config::get_ai_review_config().await
 }
@@ -213,6 +221,22 @@ pub async fn get_ai_review_run(
     input: GetAiReviewRunInput,
 ) -> Result<super::AiReviewRun, String> {
     review::run_queue::get_ai_review_run(state, input).await
+}
+
+#[tauri::command]
+pub async fn create_inline_review_comment(
+    state: State<'_, AppState>,
+    input: CreateInlineReviewCommentInput,
+) -> Result<InlineReviewComment, String> {
+    review::run_queue::create_inline_review_comment(state, input).await
+}
+
+#[tauri::command]
+pub async fn list_inline_review_comments(
+    state: State<'_, AppState>,
+    input: ListInlineReviewCommentsInput,
+) -> Result<ListInlineReviewCommentsResult, String> {
+    review::run_queue::list_inline_review_comments(state, input).await
 }
 
 #[tauri::command]

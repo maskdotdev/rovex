@@ -4,7 +4,9 @@ import type {
   AiReviewFinding,
   AiReviewProgressEvent,
   CompareWorkspaceDiffResult,
+  InlineReviewComment,
 } from "@/lib/backend";
+import type { FileOpenWith } from "@/app/types";
 import type { ReviewScope } from "@/app/review-scope";
 import type {
   ReviewChatSharedDiffContext,
@@ -26,6 +28,10 @@ export type UseReviewActionsArgs = {
     setCompareError: Setter<string | null>;
     setShowDiffViewer: Setter<boolean>;
   };
+  comments: {
+    inlineReviewComments: Accessor<InlineReviewComment[]>;
+    setInlineReviewComments: Setter<InlineReviewComment[]>;
+  };
   branch: {
     setBranchPopoverOpen: Setter<boolean>;
     setBranchCreateMode: Setter<boolean>;
@@ -35,6 +41,10 @@ export type UseReviewActionsArgs = {
     setBranchActionBusy: Setter<boolean>;
     setBranchActionError: Setter<string | null>;
     refetchWorkspaceBranches: () => unknown;
+  };
+  editor: {
+    fileOpenWith: Accessor<FileOpenWith>;
+    ghosttyOpenCommand: Accessor<string>;
   };
   ai: {
     prompt: Accessor<string>;

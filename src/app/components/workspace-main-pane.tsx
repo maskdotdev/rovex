@@ -9,7 +9,11 @@ import {
 } from "solid-js";
 import { LoaderCircle } from "lucide-solid";
 import { Button } from "@/components/button";
-import type { DiffViewerAnnotation } from "@/components/diff-viewer";
+import type {
+  DiffViewerAnnotation,
+  DiffViewerCreateInlineCommentInput,
+  DiffViewerInlineComment,
+} from "@/components/diff-viewer";
 import {
   createFullReviewScope,
   scopeExistsInPatch,
@@ -40,7 +44,11 @@ export type WorkspaceMainPaneModel = {
   setActiveReviewScope: Setter<ReviewScope>;
   selectedDiffTheme: Accessor<DiffThemePreset>;
   diffAnnotations: Accessor<DiffViewerAnnotation[]>;
+  inlineReviewComments: Accessor<DiffViewerInlineComment[]>;
   diffFocusTarget: Accessor<ReviewDiffFocusTarget | null>;
+  handleCreateInlineReviewComment: (
+    input: DiffViewerCreateInlineCommentInput
+  ) => void | Promise<void>;
 };
 
 type WorkspaceMainPaneProps = {
@@ -182,6 +190,8 @@ export function WorkspaceMainPane(props: WorkspaceMainPaneProps) {
                     focusTarget={model.diffFocusTarget()}
                     collapseStateKey={diffCollapseStateKey()}
                     annotations={model.diffAnnotations()}
+                    inlineComments={model.inlineReviewComments()}
+                    onCreateInlineComment={model.handleCreateInlineReviewComment}
                     onAskAiAboutFile={model.handlePrepareAiFollowUpForFile}
                     onOpenFile={model.handleOpenFileInEditor}
                   />

@@ -9,7 +9,12 @@ import {
   settingsNavItems,
 } from "@/app/constants";
 import { SettingsSidebar } from "@/app/components/settings-sidebar";
-import type { DiffThemePreset, ProviderOption, SettingsTab } from "@/app/types";
+import type {
+  DiffThemePreset,
+  FileOpenWith,
+  ProviderOption,
+  SettingsTab,
+} from "@/app/types";
 import type {
   AppServerAccountStatus,
   AiReviewConfig,
@@ -76,6 +81,10 @@ export type SettingsViewModel = {
   handleRefreshAppServerAccountStatus: () => void | Promise<void>;
   maskAccountEmail: Accessor<boolean>;
   setMaskAccountEmail: Setter<boolean>;
+  fileOpenWith: Accessor<FileOpenWith>;
+  setFileOpenWith: Setter<FileOpenWith>;
+  ghosttyOpenCommand: Accessor<string>;
+  setGhosttyOpenCommand: Setter<string>;
   opencodeSidecarStatus: Accessor<OpencodeSidecarStatus | undefined>;
   opencodeSidecarLoadError: Accessor<string | null>;
   aiApiKeyInput: Accessor<string>;
@@ -154,6 +163,10 @@ export function SettingsView(props: SettingsViewProps) {
     handleRefreshAppServerAccountStatus,
     maskAccountEmail,
     setMaskAccountEmail,
+    fileOpenWith,
+    setFileOpenWith,
+    ghosttyOpenCommand,
+    setGhosttyOpenCommand,
     opencodeSidecarStatus,
     opencodeSidecarLoadError,
     aiApiKeyInput,
@@ -214,27 +227,86 @@ export function SettingsView(props: SettingsViewProps) {
                               }
                             >
                               <section class="animate-fade-up mt-10 max-w-3xl rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6" style={{ "animation-delay": "0.08s" }}>
-                                <p class="text-[15px] font-medium text-neutral-200">Privacy</p>
+                                <p class="text-[15px] font-medium text-neutral-200">Open files</p>
                                 <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
-                                  Control whether your full Codex account email is visible in sidebar account widgets.
+                                  When you click a diff file name, Rovex will launch the file with your selected app.
                                 </p>
 
-                                <label class="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-white/[0.06] bg-white/[0.015] p-4">
-                                  <input
-                                    type="checkbox"
-                                    checked={maskAccountEmail()}
-                                    onChange={(event) => setMaskAccountEmail(event.currentTarget.checked)}
-                                    class="mt-0.5 h-4 w-4 rounded border-white/[0.3] bg-transparent accent-amber-500"
-                                  />
-                                  <span>
-                                    <span class="block text-[13.5px] font-medium text-neutral-200">
-                                      Hide account email
+                                <div class="mt-4 grid gap-2 sm:grid-cols-3">
+                                  <button
+                                    type="button"
+                                    class={`rounded-xl border px-3 py-2 text-left text-[13px] transition ${
+                                      fileOpenWith() === "vscode"
+                                        ? "border-amber-300/50 bg-amber-300/12 text-amber-100"
+                                        : "border-white/[0.08] bg-white/[0.015] text-neutral-300 hover:border-white/[0.18]"
+                                    }`}
+                                    onClick={() => setFileOpenWith("vscode")}
+                                  >
+                                    VS Code
+                                  </button>
+                                  <button
+                                    type="button"
+                                    class={`rounded-xl border px-3 py-2 text-left text-[13px] transition ${
+                                      fileOpenWith() === "cursor"
+                                        ? "border-amber-300/50 bg-amber-300/12 text-amber-100"
+                                        : "border-white/[0.08] bg-white/[0.015] text-neutral-300 hover:border-white/[0.18]"
+                                    }`}
+                                    onClick={() => setFileOpenWith("cursor")}
+                                  >
+                                    Cursor
+                                  </button>
+                                  <button
+                                    type="button"
+                                    class={`rounded-xl border px-3 py-2 text-left text-[13px] transition ${
+                                      fileOpenWith() === "ghostty"
+                                        ? "border-amber-300/50 bg-amber-300/12 text-amber-100"
+                                        : "border-white/[0.08] bg-white/[0.015] text-neutral-300 hover:border-white/[0.18]"
+                                    }`}
+                                    onClick={() => setFileOpenWith("ghostty")}
+                                  >
+                                    Ghostty
+                                  </button>
+                                </div>
+
+                                <Show when={fileOpenWith() === "ghostty"}>
+                                  <div class="mt-4 rounded-xl border border-white/[0.06] bg-white/[0.015] p-4">
+                                    <p class="text-[13px] font-medium text-neutral-200">Ghostty command</p>
+                                    <p class="mt-1 text-[12.5px] text-neutral-500">
+                                      Use <span class="font-mono text-neutral-300">{"{file}"}</span> where the full file path should go.
+                                    </p>
+                                    <TextField class="mt-3">
+                                      <TextFieldInput
+                                        value={ghosttyOpenCommand()}
+                                        onInput={(event) => setGhosttyOpenCommand(event.currentTarget.value)}
+                                        placeholder="nvim {file}"
+                                      />
+                                    </TextField>
+                                  </div>
+                                </Show>
+
+                                <div class="mt-6 border-t border-white/[0.06] pt-5">
+                                  <p class="text-[15px] font-medium text-neutral-200">Privacy</p>
+                                  <p class="mt-1.5 text-[14px] leading-relaxed text-neutral-500">
+                                    Control whether your full Codex account email is visible in sidebar account widgets.
+                                  </p>
+
+                                  <label class="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-white/[0.06] bg-white/[0.015] p-4">
+                                    <input
+                                      type="checkbox"
+                                      checked={maskAccountEmail()}
+                                      onChange={(event) => setMaskAccountEmail(event.currentTarget.checked)}
+                                      class="mt-0.5 h-4 w-4 rounded border-white/[0.3] bg-transparent accent-amber-500"
+                                    />
+                                    <span>
+                                      <span class="block text-[13.5px] font-medium text-neutral-200">
+                                        Hide account email
+                                      </span>
+                                      <span class="mt-1 block text-[12.5px] leading-relaxed text-neutral-500">
+                                        When enabled, the sidebar account label shows <span class="font-mono text-neutral-400">Hidden</span> instead of your full email address.
+                                      </span>
                                     </span>
-                                    <span class="mt-1 block text-[12.5px] leading-relaxed text-neutral-500">
-                                      When enabled, the sidebar account label shows <span class="font-mono text-neutral-400">Hidden</span> instead of your full email address.
-                                    </span>
-                                  </span>
-                                </label>
+                                  </label>
+                                </div>
                               </section>
                             </Show>
                           }

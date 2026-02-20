@@ -1,8 +1,12 @@
 import type { ProviderKind, Thread } from "@/lib/backend";
 import {
   ACCOUNT_EMAIL_MASK_STORAGE_KEY,
+  DEFAULT_FILE_OPEN_WITH,
+  DEFAULT_GHOSTTY_OPEN_COMMAND,
   DEFAULT_DIFF_THEME_ID,
   DIFF_THEME_STORAGE_KEY,
+  FILE_OPEN_WITH_STORAGE_KEY,
+  GHOSTTY_OPEN_COMMAND_STORAGE_KEY,
   KNOWN_REPO_WORKSPACES_STORAGE_KEY,
   REPO_REVIEW_DEFAULTS_STORAGE_KEY,
   REPO_DISPLAY_NAME_STORAGE_KEY,
@@ -13,6 +17,7 @@ import {
 } from "@/app/constants";
 import type {
   DiffThemePreset,
+  FileOpenWith,
   ProviderOption,
   RepoGroup,
   RepoReview,
@@ -121,6 +126,20 @@ export function getInitialReviewSidebarCollapsed(): boolean {
   if (!raw) return false;
   const normalized = raw.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+export function getInitialFileOpenWith(): FileOpenWith {
+  if (typeof window === "undefined") return DEFAULT_FILE_OPEN_WITH;
+  const raw = window.localStorage.getItem(FILE_OPEN_WITH_STORAGE_KEY)?.trim().toLowerCase();
+  if (raw === "vscode" || raw === "cursor" || raw === "ghostty") return raw;
+  return DEFAULT_FILE_OPEN_WITH;
+}
+
+export function getInitialGhosttyOpenCommand(): string {
+  if (typeof window === "undefined") return DEFAULT_GHOSTTY_OPEN_COMMAND;
+  const raw = window.localStorage.getItem(GHOSTTY_OPEN_COMMAND_STORAGE_KEY);
+  const normalized = raw?.trim();
+  return normalized && normalized.length > 0 ? normalized : DEFAULT_GHOSTTY_OPEN_COMMAND;
 }
 
 export function sleep(ms: number): Promise<void> {

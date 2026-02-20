@@ -2,6 +2,8 @@ import { createMemo, createSignal } from "solid-js";
 import {
   getDiffThemePreset,
   getInitialDiffThemeId,
+  getInitialFileOpenWith,
+  getInitialGhosttyOpenCommand,
   getInitialMaskAccountEmail,
   getInitialReviewSidebarCollapsed,
   providerOption,
@@ -17,6 +19,8 @@ export function useCoreState() {
   const [reviewSidebarCollapsed, setReviewSidebarCollapsed] = createSignal(
     getInitialReviewSidebarCollapsed()
   );
+  const [fileOpenWith, setFileOpenWith] = createSignal(getInitialFileOpenWith());
+  const [ghosttyOpenCommand, setGhosttyOpenCommand] = createSignal(getInitialGhosttyOpenCommand());
   const [settingsError, setSettingsError] = createSignal<string | null>(null);
   const [selectedProvider, setSelectedProvider] = createSignal<ProviderKind>("github");
 
@@ -34,6 +38,10 @@ export function useCoreState() {
     setMaskAccountEmail,
     reviewSidebarCollapsed,
     setReviewSidebarCollapsed,
+    fileOpenWith,
+    setFileOpenWith,
+    ghosttyOpenCommand,
+    setGhosttyOpenCommand,
     settingsError,
     setSettingsError,
     selectedProvider,

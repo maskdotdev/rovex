@@ -268,6 +268,15 @@ pub struct CreateWorkspaceBranchInput {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OpenFileInEditorInput {
+    pub workspace: String,
+    pub file_path: String,
+    pub launcher: String,
+    pub ghostty_command_template: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GenerateAiReviewInput {
     pub thread_id: i64,
     pub workspace: String,
@@ -393,6 +402,59 @@ pub struct AiReviewRun {
     pub started_at: Option<String>,
     pub ended_at: Option<String>,
     pub canceled_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InlineReviewComment {
+    pub id: String,
+    pub thread_id: i64,
+    pub workspace: String,
+    pub base_ref: String,
+    pub merge_base: String,
+    pub head: String,
+    pub file_path: String,
+    pub side: String,
+    pub line_number: i64,
+    pub end_side: Option<String>,
+    pub end_line_number: Option<i64>,
+    pub body: String,
+    pub author: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateInlineReviewCommentInput {
+    pub thread_id: i64,
+    pub workspace: String,
+    pub base_ref: String,
+    pub merge_base: String,
+    pub head: String,
+    pub file_path: String,
+    pub side: String,
+    pub line_number: i64,
+    pub end_side: Option<String>,
+    pub end_line_number: Option<i64>,
+    pub body: String,
+    pub author: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListInlineReviewCommentsInput {
+    pub thread_id: i64,
+    pub workspace: String,
+    pub base_ref: String,
+    pub merge_base: String,
+    pub head: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListInlineReviewCommentsResult {
+    pub comments: Vec<InlineReviewComment>,
 }
 
 #[derive(Debug, Clone, Serialize)]

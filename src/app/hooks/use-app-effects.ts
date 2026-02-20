@@ -18,6 +18,7 @@ import type {
   AiReviewProgressEvent,
   AiReviewRun as PersistedAiReviewRun,
   CompareWorkspaceDiffResult,
+  InlineReviewComment,
 } from "@/lib/backend";
 import { createFullReviewScope, type ReviewScope } from "@/app/review-scope";
 import {
@@ -76,6 +77,7 @@ type UseAppEffectsArgs = {
   setAiRunElapsedSeconds: Setter<number>;
   setActiveReviewScope: Setter<ReviewScope>;
   setDiffFocusTarget: Setter<ReviewDiffFocusTarget | null>;
+  setInlineReviewComments: Setter<InlineReviewComment[]>;
   setReviewRuns: Setter<ReviewRun[]>;
   selectedRunId: Accessor<string | null>;
   setSelectedRunId: Setter<string | null>;
@@ -226,6 +228,7 @@ export function useAppEffects(args: UseAppEffectsArgs) {
     args.setAiProgressEvents([]);
     args.setActiveReviewScope(createFullReviewScope());
     args.setDiffFocusTarget(null);
+    args.setInlineReviewComments([]);
     args.setReviewRuns([]);
     args.setSelectedRunId(null);
     args.setReviewWorkbenchTab("description");

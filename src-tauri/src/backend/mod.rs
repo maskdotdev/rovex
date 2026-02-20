@@ -12,14 +12,17 @@ pub use models::{
     CancelAiReviewRunInput, CancelAiReviewRunResult, CheckoutWorkspaceBranchInput,
     CheckoutWorkspaceBranchResult, CloneRepositoryInput, CloneRepositoryResult, CodeIntelSyncInput,
     CodeIntelSyncResult, CompareWorkspaceDiffInput, CompareWorkspaceDiffProfile,
-    CompareWorkspaceDiffResult, ConnectProviderInput, CreateThreadInput,
+    CompareWorkspaceDiffResult, ConnectProviderInput, CreateInlineReviewCommentInput,
+    CreateThreadInput,
     CreateWorkspaceBranchInput, GenerateAiFollowUpInput, GenerateAiFollowUpResult,
     GenerateAiReviewInput, GenerateAiReviewResult, GetAiReviewRunInput, ListAiReviewRunsInput,
-    ListAiReviewRunsResult, ListWorkspaceBranchesInput, ListWorkspaceBranchesResult, Message,
-    MessageRole, OpencodeSidecarStatus, PollProviderDeviceAuthInput, PollProviderDeviceAuthResult,
-    ProviderConnection, ProviderDeviceAuthStatus, ProviderKind, SetAiReviewApiKeyInput,
-    SetAiReviewSettingsInput, StartAiReviewRunInput, StartAiReviewRunResult,
-    StartProviderDeviceAuthInput, StartProviderDeviceAuthResult, Thread, WorkspaceBranch,
+    ListAiReviewRunsResult, ListInlineReviewCommentsInput, ListInlineReviewCommentsResult,
+    ListWorkspaceBranchesInput, ListWorkspaceBranchesResult, Message, MessageRole,
+    OpenFileInEditorInput, OpencodeSidecarStatus, PollProviderDeviceAuthInput,
+    PollProviderDeviceAuthResult, ProviderConnection, ProviderDeviceAuthStatus, ProviderKind,
+    SetAiReviewApiKeyInput, SetAiReviewSettingsInput, StartAiReviewRunInput,
+    StartAiReviewRunResult, StartProviderDeviceAuthInput, StartProviderDeviceAuthResult, Thread,
+    WorkspaceBranch, InlineReviewComment,
 };
 
 use libsql::{Connection, Database};

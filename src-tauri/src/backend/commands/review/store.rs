@@ -1,11 +1,34 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use super::super::common::{
     parse_bool_i64, parse_json_vec_or_default, parse_limit, parse_optional_json_vec,
     MAX_PROGRESS_EVENTS_PER_RUN,
 };
 use crate::backend::{
     AiReviewChunk, AiReviewFinding, AiReviewProgressEvent, AiReviewRun, AppState,
-    GenerateAiReviewResult, StartAiReviewRunInput,
+    CreateInlineReviewCommentInput, GenerateAiReviewResult, InlineReviewComment,
+    ListInlineReviewCommentsInput, StartAiReviewRunInput,
 };
+
+static INLINE_REVIEW_COMMENT_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+fn next_inline_review_comment_id() -> String {
+    let counter = INLINE_REVIEW_COMMENT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or(0);
+    format!("comment-{millis}-{counter}")
+}
+
+fn normalize_comment_side(raw: &str) -> Option<&'static str> {
+    let value = raw.trim().to_lowercase();
+    match value.as_str() {
+        "additions" | "addition" | "added" => Some("additions"),
+        "deletions" | "deletion" | "removed" => Some("deletions"),
+        _ => None,
+    }
+}
 
 fn parse_ai_review_run_from_row(row: &libsql::Row) -> Result<AiReviewRun, String> {
     let chunks_json: Option<String> = row
@@ -107,6 +130,56 @@ fn parse_ai_review_run_from_row(row: &libsql::Row) -> Result<AiReviewRun, String
         canceled_at: row
             .get(28)
             .map_err(|error| format!("Failed to parse run canceled_at: {error}"))?,
+    })
+}
+
+fn parse_inline_review_comment_from_row(row: &libsql::Row) -> Result<InlineReviewComment, String> {
+    Ok(InlineReviewComment {
+        id: row
+            .get(0)
+            .map_err(|error| format!("Failed to parse inline comment id: {error}"))?,
+        thread_id: row
+            .get(1)
+            .map_err(|error| format!("Failed to parse inline comment thread_id: {error}"))?,
+        workspace: row
+            .get(2)
+            .map_err(|error| format!("Failed to parse inline comment workspace: {error}"))?,
+        base_ref: row
+            .get(3)
+            .map_err(|error| format!("Failed to parse inline comment base_ref: {error}"))?,
+        merge_base: row
+            .get(4)
+            .map_err(|error| format!("Failed to parse inline comment merge_base: {error}"))?,
+        head: row
+            .get(5)
+            .map_err(|error| format!("Failed to parse inline comment head: {error}"))?,
+        file_path: row
+            .get(6)
+            .map_err(|error| format!("Failed to parse inline comment file_path: {error}"))?,
+        side: row
+            .get(7)
+            .map_err(|error| format!("Failed to parse inline comment side: {error}"))?,
+        line_number: row
+            .get(8)
+            .map_err(|error| format!("Failed to parse inline comment line_number: {error}"))?,
+        end_side: row
+            .get(9)
+            .map_err(|error| format!("Failed to parse inline comment end_side: {error}"))?,
+        end_line_number: row
+            .get(10)
+            .map_err(|error| format!("Failed to parse inline comment end_line_number: {error}"))?,
+        body: row
+            .get(11)
+            .map_err(|error| format!("Failed to parse inline comment body: {error}"))?,
+        author: row
+            .get(12)
+            .map_err(|error| format!("Failed to parse inline comment author: {error}"))?,
+        created_at: row
+            .get(13)
+            .map_err(|error| format!("Failed to parse inline comment created_at: {error}"))?,
+        updated_at: row
+            .get(14)
+            .map_err(|error| format!("Failed to parse inline comment updated_at: {error}"))?,
     })
 }
 
@@ -398,4 +471,172 @@ pub(crate) async fn finalize_ai_review_run(
     .await
     .map_err(|error| format!("Failed to finalize AI review run: {error}"))?;
     Ok(())
+}
+
+pub(crate) async fn insert_inline_review_comment(
+    state: &AppState,
+    input: &CreateInlineReviewCommentInput,
+) -> Result<InlineReviewComment, String> {
+    let workspace = input.workspace.trim();
+    if workspace.is_empty() {
+        return Err("Workspace is required for inline comments.".to_string());
+    }
+    let base_ref = input.base_ref.trim();
+    if base_ref.is_empty() {
+        return Err("Base ref is required for inline comments.".to_string());
+    }
+    let merge_base = input.merge_base.trim();
+    if merge_base.is_empty() {
+        return Err("Merge base is required for inline comments.".to_string());
+    }
+    let head = input.head.trim();
+    if head.is_empty() {
+        return Err("Head ref is required for inline comments.".to_string());
+    }
+    let file_path = input.file_path.trim();
+    if file_path.is_empty() {
+        return Err("File path is required for inline comments.".to_string());
+    }
+    let side = normalize_comment_side(&input.side)
+        .ok_or_else(|| "Comment side must be 'additions' or 'deletions'.".to_string())?;
+    if input.line_number <= 0 {
+        return Err("Comment line number must be positive.".to_string());
+    }
+    let mut line_number = input.line_number;
+    let mut end_side = input
+        .end_side
+        .as_deref()
+        .and_then(normalize_comment_side)
+        .map(ToOwned::to_owned);
+    let mut end_line_number = input.end_line_number;
+    if end_line_number.is_some() && end_side.is_none() {
+        end_side = Some(side.to_string());
+    }
+    if let Some(value) = end_line_number {
+        if value <= 0 {
+            return Err("Comment end line number must be positive.".to_string());
+        }
+    }
+    if end_line_number.is_none() && end_side.is_some() {
+        end_line_number = Some(line_number);
+    }
+    if let (Some(target_end_side), Some(target_end_line)) = (end_side.as_deref(), end_line_number) {
+        if target_end_side == side && target_end_line < line_number {
+            line_number = target_end_line;
+            end_line_number = Some(input.line_number);
+        }
+    }
+    if end_line_number == Some(line_number) && end_side.as_deref() == Some(side) {
+        end_line_number = None;
+        end_side = None;
+    }
+    let body = input.body.trim();
+    if body.is_empty() {
+        return Err("Comment body must not be empty.".to_string());
+    }
+    let author = input
+        .author
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("You")
+        .to_string();
+
+    let comment_id = next_inline_review_comment_id();
+    let conn = state.connection()?;
+    conn.execute(
+        "INSERT INTO inline_review_comments (
+            id, thread_id, workspace, base_ref, merge_base, head, file_path, side, line_number, end_side, end_line_number, body, author
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        (
+            comment_id.clone(),
+            input.thread_id,
+            workspace.to_string(),
+            base_ref.to_string(),
+            merge_base.to_string(),
+            head.to_string(),
+            file_path.to_string(),
+            side.to_string(),
+            line_number,
+            end_side,
+            end_line_number,
+            body.to_string(),
+            author.clone(),
+        ),
+    )
+    .await
+    .map_err(|error| format!("Failed to create inline review comment: {error}"))?;
+
+    let mut rows = conn
+        .query(
+            "SELECT
+               id, thread_id, workspace, base_ref, merge_base, head, file_path, side, line_number,
+               end_side, end_line_number, body, author, created_at, updated_at
+             FROM inline_review_comments
+             WHERE id = ?1
+             LIMIT 1",
+            [comment_id],
+        )
+        .await
+        .map_err(|error| format!("Failed to load created inline review comment: {error}"))?;
+
+    let Some(row) = rows
+        .next()
+        .await
+        .map_err(|error| format!("Failed to read created inline review comment row: {error}"))?
+    else {
+        return Err("Inline review comment was created but could not be loaded.".to_string());
+    };
+
+    parse_inline_review_comment_from_row(&row)
+}
+
+pub(crate) async fn list_inline_review_comments_internal(
+    state: &AppState,
+    input: &ListInlineReviewCommentsInput,
+) -> Result<Vec<InlineReviewComment>, String> {
+    let workspace = input.workspace.trim();
+    if workspace.is_empty() {
+        return Ok(Vec::new());
+    }
+    let base_ref = input.base_ref.trim();
+    let merge_base = input.merge_base.trim();
+    let head = input.head.trim();
+    if base_ref.is_empty() || merge_base.is_empty() || head.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let conn = state.connection()?;
+    let mut rows = conn
+        .query(
+            "SELECT
+               id, thread_id, workspace, base_ref, merge_base, head, file_path, side, line_number,
+               end_side, end_line_number, body, author, created_at, updated_at
+             FROM inline_review_comments
+             WHERE thread_id = ?1
+               AND workspace = ?2
+               AND base_ref = ?3
+               AND merge_base = ?4
+               AND head = ?5
+             ORDER BY created_at ASC, id ASC",
+            (
+                input.thread_id,
+                workspace.to_string(),
+                base_ref.to_string(),
+                merge_base.to_string(),
+                head.to_string(),
+            ),
+        )
+        .await
+        .map_err(|error| format!("Failed to list inline review comments: {error}"))?;
+
+    let mut comments = Vec::new();
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(|error| format!("Failed to read inline review comment rows: {error}"))?
+    {
+        comments.push(parse_inline_review_comment_from_row(&row)?);
+    }
+    Ok(comments)
 }

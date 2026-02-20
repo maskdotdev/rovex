@@ -6,7 +6,12 @@ import {
   PlugZap,
   SlidersHorizontal,
 } from "lucide-solid";
-import type { DiffThemePreset, ProviderOption, SettingsNavItem } from "@/app/types";
+import type {
+  DiffThemePreset,
+  FileOpenWith,
+  ProviderOption,
+  SettingsNavItem,
+} from "@/app/types";
 
 export const settingsNavItems: SettingsNavItem[] = [
   {
@@ -54,7 +59,11 @@ export const REPO_REVIEW_DEFAULTS_STORAGE_KEY = "rovex.settings.repo-review-defa
 export const DIFF_THEME_STORAGE_KEY = "rovex.settings.diff-theme";
 export const ACCOUNT_EMAIL_MASK_STORAGE_KEY = "rovex.settings.mask-account-email";
 export const REVIEW_SIDEBAR_COLLAPSED_STORAGE_KEY = "rovex.workspace.review-sidebar-collapsed";
+export const FILE_OPEN_WITH_STORAGE_KEY = "rovex.settings.file-open-with";
+export const GHOSTTY_OPEN_COMMAND_STORAGE_KEY = "rovex.settings.ghostty-open-command";
 export const DEFAULT_DIFF_THEME_ID = "rovex";
+export const DEFAULT_FILE_OPEN_WITH: FileOpenWith = "vscode";
+export const DEFAULT_GHOSTTY_OPEN_COMMAND = "nvim {file}";
 
 export const diffThemePresets: DiffThemePreset[] = [
   {

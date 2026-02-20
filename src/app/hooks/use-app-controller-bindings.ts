@@ -105,6 +105,10 @@ export function buildReviewActionArgs(s: AppState): Parameters<typeof useReviewA
       setCompareError: s.setCompareError,
       setShowDiffViewer: s.setShowDiffViewer,
     },
+    comments: {
+      inlineReviewComments: s.inlineReviewComments,
+      setInlineReviewComments: s.setInlineReviewComments,
+    },
     branch: {
       setBranchPopoverOpen: s.setBranchPopoverOpen,
       setBranchCreateMode: s.setBranchCreateMode,
@@ -194,6 +198,7 @@ export function buildAppEffectsArgs(
     setAiRunElapsedSeconds: s.setAiRunElapsedSeconds,
     setActiveReviewScope: s.setActiveReviewScope,
     setDiffFocusTarget: s.setDiffFocusTarget,
+    setInlineReviewComments: s.setInlineReviewComments,
     setReviewRuns: s.setReviewRuns,
     selectedRunId: s.selectedRunId,
     setSelectedRunId: s.setSelectedRunId,

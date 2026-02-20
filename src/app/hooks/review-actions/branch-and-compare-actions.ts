@@ -2,23 +2,25 @@ import {
   checkoutWorkspaceBranch,
   compareWorkspaceDiff,
   createWorkspaceBranch,
+  listInlineReviewComments,
 } from "@/lib/backend";
 import { toErrorMessage } from "@/app/hooks/error-utils";
 import type { UseReviewActionsArgs } from "@/app/hooks/review-action-types";
 
 type BranchAndCompareActionsArgs = Pick<
   UseReviewActionsArgs,
-  "selection" | "compare" | "branch"
+  "selection" | "compare" | "branch" | "comments"
 >;
 
 export function createBranchAndCompareActions(args: BranchAndCompareActionsArgs) {
-  const { selection, compare, branch } = args;
+  const { selection, compare, branch, comments } = args;
   let compareRequestSequence = 0;
 
   const resetComparisonView = () => {
     compare.setCompareError(null);
     compare.setCompareResult(null);
     compare.setShowDiffViewer(false);
+    comments.setInlineReviewComments([]);
   };
 
   const finalizeBranchSwitch = async () => {
@@ -94,8 +96,14 @@ export function createBranchAndCompareActions(args: BranchAndCompareActionsArgs)
     compare.setCompareError(null);
 
     const workspace = selection.selectedWorkspace().trim();
+    if (threadIdAtStart == null) {
+      compare.setCompareError("Select a review before loading workspace changes.");
+      comments.setInlineReviewComments([]);
+      return;
+    }
     if (!workspace) {
       compare.setCompareError("Select a review that has a local workspace path.");
+      comments.setInlineReviewComments([]);
       return;
     }
 
@@ -115,10 +123,30 @@ export function createBranchAndCompareActions(args: BranchAndCompareActionsArgs)
       selection.setSelectedBaseRef(result.baseRef);
       compare.setCompareResult(result);
       compare.setShowDiffViewer(true);
+      try {
+        const inlineCommentsResult = await listInlineReviewComments({
+          threadId: threadIdAtStart,
+          workspace: result.workspace,
+          baseRef: result.baseRef,
+          mergeBase: result.mergeBase,
+          head: result.head,
+        });
+        if (requestSequence !== compareRequestSequence) {
+          return;
+        }
+        if (threadIdAtStart !== selection.selectedThreadId()) {
+          return;
+        }
+        comments.setInlineReviewComments(inlineCommentsResult.comments);
+      } catch (error) {
+        console.error("[rovex review] Failed to load inline review comments:", error);
+        comments.setInlineReviewComments([]);
+      }
     } catch (error) {
       if (requestSequence !== compareRequestSequence) {
         return;
       }
+      comments.setInlineReviewComments([]);
       compare.setCompareError(toErrorMessage(error));
     } finally {
       if (requestSequence === compareRequestSequence) {

@@ -16,8 +16,9 @@ use super::emit_and_persist_ai_review_progress;
 use super::{executor, store};
 use crate::backend::{
     AiReviewProgressEvent, AiReviewRun, AppState, CancelAiReviewRunInput, CancelAiReviewRunResult,
-    GetAiReviewRunInput, ListAiReviewRunsInput, ListAiReviewRunsResult, StartAiReviewRunInput,
-    StartAiReviewRunResult,
+    CreateInlineReviewCommentInput, GetAiReviewRunInput, InlineReviewComment,
+    ListAiReviewRunsInput, ListAiReviewRunsResult, ListInlineReviewCommentsInput,
+    ListInlineReviewCommentsResult, StartAiReviewRunInput, StartAiReviewRunResult,
 };
 
 #[derive(Clone)]
@@ -360,4 +361,21 @@ pub async fn get_ai_review_run(
         return Err("Run id must not be empty.".to_string());
     }
     store::load_ai_review_run_by_id(&state, run_id).await
+}
+
+pub async fn create_inline_review_comment(
+    state: State<'_, AppState>,
+    input: CreateInlineReviewCommentInput,
+) -> Result<InlineReviewComment, String> {
+    let _ = load_thread_by_id(&state, input.thread_id).await?;
+    store::insert_inline_review_comment(&state, &input).await
+}
+
+pub async fn list_inline_review_comments(
+    state: State<'_, AppState>,
+    input: ListInlineReviewCommentsInput,
+) -> Result<ListInlineReviewCommentsResult, String> {
+    let _ = load_thread_by_id(&state, input.thread_id).await?;
+    let comments = store::list_inline_review_comments_internal(&state, &input).await?;
+    Ok(ListInlineReviewCommentsResult { comments })
 }

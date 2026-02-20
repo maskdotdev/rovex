@@ -12,6 +12,8 @@ export type SettingsTab =
   | "archivedThreads"
   | "connections";
 
+export type FileOpenWith = "vscode" | "cursor" | "ghostty";
+
 export type SettingsNavItem = {
   id: SettingsTab;
   label: string;

@@ -1,5 +1,6 @@
 import type { SettingsViewModel } from "@/app/components/settings-view";
 import type { WorkspaceViewModel } from "@/app/components/workspace-view";
+import type { DiffViewerCreateInlineCommentInput } from "@/components/diff-viewer";
 import type { useAppState } from "@/app/hooks/use-app-state";
 import type { useProviderAndSettingsActions } from "@/app/hooks/use-provider-and-settings-actions";
 import type { useReviewActions } from "@/app/hooks/use-review-actions";
@@ -21,6 +22,7 @@ type BuildAppViewModelsArgs = {
     | "handlePrepareAiFollowUpForFile"
     | "handleOpenFileInEditor"
     | "handleAskAiFollowUp"
+    | "handleCreateInlineReviewComment"
   >;
 };
 
@@ -162,10 +164,14 @@ function buildWorkspaceMainPaneModel(
     setActiveReviewScope: s.setActiveReviewScope,
     selectedDiffTheme: s.selectedDiffTheme,
     diffAnnotations: s.diffAnnotations,
+    inlineReviewComments: s.inlineReviewComments,
     diffFocusTarget: s.diffFocusTarget,
     handlePrepareAiFollowUpForFile: r.handlePrepareAiFollowUpForFile,
     handleOpenFileInEditor: r.handleOpenFileInEditor,
     handleStartAiReviewOnFullDiff: r.handleStartAiReviewOnFullDiff,
+    handleCreateInlineReviewComment: (
+      input: DiffViewerCreateInlineCommentInput
+    ) => r.handleCreateInlineReviewComment(input),
   };
 }
 

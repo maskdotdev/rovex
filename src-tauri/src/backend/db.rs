@@ -75,6 +75,49 @@ ON ai_review_runs(thread_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_ai_review_runs_status_created
 ON ai_review_runs(status, created_at ASC);
+
+CREATE TABLE IF NOT EXISTS inline_review_comments (
+  id TEXT PRIMARY KEY,
+  thread_id INTEGER NOT NULL,
+  workspace TEXT NOT NULL,
+  base_ref TEXT NOT NULL,
+  merge_base TEXT NOT NULL,
+  head TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  side TEXT NOT NULL CHECK (side IN ('additions', 'deletions')),
+  line_number INTEGER NOT NULL,
+  end_side TEXT CHECK (end_side IN ('additions', 'deletions')),
+  end_line_number INTEGER,
+  body TEXT NOT NULL,
+  author TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (thread_id) REFERENCES threads(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_inline_review_comments_context_created
+ON inline_review_comments(
+  thread_id,
+  workspace,
+  base_ref,
+  merge_base,
+  head,
+  created_at DESC
+);
+
+CREATE INDEX IF NOT EXISTS idx_inline_review_comments_file_line
+ON inline_review_comments(
+  thread_id,
+  workspace,
+  base_ref,
+  merge_base,
+  head,
+  file_path,
+  side,
+  line_number,
+  end_side,
+  end_line_number
+);
 "#;
 
 pub async fn open_database_from_env() -> Result<(String, Database), String> {
@@ -137,6 +180,54 @@ pub async fn initialize_schema(db: &Database) -> Result<(), String> {
     conn.execute_batch(SCHEMA_SQL)
         .await
         .map_err(|error| format!("Failed to initialize schema: {error}"))?;
+    ensure_inline_comment_range_columns(&conn).await?;
+
+    Ok(())
+}
+
+async fn ensure_inline_comment_range_columns(conn: &libsql::Connection) -> Result<(), String> {
+    let mut rows = conn
+        .query("PRAGMA table_info(inline_review_comments)", ())
+        .await
+        .map_err(|error| {
+            format!("Failed to inspect inline_review_comments schema: {error}")
+        })?;
+
+    let mut has_end_side = false;
+    let mut has_end_line_number = false;
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(|error| format!("Failed to read inline_review_comments schema rows: {error}"))?
+    {
+        let name: String = row
+            .get(1)
+            .map_err(|error| format!("Failed to parse inline_review_comments column name: {error}"))?;
+        if name == "end_side" {
+            has_end_side = true;
+        } else if name == "end_line_number" {
+            has_end_line_number = true;
+        }
+    }
+
+    if !has_end_side {
+        conn.execute(
+            "ALTER TABLE inline_review_comments ADD COLUMN end_side TEXT",
+            (),
+        )
+        .await
+        .map_err(|error| format!("Failed to migrate inline_review_comments.end_side: {error}"))?;
+    }
+    if !has_end_line_number {
+        conn.execute(
+            "ALTER TABLE inline_review_comments ADD COLUMN end_line_number INTEGER",
+            (),
+        )
+        .await
+        .map_err(|error| {
+            format!("Failed to migrate inline_review_comments.end_line_number: {error}")
+        })?;
+    }
 
     Ok(())
 }

@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { createFullReviewScope } from "@/app/review-scope";
+import type { InlineReviewComment } from "@/lib/backend";
 import type {
   ReviewDiffFocusTarget,
   ReviewRun,
@@ -13,6 +14,7 @@ export function useReviewWorkbenchState() {
   const [selectedRunId, setSelectedRunId] = createSignal<string | null>(null);
   const [reviewWorkbenchTab, setReviewWorkbenchTab] =
     createSignal<ReviewWorkbenchTab>("description");
+  const [inlineReviewComments, setInlineReviewComments] = createSignal<InlineReviewComment[]>([]);
 
   return {
     activeReviewScope,
@@ -25,5 +27,7 @@ export function useReviewWorkbenchState() {
     setSelectedRunId,
     reviewWorkbenchTab,
     setReviewWorkbenchTab,
+    inlineReviewComments,
+    setInlineReviewComments,
   };
 }

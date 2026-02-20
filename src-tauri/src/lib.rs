@@ -42,6 +42,7 @@ pub fn run() {
             backend::commands::list_workspace_branches,
             backend::commands::checkout_workspace_branch,
             backend::commands::create_workspace_branch,
+            backend::commands::open_file_in_editor,
             backend::commands::get_ai_review_config,
             backend::commands::set_ai_review_api_key,
             backend::commands::set_ai_review_settings,
@@ -52,6 +53,8 @@ pub fn run() {
             backend::commands::cancel_ai_review_run,
             backend::commands::list_ai_review_runs,
             backend::commands::get_ai_review_run,
+            backend::commands::create_inline_review_comment,
+            backend::commands::list_inline_review_comments,
             backend::commands::generate_ai_review,
             backend::commands::generate_ai_follow_up,
             backend::commands::run_code_intel_sync

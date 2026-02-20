@@ -155,6 +155,13 @@ export type CreateWorkspaceBranchInput = {
   fromRef?: string | null;
 };
 
+export type OpenFileInEditorInput = {
+  workspace: string;
+  filePath: string;
+  launcher: "vscode" | "cursor" | "ghostty";
+  ghosttyCommandTemplate?: string | null;
+};
+
 export type GenerateAiReviewInput = {
   threadId: number;
   workspace: string;
@@ -260,6 +267,51 @@ export type AiReviewRun = {
   startedAt: string | null;
   endedAt: string | null;
   canceledAt: string | null;
+};
+
+export type InlineReviewComment = {
+  id: string;
+  threadId: number;
+  workspace: string;
+  baseRef: string;
+  mergeBase: string;
+  head: string;
+  filePath: string;
+  side: "additions" | "deletions";
+  lineNumber: number;
+  endSide: "additions" | "deletions" | null;
+  endLineNumber: number | null;
+  body: string;
+  author: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreateInlineReviewCommentInput = {
+  threadId: number;
+  workspace: string;
+  baseRef: string;
+  mergeBase: string;
+  head: string;
+  filePath: string;
+  side: "additions" | "deletions";
+  lineNumber: number;
+  endSide?: "additions" | "deletions" | null;
+  endLineNumber?: number | null;
+  body: string;
+  author?: string | null;
+};
+
+export type ListInlineReviewCommentsInput = {
+  threadId: number;
+  workspace: string;
+  baseRef: string;
+  mergeBase: string;
+  head: string;
+};
+
+export type ListInlineReviewCommentsResult = {
+  comments: InlineReviewComment[];
 };
 
 export type StartAiReviewRunInput = GenerateAiReviewInput & {
@@ -466,6 +518,10 @@ export function createWorkspaceBranch(input: CreateWorkspaceBranchInput) {
   return invoke<CheckoutWorkspaceBranchResult>("create_workspace_branch", { input });
 }
 
+export function openFileInEditor(input: OpenFileInEditorInput) {
+  return invoke<void>("open_file_in_editor", { input });
+}
+
 export function getAiReviewConfig() {
   return invoke<AiReviewConfig>("get_ai_review_config");
 }
@@ -508,6 +564,14 @@ export function listAiReviewRuns(input: ListAiReviewRunsInput = {}) {
 
 export function getAiReviewRun(input: GetAiReviewRunInput) {
   return invoke<AiReviewRun>("get_ai_review_run", { input });
+}
+
+export function createInlineReviewComment(input: CreateInlineReviewCommentInput) {
+  return invoke<InlineReviewComment>("create_inline_review_comment", { input });
+}
+
+export function listInlineReviewComments(input: ListInlineReviewCommentsInput) {
+  return invoke<ListInlineReviewCommentsResult>("list_inline_review_comments", { input });
 }
 
 export function generateAiFollowUp(input: GenerateAiFollowUpInput) {
