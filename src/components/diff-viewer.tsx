@@ -5,16 +5,26 @@ import {
   type DiffLineAnnotation,
   type FileDiffMetadata,
   type FileDiffOptions,
+  type SelectedLineRange,
 } from "@pierre/diffs";
 import {
   Columns2,
   Hash,
+  MessageSquare,
   PaintBucket,
   Rows3,
   Sparkles,
   WrapText,
 } from "lucide-solid";
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import {
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  type Accessor,
+} from "solid-js";
 import { render as renderSolid } from "solid-js/web";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/tooltip";
 
@@ -115,12 +125,59 @@ export type DiffViewerAnnotation = {
   chunkId?: string | null;
 };
 
+export type DiffViewerInlineComment = {
+  id: string;
+  filePath: string;
+  side: "additions" | "deletions";
+  lineNumber: number;
+  endSide?: "additions" | "deletions" | null;
+  endLineNumber?: number | null;
+  body: string;
+  author: string;
+  createdAt: string;
+};
+
+export type DiffViewerCreateInlineCommentInput = {
+  filePath: string;
+  side: "additions" | "deletions";
+  lineNumber: number;
+  endSide?: "additions" | "deletions";
+  endLineNumber?: number;
+  body: string;
+};
+
 type DiffViewerAnnotationMetadata = {
+  source: "ai";
   id: string;
   title: string;
   body: string;
   severity: string;
   chunkId?: string | null;
+} | {
+  source: "comment";
+  id: string;
+  title: string;
+  body: string;
+  severity: string;
+  author: string;
+  createdAtLabel: string;
+} | {
+  source: "composer";
+  id: string;
+  title: string;
+  body: string;
+  severity: string;
+  onInput: (value: string) => void;
+  onSubmit: (value: string) => void;
+  onCancel: () => void;
+  submitting: boolean;
+};
+
+type DiffViewerLineTarget = {
+  filePath: string;
+  side: "additions" | "deletions";
+  lineNumber: number;
+  endLineNumber?: number;
 };
 
 type DiffViewerProps = {
@@ -137,6 +194,10 @@ type DiffViewerProps = {
   } | null;
   collapseStateKey?: string;
   annotations?: DiffViewerAnnotation[];
+  inlineComments?: DiffViewerInlineComment[];
+  onCreateInlineComment?: (
+    input: DiffViewerCreateInlineCommentInput
+  ) => void | Promise<unknown>;
   onAskAiAboutFile?: (filePath: string) => void;
   onOpenFile?: (filePath: string) => void | Promise<void>;
 };
@@ -147,10 +208,15 @@ type DiffFileCardProps = {
   initiallyCollapsed?: boolean;
   fastMode: boolean;
   options: DiffRenderOptions;
-  lineAnnotations: DiffLineAnnotation<DiffViewerAnnotationMetadata>[];
+  lineAnnotations: Accessor<DiffLineAnnotation<DiffViewerAnnotationMetadata>[]>;
   onCollapsedChange?: (filePath: string, collapsed: boolean) => void;
   onAskAiAboutFile?: (filePath: string) => void;
   onOpenFile?: (filePath: string) => void | Promise<void>;
+  onLineNumberClick?: (target: DiffViewerLineTarget) => void;
+  onLineClick?: (target: DiffViewerLineTarget) => void;
+  onLineSelectionChange?: (target: DiffViewerLineTarget | null) => void;
+  pendingSelectionTarget?: DiffViewerLineTarget | null;
+  onAddCommentForSelection?: (target: DiffViewerLineTarget) => void;
   onRendered?: (filePath: string, renderMs: number) => void;
 };
 
@@ -164,6 +230,11 @@ type DiffRenderOptions = Pick<
   | "themeType"
   | "unsafeCSS"
   | "renderAnnotation"
+  | "onLineClick"
+  | "onLineNumberClick"
+  | "enableLineSelection"
+  | "onLineSelected"
+  | "onLineSelectionEnd"
 >;
 
 type DiffViewerProfileState = {
@@ -190,6 +261,23 @@ const DIFF_COLLAPSE_DEBUG_STORAGE_KEY = "rovex.debug.diff-collapse";
 const DIFF_UNIFIED_STYLE_STORAGE_KEY = "rovex.diff.unified-style";
 const DIFF_COLLAPSED_FILES_STORAGE_PREFIX = "rovex.diff.collapsed-files.";
 const EMPTY_LINE_ANNOTATIONS: DiffLineAnnotation<DiffViewerAnnotationMetadata>[] = [];
+
+function logDiffCommentEvent(event: string, payload?: unknown) {
+  const formatPayload = () => {
+    if (payload === undefined) return undefined;
+    try {
+      return JSON.parse(JSON.stringify(payload));
+    } catch {
+      return payload;
+    }
+  };
+  const formattedPayload = formatPayload();
+  if (payload === undefined) {
+    console.info(`[rovex diff comments] ${event}`);
+    return;
+  }
+  console.info(`[rovex diff comments] ${event}`, formattedPayload);
+}
 const diffCollapseUnsafeCSS = `
 :host([data-rovex-collapsed="1"]) pre,
 :host([data-rovex-collapsed="1"]) [data-error-wrapper] {
@@ -256,12 +344,34 @@ function areLineAnnotationsEqual(
     }
     const leftMetadata = leftEntry.metadata;
     const rightMetadata = rightEntry.metadata;
+    if (leftMetadata?.source !== rightMetadata?.source) return false;
     if (
       leftMetadata?.id !== rightMetadata?.id ||
       leftMetadata?.title !== rightMetadata?.title ||
       leftMetadata?.body !== rightMetadata?.body ||
-      leftMetadata?.severity !== rightMetadata?.severity ||
-      leftMetadata?.chunkId !== rightMetadata?.chunkId
+      leftMetadata?.severity !== rightMetadata?.severity
+    ) {
+      return false;
+    }
+    if (
+      leftMetadata?.source === "ai" &&
+      rightMetadata?.source === "ai" &&
+      leftMetadata.chunkId !== rightMetadata.chunkId
+    ) {
+      return false;
+    }
+    if (
+      leftMetadata?.source === "comment" &&
+      rightMetadata?.source === "comment" &&
+      (leftMetadata.author !== rightMetadata.author ||
+        leftMetadata.createdAtLabel !== rightMetadata.createdAtLabel)
+    ) {
+      return false;
+    }
+    if (
+      leftMetadata?.source === "composer" &&
+      rightMetadata?.source === "composer" &&
+      leftMetadata.submitting !== rightMetadata.submitting
     ) {
       return false;
     }
@@ -322,6 +432,98 @@ function writeStoredCollapsedFilePaths(scope: string, paths: Set<string>) {
   }
 }
 
+function getAnnotationLocationKey(target: DiffViewerLineTarget) {
+  const endLineNumber =
+    target.endLineNumber != null && target.endLineNumber !== target.lineNumber
+      ? target.endLineNumber
+      : target.lineNumber;
+  return `${target.filePath}::${target.side}::${target.lineNumber}::${endLineNumber}`;
+}
+
+function areLineTargetsEqual(left: DiffViewerLineTarget | null, right: DiffViewerLineTarget | null) {
+  if (left == null || right == null) return left === right;
+  const leftEnd = left.endLineNumber ?? left.lineNumber;
+  const rightEnd = right.endLineNumber ?? right.lineNumber;
+  return (
+    left.filePath === right.filePath &&
+    left.side === right.side &&
+    left.lineNumber === right.lineNumber &&
+    leftEnd === rightEnd
+  );
+}
+
+function getAnnotationSourcePriority(
+  metadata: DiffViewerAnnotationMetadata | undefined
+) {
+  if (!metadata) return 0;
+  if (metadata.source === "ai") return 0;
+  if (metadata.source === "comment") return 1;
+  return 2;
+}
+
+function formatInlineCommentTimestamp(date: Date) {
+  const hours = date.getHours();
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const suffix = hours >= 12 ? "PM" : "AM";
+  const normalizedHour = ((hours + 11) % 12) + 1;
+  return `${normalizedHour}:${minutes} ${suffix}`;
+}
+
+function formatInlineCommentCreatedAt(raw: string) {
+  const parsed = Date.parse(raw);
+  if (Number.isFinite(parsed)) {
+    return formatInlineCommentTimestamp(new Date(parsed));
+  }
+  return raw;
+}
+
+function normalizeLineTarget(target: DiffViewerLineTarget): DiffViewerLineTarget | null {
+  const filePath = normalizeDiffPath(target.filePath);
+  if (!filePath) return null;
+  const lineNumber = Number.isFinite(target.lineNumber)
+    ? Math.max(1, Math.floor(target.lineNumber))
+    : 0;
+  if (lineNumber <= 0) return null;
+  const endCandidate = target.endLineNumber;
+  const normalizedEnd =
+    endCandidate != null && Number.isFinite(endCandidate)
+      ? Math.max(1, Math.floor(endCandidate))
+      : lineNumber;
+  const rangeStart = Math.min(lineNumber, normalizedEnd);
+  const rangeEnd = Math.max(lineNumber, normalizedEnd);
+  return {
+    filePath,
+    side: target.side,
+    lineNumber: rangeStart,
+    endLineNumber: rangeEnd > rangeStart ? rangeEnd : undefined,
+  };
+}
+
+function getLineTargetLabel(target: DiffViewerLineTarget) {
+  const endLine = target.endLineNumber;
+  if (endLine != null && endLine !== target.lineNumber) {
+    return `L${target.lineNumber}-L${endLine}`;
+  }
+  return `L${target.lineNumber}`;
+}
+
+function toLineTargetFromSelectedRange(
+  filePath: string,
+  range: SelectedLineRange | null
+): DiffViewerLineTarget | null {
+  if (!range) return null;
+  const sideCandidate = range.endSide ?? range.side;
+  if (sideCandidate !== "additions" && sideCandidate !== "deletions") {
+    return null;
+  }
+  return normalizeLineTarget({
+    filePath,
+    side: sideCandidate,
+    lineNumber: range.start,
+    endLineNumber: range.end,
+  });
+}
+
 function renderDiffAnnotation(annotation: DiffLineAnnotation<DiffViewerAnnotationMetadata>) {
   const metadata = annotation.metadata;
   if (!metadata) return undefined;
@@ -331,6 +533,80 @@ function renderDiffAnnotation(annotation: DiffLineAnnotation<DiffViewerAnnotatio
   if (metadata.id) root.dataset.rovexAnnotationId = metadata.id;
   root.dataset.rovexLineNumber = String(annotation.lineNumber);
   root.dataset.rovexLineSide = annotation.side;
+  root.dataset.rovexAnnotationSource = metadata.source;
+
+  if (metadata.source === "composer") {
+    logDiffCommentEvent("rendering composer annotation", {
+      annotationSide: annotation.side,
+      lineNumber: annotation.lineNumber,
+      metadataId: metadata.id,
+    });
+    root.classList.add("is-comment-composer");
+
+    const titleRow = document.createElement("div");
+    titleRow.className = "rovex-inline-annotation-title";
+    titleRow.textContent = metadata.title;
+    root.appendChild(titleRow);
+
+    const form = document.createElement("form");
+    form.className = "rovex-inline-comment-form";
+    const submitButton = document.createElement("button");
+
+    const textarea = document.createElement("textarea");
+    textarea.className = "rovex-inline-comment-textarea";
+    textarea.placeholder = "Leave a comment";
+    textarea.value = metadata.body;
+    textarea.rows = 4;
+    textarea.disabled = metadata.submitting;
+    textarea.addEventListener("input", () => {
+      metadata.onInput(textarea.value);
+      submitButton.disabled = textarea.value.trim().length === 0;
+    });
+    textarea.addEventListener("keydown", (event) => {
+      if (metadata.submitting) return;
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        const value = textarea.value.trim();
+        if (value.length === 0) return;
+        metadata.onSubmit(value);
+      }
+    });
+    form.appendChild(textarea);
+
+    const actions = document.createElement("div");
+    actions.className = "rovex-inline-comment-actions";
+
+    submitButton.type = "submit";
+    submitButton.className = "rovex-inline-comment-submit";
+    submitButton.textContent = metadata.submitting ? "Commenting..." : "Comment";
+    submitButton.disabled = metadata.submitting || metadata.body.trim().length === 0;
+    actions.appendChild(submitButton);
+
+    const cancelButton = document.createElement("button");
+    cancelButton.type = "button";
+    cancelButton.className = "rovex-inline-comment-cancel";
+    cancelButton.textContent = "Cancel";
+    cancelButton.disabled = metadata.submitting;
+    cancelButton.addEventListener("click", () => metadata.onCancel());
+    actions.appendChild(cancelButton);
+
+    form.appendChild(actions);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (metadata.submitting) return;
+      const value = textarea.value.trim();
+      if (value.length === 0) return;
+      metadata.onSubmit(value);
+    });
+    root.appendChild(form);
+    queueMicrotask(() => {
+      if (metadata.submitting) return;
+      if (!textarea.isConnected) return;
+      textarea.focus();
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    });
+    return root;
+  }
 
   const titleRow = document.createElement("div");
   titleRow.className = "rovex-inline-annotation-title";
@@ -342,7 +618,14 @@ function renderDiffAnnotation(annotation: DiffLineAnnotation<DiffViewerAnnotatio
   body.textContent = metadata.body;
   root.appendChild(body);
 
-  if (metadata.chunkId) {
+  if (metadata.source === "comment") {
+    const footer = document.createElement("div");
+    footer.className = "rovex-inline-annotation-footer";
+    footer.textContent = metadata.createdAtLabel;
+    root.appendChild(footer);
+  }
+
+  if (metadata.source === "ai" && metadata.chunkId) {
     const footer = document.createElement("div");
     footer.className = "rovex-inline-annotation-footer";
     footer.textContent = metadata.chunkId;
@@ -361,6 +644,7 @@ function DiffFileCard(props: DiffFileCardProps) {
   };
 
   let visibilityAnchorRef: HTMLDivElement | undefined;
+  let sectionRef: HTMLElement | undefined;
   let containerRef: HTMLDivElement | undefined;
   let instance: FileDiff<DiffViewerAnnotationMetadata> | undefined;
   let previousRenderOptions: DiffRenderOptions | undefined;
@@ -374,6 +658,12 @@ function DiffFileCard(props: DiffFileCardProps) {
   const [shouldRender, setShouldRender] = createSignal(props.initiallyVisible);
   const [collapsed, setCollapsed] = createSignal(props.initiallyCollapsed ?? false);
   const [renderError, setRenderError] = createSignal<string | null>(null);
+  const [floatingSelectionButtonTop, setFloatingSelectionButtonTop] = createSignal<number | null>(null);
+  const [floatingSelectionButtonLeft, setFloatingSelectionButtonLeft] = createSignal<number | null>(
+    null
+  );
+  const [floatingSelectionTarget, setFloatingSelectionTarget] =
+    createSignal<DiffViewerLineTarget | null>(null);
 
   debugLog("init", {
     initiallyVisible: props.initiallyVisible,
@@ -505,6 +795,26 @@ function DiffFileCard(props: DiffFileCardProps) {
     }
   };
 
+  const syncCollapsedHostAttribute = () => {
+    const container = containerRef;
+    if (!container) {
+      debugLog("collapsed sync skipped (no container)");
+      return;
+    }
+    const fileContainer = container.querySelector("diffs-container");
+    if (!(fileContainer instanceof HTMLElement)) {
+      debugLog("collapsed sync skipped (no fileContainer)");
+      return;
+    }
+    if (collapsed()) {
+      fileContainer.setAttribute("data-rovex-collapsed", "1");
+      debugLog("applied collapsed host attr");
+      return;
+    }
+    fileContainer.removeAttribute("data-rovex-collapsed");
+    debugLog("removed collapsed host attr");
+  };
+
   const getCollapseToggleButton = () => {
     if (collapseToggleButton == null) {
       const button = document.createElement("button");
@@ -535,6 +845,14 @@ function DiffFileCard(props: DiffFileCardProps) {
     if (normalizedName) return normalizedName;
     return normalizeDiffPath(props.file.prevName);
   };
+
+  const selectedTargetForFile = createMemo<DiffViewerLineTarget | null>(() => {
+    const target = props.pendingSelectionTarget;
+    if (!target) return null;
+    const filePath = getNormalizedFilePath();
+    if (!filePath || target.filePath !== filePath) return null;
+    return target;
+  });
 
   const setCollapsedState = (nextCollapsed: boolean) => {
     setCollapsed((current) => {
@@ -616,6 +934,110 @@ function DiffFileCard(props: DiffFileCardProps) {
   });
 
   createEffect(() => {
+    const selectedTarget = selectedTargetForFile();
+    const visible = shouldRender();
+    if (!selectedTarget || !visible || collapsed()) {
+      setFloatingSelectionButtonTop(null);
+      setFloatingSelectionButtonLeft(null);
+      setFloatingSelectionTarget(null);
+      return;
+    }
+
+    let disposed = false;
+    const updateFloatingButtonPosition = () => {
+      if (disposed) return;
+      const section = sectionRef;
+      const container = containerRef;
+      if (!section || !container) {
+        setFloatingSelectionButtonTop(null);
+        setFloatingSelectionButtonLeft(null);
+        setFloatingSelectionTarget(null);
+        return;
+      }
+      const fileContainer = container.querySelector("diffs-container");
+      const shadowRoot =
+        fileContainer instanceof HTMLElement ? fileContainer.shadowRoot : null;
+      if (!shadowRoot) {
+        setFloatingSelectionButtonTop(null);
+        setFloatingSelectionButtonLeft(null);
+        setFloatingSelectionTarget(null);
+        return;
+      }
+
+      const selectedRows = Array.from(
+        shadowRoot.querySelectorAll<HTMLElement>("[data-selected-line]")
+      );
+      const changedSelectedRows = selectedRows.filter((row) => {
+        const lineType = row.dataset.lineType;
+        return (
+          lineType === "change-addition" ||
+          lineType === "change-additions" ||
+          lineType === "change-deletion"
+        );
+      });
+      setFloatingSelectionTarget(selectedTarget);
+
+      let anchorRow: HTMLElement | null =
+        changedSelectedRows.find((row) => {
+          const rowLine = Number(row.dataset.line);
+          if (!Number.isFinite(rowLine)) return false;
+          const endLine = selectedTarget.endLineNumber ?? selectedTarget.lineNumber;
+          if (rowLine < selectedTarget.lineNumber || rowLine > endLine) return false;
+          const expectedType =
+            selectedTarget.side === "additions" ? "change-addition" : "change-deletion";
+          const rowType = row.dataset.lineType;
+          if (expectedType === "change-addition") {
+            return rowType === "change-addition" || rowType === "change-additions";
+          }
+          return rowType === expectedType;
+        }) ??
+        changedSelectedRows[0] ??
+        selectedRows[0] ??
+        null;
+
+      if (!anchorRow) {
+        const sideLineSelector =
+          selectedTarget.side === "additions"
+            ? `[data-line="${selectedTarget.lineNumber}"][data-line-type="change-addition"],[data-line="${selectedTarget.lineNumber}"][data-line-type="change-additions"]`
+            : `[data-line="${selectedTarget.lineNumber}"][data-line-type="change-deletion"]`;
+        anchorRow = shadowRoot.querySelector<HTMLElement>(sideLineSelector);
+      }
+      if (!anchorRow) {
+        anchorRow = shadowRoot.querySelector<HTMLElement>(
+          `[data-line="${selectedTarget.lineNumber}"]`
+        );
+      }
+      if (!anchorRow) {
+        setFloatingSelectionButtonTop(null);
+        setFloatingSelectionButtonLeft(null);
+        setFloatingSelectionTarget(null);
+        return;
+      }
+
+      const sectionRect = section.getBoundingClientRect();
+      const anchorRect = anchorRow.getBoundingClientRect();
+      const computedTop = anchorRect.top - sectionRect.top + anchorRect.height / 2;
+      const computedLeft = Math.max(8, anchorRect.left - sectionRect.left - 30);
+      setFloatingSelectionButtonTop(Math.max(18, computedTop));
+      setFloatingSelectionButtonLeft(computedLeft);
+    };
+
+    const rafId = requestAnimationFrame(updateFloatingButtonPosition);
+    const handleWindowLayoutChange = () => updateFloatingButtonPosition();
+    window.addEventListener("scroll", handleWindowLayoutChange, true);
+    window.addEventListener("resize", handleWindowLayoutChange);
+    onCleanup(() => {
+      disposed = true;
+      cancelAnimationFrame(rafId);
+      window.removeEventListener("scroll", handleWindowLayoutChange, true);
+      window.removeEventListener("resize", handleWindowLayoutChange);
+      setFloatingSelectionButtonTop(null);
+      setFloatingSelectionButtonLeft(null);
+      setFloatingSelectionTarget(null);
+    });
+  });
+
+  createEffect(() => {
     const anchor = visibilityAnchorRef;
     if (!anchor) {
       debugLog("intersection setup skipped (no anchor)");
@@ -642,9 +1064,15 @@ function DiffFileCard(props: DiffFileCardProps) {
     const visible = shouldRender();
     const isCollapsed = collapsed();
     debugLog("render effect tick", { shouldRender: visible, collapsed: isCollapsed });
-    if (!visible || isCollapsed) {
+    if (!visible) {
       debugLog("render effect skip", {
-        reason: !visible ? "shouldRender=false" : "collapsed=true",
+        reason: "shouldRender=false",
+      });
+      return;
+    }
+    if (isCollapsed && instance) {
+      debugLog("render effect skip", {
+        reason: "collapsed=true and instance already initialized",
       });
       return;
     }
@@ -663,13 +1091,58 @@ function DiffFileCard(props: DiffFileCardProps) {
 
       const fileOptions: FileDiffOptions<DiffViewerAnnotationMetadata> = {
         ...props.options,
-        hunkSeparators: useHugeFileFastPath ? "simple" : "metadata",
+        hunkSeparators: () => document.createDocumentFragment(),
         diffStyle: useHugeFileFastPath ? "unified" : props.options.diffStyle,
         disableLineNumbers: useHugeFileFastPath ? true : props.options.disableLineNumbers,
         lineDiffType: useFastFileMode ? "none" : "word",
         maxLineDiffLength: useHugeFileFastPath ? 60 : useFastFileMode ? 120 : 280,
         tokenizeMaxLineLength: useHugeFileFastPath ? 120 : useFastFileMode ? 280 : 900,
         renderHeaderMetadata: () => getHeaderMetadataControls(),
+        enableLineSelection: true,
+        onLineSelected: (range) => {
+          const normalizedPath = getNormalizedFilePath();
+          if (!normalizedPath) return;
+          const target = toLineTargetFromSelectedRange(normalizedPath, range);
+          logDiffCommentEvent("onLineSelected", {
+            filePath: normalizedPath,
+            range,
+            target,
+          });
+          props.onLineSelectionChange?.(target);
+        },
+        onLineSelectionEnd: (range: SelectedLineRange | null) => {
+          const normalizedPath = getNormalizedFilePath();
+          if (!normalizedPath) return;
+          const target = toLineTargetFromSelectedRange(normalizedPath, range);
+          logDiffCommentEvent("onLineSelectionEnd", {
+            filePath: normalizedPath,
+            range,
+            target,
+          });
+          props.onLineSelectionChange?.(target);
+        },
+        onLineClick: (lineEvent) => {
+          const lineType = lineEvent.lineType;
+          if (lineType !== "change-addition" && lineType !== "change-deletion") return;
+          const normalizedPath = getNormalizedFilePath();
+          if (!normalizedPath) return;
+          props.onLineClick?.({
+            filePath: normalizedPath,
+            lineNumber: lineEvent.lineNumber,
+            side: lineEvent.annotationSide,
+          });
+        },
+        onLineNumberClick: (lineEvent) => {
+          const lineType = lineEvent.lineType;
+          if (lineType !== "change-addition" && lineType !== "change-deletion") return;
+          const normalizedPath = getNormalizedFilePath();
+          if (!normalizedPath) return;
+          props.onLineNumberClick?.({
+            filePath: normalizedPath,
+            lineNumber: lineEvent.lineNumber,
+            side: lineEvent.annotationSide,
+          });
+        },
       };
       if (!instance) {
         container.replaceChildren();
@@ -683,15 +1156,29 @@ function DiffFileCard(props: DiffFileCardProps) {
         ? ({ ...props.file, lang: "text" } as FileDiffMetadata)
         : props.file;
       const optionsChanged = previousRenderOptions !== props.options;
+      const lineAnnotations = props.lineAnnotations();
+      const lineAnnotationsForRender =
+        useHugeFileFastPath && lineAnnotations.length === 0
+          ? EMPTY_LINE_ANNOTATIONS
+          : lineAnnotations;
+      logDiffCommentEvent("render file annotations", {
+        filePath: getNormalizedFilePath(),
+        totalAnnotations: lineAnnotationsForRender.length,
+        composerAnnotations: lineAnnotationsForRender.filter(
+          (entry) => entry.metadata?.source === "composer"
+        ).length,
+        annotationSources: lineAnnotationsForRender.map((entry) => entry.metadata?.source ?? "none"),
+      });
       instance.render({
         fileDiff,
         containerWrapper: container,
-        lineAnnotations: useHugeFileFastPath ? EMPTY_LINE_ANNOTATIONS : props.lineAnnotations,
+        lineAnnotations: lineAnnotationsForRender,
         forceRender: optionsChanged,
       });
       previousRenderOptions = props.options;
       debugLog("render complete");
       bindHeaderInteraction();
+      syncCollapsedHostAttribute();
       const renderMs = performance.now() - renderStart;
       if (!profiledInitialRender) {
         props.onRendered?.(props.file.name, renderMs);
@@ -707,23 +1194,7 @@ function DiffFileCard(props: DiffFileCardProps) {
     debugLog("collapsed sync effect tick", { collapsed: collapsed() });
     syncCollapseToggleButton();
     syncHeaderAccessibility();
-    const container = containerRef;
-    if (!container) {
-      debugLog("collapsed sync skipped (no container)");
-      return;
-    }
-    const fileContainer = container.querySelector("diffs-container");
-    if (!(fileContainer instanceof HTMLElement)) {
-      debugLog("collapsed sync skipped (no fileContainer)");
-      return;
-    }
-    if (collapsed()) {
-      fileContainer.setAttribute("data-rovex-collapsed", "1");
-      debugLog("applied collapsed host attr");
-      return;
-    }
-    fileContainer.removeAttribute("data-rovex-collapsed");
-    debugLog("removed collapsed host attr");
+    syncCollapsedHostAttribute();
   });
 
   onCleanup(() => {
@@ -742,7 +1213,48 @@ function DiffFileCard(props: DiffFileCardProps) {
   });
 
   return (
-    <section class="rovex-diff-file" data-rovex-file-path={getNormalizedFilePath() || undefined}>
+    <section
+      ref={sectionRef}
+      class="rovex-diff-file"
+      data-rovex-file-path={getNormalizedFilePath() || undefined}
+    >
+      <Show when={floatingSelectionTarget()} keyed>
+        {(target) => (
+          <Show when={floatingSelectionButtonTop() != null && floatingSelectionButtonLeft() != null}>
+            <button
+              type="button"
+              class="rovex-diff-selection-comment-button rovex-diff-selection-comment-button-float"
+              style={{
+                top: `${floatingSelectionButtonTop()}px`,
+                left: `${floatingSelectionButtonLeft()}px`,
+              }}
+              aria-label={`Add comment on ${getLineTargetLabel(target)}`}
+              title={`Add comment on ${getLineTargetLabel(target)}`}
+              onPointerDown={(event) => {
+                event.stopPropagation();
+              }}
+              onMouseDown={(event) => {
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                logDiffCommentEvent("floating comment button clicked", {
+                  target,
+                  top: floatingSelectionButtonTop(),
+                  left: floatingSelectionButtonLeft(),
+                });
+                if (!props.onAddCommentForSelection) {
+                  logDiffCommentEvent("floating comment button missing handler");
+                }
+                props.onAddCommentForSelection?.(target);
+              }}
+            >
+              <MessageSquare class="size-3.5" />
+            </button>
+          </Show>
+        )}
+      </Show>
       <div ref={visibilityAnchorRef}>
         <Show when={renderError()}>
           {(message) => (
@@ -779,11 +1291,123 @@ export function DiffViewer(props: DiffViewerProps) {
   const [unifiedStyle, setUnifiedStyle] = createSignal(getStoredUnifiedStylePreference());
   const [disableBackground, setDisableBackground] = createSignal(false);
   const [collapsedFilePaths, setCollapsedFilePaths] = createSignal<Set<string>>(new Set());
+  const [commentTarget, setCommentTarget] = createSignal<DiffViewerLineTarget | null>(null);
+  const [pendingSelectionTarget, setPendingSelectionTarget] =
+    createSignal<DiffViewerLineTarget | null>(null);
+  const [draftValuesByLocation, setDraftValuesByLocation] = createSignal<Record<string, string>>({});
+  const [submittingDraftLocations, setSubmittingDraftLocations] = createSignal<Set<string>>(new Set());
   const [profileState, setProfileState] = createSignal<DiffViewerProfileState>({
     parseMs: 0,
     renderMs: 0,
     renderedFiles: 0,
   });
+
+  const handleLineNumberClick = (target: DiffViewerLineTarget) => {
+    const normalizedTarget = normalizeLineTarget(target);
+    if (!normalizedTarget) return;
+    setPendingSelectionTarget(null);
+    setCommentTarget((current) => (
+      areLineTargetsEqual(current, normalizedTarget) ? null : normalizedTarget
+    ));
+  };
+
+  const handleLineClick = (target: DiffViewerLineTarget) => {
+    const normalizedTarget = normalizeLineTarget(target);
+    if (!normalizedTarget) return;
+    setPendingSelectionTarget(null);
+    setCommentTarget(normalizedTarget);
+  };
+
+  const handleLineSelectionChange = (target: DiffViewerLineTarget | null) => {
+    logDiffCommentEvent("handleLineSelectionChange", { target });
+    if (target == null) {
+      setPendingSelectionTarget(null);
+      return;
+    }
+    const normalizedTarget = normalizeLineTarget(target);
+    if (!normalizedTarget) {
+      setPendingSelectionTarget(null);
+      return;
+    }
+    setPendingSelectionTarget(normalizedTarget);
+  };
+
+  const handleAddCommentForSelection = (targetOverride?: DiffViewerLineTarget) => {
+    const baseTarget = targetOverride ?? pendingSelectionTarget();
+    const target = baseTarget ? normalizeLineTarget(baseTarget) : null;
+    logDiffCommentEvent("handleAddCommentForSelection", {
+      targetOverride,
+      pendingSelectionTarget: pendingSelectionTarget(),
+      baseTarget,
+      normalizedTarget: target,
+    });
+    if (!target) return;
+    setPendingSelectionTarget(null);
+    setCommentTarget(target);
+  };
+
+  const handleCommentDraftInput = (target: DiffViewerLineTarget, value: string) => {
+    const key = getAnnotationLocationKey(target);
+    setDraftValuesByLocation((current) => {
+      if (current[key] === value) return current;
+      return { ...current, [key]: value };
+    });
+  };
+
+  const handleCommentDraftCancel = (target: DiffViewerLineTarget) => {
+    const key = getAnnotationLocationKey(target);
+    setCommentTarget((current) => {
+      if (!areLineTargetsEqual(current, target)) return current;
+      return null;
+    });
+    setDraftValuesByLocation((current) => {
+      if (!(key in current)) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const handleCommentDraftSubmit = (target: DiffViewerLineTarget, rawBody: string) => {
+    const body = rawBody.trim();
+    if (body.length === 0) return;
+    const key = getAnnotationLocationKey(target);
+    if (submittingDraftLocations().has(key)) return;
+    const createComment = props.onCreateInlineComment;
+    if (!createComment) {
+      handleCommentDraftCancel(target);
+      return;
+    }
+    setSubmittingDraftLocations((current) => {
+      const next = new Set(current);
+      next.add(key);
+      return next;
+    });
+    void Promise.resolve(
+      createComment({
+        filePath: target.filePath,
+        side: target.side,
+        lineNumber: target.lineNumber,
+        endSide: target.endLineNumber != null ? target.side : undefined,
+        endLineNumber: target.endLineNumber,
+        body,
+      })
+    )
+      .then(() => {
+        handleCommentDraftCancel(target);
+      })
+      .catch((error) => {
+        console.error("[rovex diff] Failed to create inline comment:", error);
+      })
+      .finally(() => {
+        setSubmittingDraftLocations((current) => {
+          if (!current.has(key)) return current;
+          const next = new Set(current);
+          next.delete(key);
+          return next;
+        });
+      });
+  };
 
   const renderOptions = createMemo<DiffRenderOptions>(() => ({
     overflow: lineWrap() ? "wrap" : "scroll",
@@ -893,33 +1517,106 @@ export function DiffViewer(props: DiffViewerProps) {
     Map<string, DiffLineAnnotation<DiffViewerAnnotationMetadata>[]>
   >((previousMap) => {
     const rawMap = new Map<string, DiffLineAnnotation<DiffViewerAnnotationMetadata>[]>();
+    const pushAnnotation = (
+      filePath: string,
+      entry: DiffLineAnnotation<DiffViewerAnnotationMetadata>
+    ) => {
+      const existing = rawMap.get(filePath) ?? [];
+      existing.push(entry);
+      rawMap.set(filePath, existing);
+    };
+
     for (const annotation of props.annotations ?? []) {
       const normalizedPath = normalizeDiffPath(annotation.filePath);
       if (!normalizedPath) continue;
       const side = annotation.side === "deletions" ? "deletions" : "additions";
       const lineNumber = Number(annotation.lineNumber);
       if (!Number.isFinite(lineNumber) || lineNumber <= 0) continue;
-      const entry: DiffLineAnnotation<DiffViewerAnnotationMetadata> = {
+      pushAnnotation(normalizedPath, {
         side,
         lineNumber,
         metadata: {
+          source: "ai",
           id: annotation.id,
           title: annotation.title,
           body: annotation.body,
           severity: annotation.severity || "medium",
           chunkId: annotation.chunkId,
         },
-      };
-      const existing = rawMap.get(normalizedPath) ?? [];
-      existing.push(entry);
-      rawMap.set(normalizedPath, existing);
+      });
     }
+
+    for (const comment of props.inlineComments ?? []) {
+      const normalizedPath = normalizeDiffPath(comment.filePath);
+      if (!normalizedPath) continue;
+      const startLine = Number.isFinite(comment.lineNumber)
+        ? Math.max(1, Math.floor(comment.lineNumber))
+        : 0;
+      if (startLine <= 0) continue;
+      const endLineCandidate =
+        comment.endLineNumber != null && Number.isFinite(comment.endLineNumber)
+          ? Math.max(1, Math.floor(comment.endLineNumber))
+          : startLine;
+      const normalizedRangeStart = Math.min(startLine, endLineCandidate);
+      const normalizedRangeEnd = Math.max(startLine, endLineCandidate);
+      pushAnnotation(normalizedPath, {
+        side: comment.side,
+        lineNumber: normalizedRangeStart,
+        metadata: {
+          source: "comment",
+          id: comment.id,
+          title: comment.author,
+          body: comment.body,
+          severity: "note",
+          author: comment.author,
+          createdAtLabel: `${normalizedRangeStart === normalizedRangeEnd ? `L${normalizedRangeStart}` : `L${normalizedRangeStart}-L${normalizedRangeEnd}`} · ${formatInlineCommentCreatedAt(comment.createdAt)}`,
+        },
+      });
+    }
+
+    const activeTarget = commentTarget();
+    if (activeTarget != null) {
+      const normalizedPath = normalizeDiffPath(activeTarget.filePath);
+      if (normalizedPath) {
+        const locationKey = getAnnotationLocationKey(activeTarget);
+        const draftBody = draftValuesByLocation()[locationKey] ?? "";
+        pushAnnotation(normalizedPath, {
+          side: activeTarget.side,
+          lineNumber: activeTarget.lineNumber,
+          metadata: {
+            source: "composer",
+            id: `comment-draft:${locationKey}`,
+            title: `Add comment (${getLineTargetLabel(activeTarget)})`,
+            body: draftBody,
+            severity: "note",
+            onInput: (value) => handleCommentDraftInput(activeTarget, value),
+            onSubmit: (value) => handleCommentDraftSubmit(activeTarget, value),
+            onCancel: () => handleCommentDraftCancel(activeTarget),
+            submitting: submittingDraftLocations().has(locationKey),
+          },
+        });
+      }
+    }
+
+    logDiffCommentEvent("annotations map rebuilt", {
+      activeTarget,
+      filesWithAnnotations: [...rawMap.keys()],
+      annotationCountsByFile: [...rawMap.entries()].map(([path, entries]) => ({
+        path,
+        count: entries.length,
+        composerCount: entries.filter((entry) => entry.metadata?.source === "composer").length,
+      })),
+    });
 
     const nextMap = new Map<string, DiffLineAnnotation<DiffViewerAnnotationMetadata>[]>();
     for (const [path, entries] of rawMap) {
       entries.sort(
         (left, right) =>
-          left.lineNumber - right.lineNumber || left.side.localeCompare(right.side)
+          left.lineNumber - right.lineNumber ||
+          left.side.localeCompare(right.side) ||
+          getAnnotationSourcePriority(left.metadata) -
+            getAnnotationSourcePriority(right.metadata) ||
+          (left.metadata?.id ?? "").localeCompare(right.metadata?.id ?? "")
       );
       const previousEntries = previousMap?.get(path);
       if (previousEntries && areLineAnnotationsEqual(previousEntries, entries)) {
@@ -976,11 +1673,22 @@ export function DiffViewer(props: DiffViewerProps) {
 
   createEffect(() => {
     props.patch;
+    setCommentTarget(null);
+    setPendingSelectionTarget(null);
+    setDraftValuesByLocation({});
+    setSubmittingDraftLocations(new Set<string>());
     setProfileState((current) => ({
       ...current,
       renderMs: 0,
       renderedFiles: 0,
     }));
+  });
+
+  createEffect(() => {
+    logDiffCommentEvent("comment target changed", {
+      commentTarget: commentTarget(),
+      pendingSelectionTarget: pendingSelectionTarget(),
+    });
   });
 
   const handleFileRendered = (filePath: string, renderMs: number) => {
@@ -1174,6 +1882,11 @@ export function DiffViewer(props: DiffViewerProps) {
                 </span>
               )}
             </Show>
+            <Show when={lineNumbers()}>
+              <span class="text-[11px] text-neutral-500/90">
+                Click or drag changed lines to comment
+              </span>
+            </Show>
           </div>
           <div class="rovex-diff-icon-controls" role="toolbar" aria-label="Diff rendering options">
             <Tooltip>
@@ -1245,16 +1958,18 @@ export function DiffViewer(props: DiffViewerProps) {
           {(file, index) => {
             const primaryPath = normalizeDiffPath(file.name);
             const previousPath = normalizeDiffPath(file.prevName);
-            const primaryAnnotations =
-              annotationsByFile().get(primaryPath) ?? EMPTY_LINE_ANNOTATIONS;
-            const previousAnnotations =
-              annotationsByFile().get(previousPath) ?? EMPTY_LINE_ANNOTATIONS;
-            const fileAnnotations =
-              previousAnnotations.length === 0
-                ? primaryAnnotations
-                : primaryAnnotations.length === 0
-                  ? previousAnnotations
-                  : [...primaryAnnotations, ...previousAnnotations];
+            const fileAnnotations = createMemo<
+              DiffLineAnnotation<DiffViewerAnnotationMetadata>[]
+            >(() => {
+              const annotationsMap = annotationsByFile();
+              const primaryAnnotations =
+                annotationsMap.get(primaryPath) ?? EMPTY_LINE_ANNOTATIONS;
+              const previousAnnotations =
+                annotationsMap.get(previousPath) ?? EMPTY_LINE_ANNOTATIONS;
+              if (previousAnnotations.length === 0) return primaryAnnotations;
+              if (primaryAnnotations.length === 0) return previousAnnotations;
+              return [...primaryAnnotations, ...previousAnnotations];
+            });
             const normalizedFilePath = primaryPath || previousPath;
             return (
               <DiffFileCard
@@ -1269,6 +1984,11 @@ export function DiffViewer(props: DiffViewerProps) {
                 onCollapsedChange={handleFileCollapsedChange}
                 onAskAiAboutFile={props.onAskAiAboutFile}
                 onOpenFile={props.onOpenFile}
+                onLineClick={handleLineClick}
+                onLineNumberClick={handleLineNumberClick}
+                onLineSelectionChange={handleLineSelectionChange}
+                pendingSelectionTarget={pendingSelectionTarget()}
+                onAddCommentForSelection={handleAddCommentForSelection}
                 onRendered={handleFileRendered}
               />
             );
