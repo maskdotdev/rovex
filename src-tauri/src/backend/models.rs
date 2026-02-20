@@ -517,6 +517,16 @@ pub struct AppServerRateLimits {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AppServerModel {
+    pub id: String,
+    pub display_name: String,
+    pub description: Option<String>,
+    pub is_default: bool,
+    pub upgrade: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppServerAccountStatus {
     pub available: bool,
     pub requires_openai_auth: bool,
@@ -524,6 +534,7 @@ pub struct AppServerAccountStatus {
     pub email: Option<String>,
     pub plan_type: Option<String>,
     pub rate_limits: Option<AppServerRateLimits>,
+    pub models: Vec<AppServerModel>,
     pub detail: Option<String>,
 }
 

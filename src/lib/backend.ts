@@ -370,6 +370,14 @@ export type AppServerRateLimits = {
   credits: AppServerCredits | null;
 };
 
+export type AppServerModel = {
+  id: string;
+  displayName: string;
+  description: string | null;
+  isDefault: boolean;
+  upgrade: string | null;
+};
+
 export type AppServerAccountStatus = {
   available: boolean;
   requiresOpenaiAuth: boolean;
@@ -377,6 +385,7 @@ export type AppServerAccountStatus = {
   email: string | null;
   planType: string | null;
   rateLimits: AppServerRateLimits | null;
+  models: AppServerModel[];
   detail: string | null;
 };
 

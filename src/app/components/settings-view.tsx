@@ -168,6 +168,10 @@ export function SettingsView(props: SettingsViewProps) {
     const selected = settingsNavItems.find((item) => item.id === activeSettingsTab());
     return selected ?? settingsNavItems[0];
   });
+  const appServerModels = createMemo(() => appServerAccountStatus()?.models ?? []);
+  const defaultAppServerModelId = createMemo(
+    () => appServerModels().find((model) => model.isDefault)?.id ?? appServerModels()[0]?.id ?? ""
+  );
 
   return (
           <div class="h-svh w-full p-2 md:p-3">
@@ -294,12 +298,26 @@ export function SettingsView(props: SettingsViewProps) {
                                 <TextFieldInput
                                   id="ai-review-model-input"
                                   type="text"
-                                  placeholder="gpt-4.1-mini"
+                                  list={aiReviewProviderInput() === "app-server" ? "app-server-model-options" : undefined}
+                                  placeholder={
+                                    aiReviewProviderInput() === "app-server"
+                                      ? defaultAppServerModelId() || "gpt-5.3-codex"
+                                      : "gpt-4.1-mini"
+                                  }
                                   value={aiReviewModelInput()}
                                   onInput={(event) => setAiReviewModelInput(event.currentTarget.value)}
                                   class="h-11 rounded-xl border-white/[0.06] bg-white/[0.02] text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:border-amber-500/30"
                                 />
                               </TextField>
+                              <Show when={aiReviewProviderInput() === "app-server"}>
+                                <datalist id="app-server-model-options">
+                                  <For each={appServerModels()}>
+                                    {(model) => (
+                                      <option value={model.id}>{model.displayName}</option>
+                                    )}
+                                  </For>
+                                </datalist>
+                              </Show>
 
                               <Show when={aiReviewProviderInput() === "opencode"}>
                                 <>
@@ -392,6 +410,16 @@ export function SettingsView(props: SettingsViewProps) {
                                   <p class="mt-1 text-[12px] text-neutral-400">
                                     Plan: <span class="font-mono text-neutral-300">{appServerAccountStatus()?.planType ?? "Unknown"}</span>
                                   </p>
+                                  <p class="mt-1 text-[12px] text-neutral-400">
+                                    Models available: <span class="font-mono text-neutral-300">{appServerModels().length}</span>
+                                  </p>
+                                  <Show when={defaultAppServerModelId()}>
+                                    {(model) => (
+                                      <p class="mt-1 text-[12px] text-neutral-400">
+                                        Default model: <span class="font-mono text-neutral-300">{model()}</span>
+                                      </p>
+                                    )}
+                                  </Show>
                                   <Show when={appServerAccountStatus()?.detail}>
                                     {(detail) => (
                                       <p class="mt-2 text-[12px] text-neutral-500">{detail()}</p>
@@ -421,6 +449,17 @@ export function SettingsView(props: SettingsViewProps) {
                                     >
                                       Refresh status
                                     </Button>
+                                    <Show when={defaultAppServerModelId().length > 0}>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        class="h-9 border-white/[0.08] px-3 text-neutral-200 hover:border-white/[0.12]"
+                                        onClick={() => setAiReviewModelInput(defaultAppServerModelId())}
+                                      >
+                                        Use default model
+                                      </Button>
+                                    </Show>
                                   </div>
                                   <Show when={appServerAuthError()}>
                                     {(message) => (

@@ -1,4 +1,4 @@
-use std::{env, process::Stdio, time::Duration};
+use std::{collections::HashSet, env, process::Stdio, time::Duration};
 
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as TokioCommand;
@@ -8,7 +8,8 @@ use super::super::super::common::{
     ROVEX_APP_SERVER_COMMAND_ENV, ROVEX_REVIEW_TIMEOUT_MS_ENV,
 };
 use crate::backend::{
-    AppServerAccountStatus, AppServerCredits, AppServerRateLimitWindow, AppServerRateLimits,
+    AppServerAccountStatus, AppServerCredits, AppServerModel, AppServerRateLimitWindow,
+    AppServerRateLimits,
 };
 
 fn resolve_app_server_model(review_model: &str) -> String {
@@ -91,6 +92,49 @@ fn parse_app_server_rate_limits_result(result: &serde_json::Value) -> Option<App
     result
         .get("rateLimits")
         .and_then(parse_app_server_rate_limits)
+}
+
+fn parse_app_server_model_entry(value: &serde_json::Value) -> Option<AppServerModel> {
+    let entry = value.as_object()?;
+    let id = parse_app_server_optional_string(entry.get("id"))
+        .or_else(|| parse_app_server_optional_string(entry.get("model")))?;
+    let display_name =
+        parse_app_server_optional_string(entry.get("displayName")).unwrap_or_else(|| id.clone());
+    Some(AppServerModel {
+        id,
+        display_name,
+        description: parse_app_server_optional_string(entry.get("description")),
+        is_default: entry
+            .get("isDefault")
+            .and_then(|field| field.as_bool())
+            .unwrap_or(false),
+        upgrade: parse_app_server_optional_string(entry.get("upgrade")),
+    })
+}
+
+fn parse_app_server_models_result(result: &serde_json::Value) -> Vec<AppServerModel> {
+    let entries = if let Some(entries) = result.get("data").and_then(|value| value.as_array()) {
+        entries
+    } else if let Some(entries) = result.get("models").and_then(|value| value.as_array()) {
+        entries
+    } else if let Some(entries) = result.as_array() {
+        entries
+    } else {
+        return Vec::new();
+    };
+
+    let mut seen = HashSet::new();
+    let mut models = Vec::new();
+    for value in entries {
+        let Some(model) = parse_app_server_model_entry(value) else {
+            continue;
+        };
+        if !seen.insert(model.id.clone()) {
+            continue;
+        }
+        models.push(model);
+    }
+    models
 }
 
 fn json_rpc_id_matches(message: &serde_json::Value, expected_id: i64) -> bool {
@@ -179,6 +223,28 @@ fn extract_app_server_item_text(item: &serde_json::Value) -> Option<String> {
     } else {
         Some(parts.join("\n\n"))
     }
+}
+
+fn is_assistant_item(item: &serde_json::Value) -> bool {
+    if let Some(role) = item
+        .get("role")
+        .and_then(|value| value.as_str())
+        .map(str::to_lowercase)
+    {
+        if role == "assistant" || role == "agent" {
+            return true;
+        }
+    }
+
+    let item_type = item
+        .get("type")
+        .and_then(|value| value.as_str())
+        .map(str::to_lowercase)
+        .unwrap_or_default();
+    matches!(
+        item_type.as_str(),
+        "assistantmessage" | "assistant_message" | "agentmessage" | "agent_message" | "message"
+    )
 }
 
 fn json_value_id(value: &serde_json::Value) -> Option<String> {
@@ -372,7 +438,12 @@ pub(crate) async fn generate_review_with_app_server(
                 "params": {
                     "threadId": thread_id,
                     "cwd": workspace,
-                    "input": prompt,
+                    "input": [
+                        {
+                            "type": "text",
+                            "text": prompt,
+                        }
+                    ],
                 }
             }),
         )
@@ -398,8 +469,7 @@ pub(crate) async fn generate_review_with_app_server(
                     let Some(item) = message.pointer("/params/item") else {
                         continue;
                     };
-                    let item_type = item.get("type").and_then(|value| value.as_str());
-                    if matches!(item_type, Some("agentMessage") | Some("message")) {
+                    if is_assistant_item(item) {
                         if let Some(text) = extract_app_server_item_text(item) {
                             latest_text = Some(text);
                         }
@@ -456,6 +526,7 @@ pub async fn get_app_server_account_status() -> Result<AppServerAccountStatus, S
         email: None,
         plan_type: None,
         rate_limits: None,
+        models: Vec::new(),
         detail: Some(detail),
     };
 
@@ -589,11 +660,38 @@ pub async fn get_app_server_account_status() -> Result<AppServerAccountStatus, S
                 ),
             };
 
+        write_json_rpc_message(
+            &mut stdin,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "model/list",
+                "params": {},
+            }),
+        )
+        .await?;
+        let (models, models_detail) = match wait_for_json_rpc_result(&mut lines, 4, deadline).await
+        {
+            Ok(models_result) => (parse_app_server_models_result(&models_result), None),
+            Err(error) => (
+                Vec::new(),
+                Some(format!("Unable to load Codex model list: {error}")),
+            ),
+        };
+
         let plan_type = account_plan_type.clone().or_else(|| {
             rate_limits
                 .as_ref()
                 .and_then(|limits| limits.plan_type.clone())
         });
+        let detail = match (rate_limit_detail, models_detail) {
+            (Some(rate_limit_detail), Some(models_detail)) => {
+                Some(format!("{rate_limit_detail} {models_detail}"))
+            }
+            (Some(rate_limit_detail), None) => Some(rate_limit_detail),
+            (None, Some(models_detail)) => Some(models_detail),
+            (None, None) => None,
+        };
 
         Ok(AppServerAccountStatus {
             available: true,
@@ -602,7 +700,8 @@ pub async fn get_app_server_account_status() -> Result<AppServerAccountStatus, S
             email,
             plan_type,
             rate_limits,
-            detail: rate_limit_detail,
+            models,
+            detail,
         })
     }
     .await;
@@ -618,7 +717,7 @@ pub async fn get_app_server_account_status() -> Result<AppServerAccountStatus, S
 
 #[cfg(test)]
 mod tests {
-    use super::parse_app_server_rate_limits_result;
+    use super::{parse_app_server_models_result, parse_app_server_rate_limits_result};
 
     #[test]
     fn parse_app_server_rate_limits_prefers_codex_bucket() {
@@ -639,5 +738,34 @@ mod tests {
         assert_eq!(parsed.limit_id.as_deref(), Some("codex"));
         assert_eq!(parsed.plan_type.as_deref(), Some("pro"));
         assert_eq!(parsed.primary.as_ref().map(|v| v.used_percent), Some(42));
+    }
+
+    #[test]
+    fn parse_app_server_models_reads_data_entries() {
+        let payload = serde_json::json!({
+            "data": [
+                {
+                    "id": "gpt-5.3-codex",
+                    "displayName": "GPT-5.3 Codex",
+                    "description": "Latest",
+                    "isDefault": true,
+                    "upgrade": null
+                },
+                {
+                    "model": "gpt-5.2-codex",
+                    "displayName": "GPT-5.2 Codex",
+                    "isDefault": false,
+                    "upgrade": "gpt-5.3-codex"
+                }
+            ]
+        });
+
+        let parsed = parse_app_server_models_result(&payload);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].id, "gpt-5.3-codex");
+        assert_eq!(parsed[0].display_name, "GPT-5.3 Codex");
+        assert!(parsed[0].is_default);
+        assert_eq!(parsed[1].id, "gpt-5.2-codex");
+        assert_eq!(parsed[1].upgrade.as_deref(), Some("gpt-5.3-codex"));
     }
 }
