@@ -213,6 +213,39 @@ textarea:focus {
   overflow: hidden;
 }
 
+.rovex-diff-collapse-toggle {
+  width: 1.45rem;
+  height: 1.45rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(240, 244, 250, 0.82);
+  line-height: 1;
+  padding: 0;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.rovex-diff-collapse-toggle:hover {
+  border-color: rgba(255, 255, 255, 0.26);
+  background: rgba(255, 255, 255, 0.085);
+  color: rgba(246, 249, 255, 0.96);
+}
+
+.rovex-diff-collapse-toggle-icon {
+  display: inline-block;
+  font-size: 0.92rem;
+  transform: rotate(0deg);
+  transform-origin: 50% 55%;
+  transition: transform 180ms ease;
+}
+
+.rovex-diff-collapse-toggle[data-collapsed="1"] .rovex-diff-collapse-toggle-icon {
+  transform: rotate(-90deg);
+}
+
 .rovex-diff-file-placeholder {
   display: flex;
   align-items: center;

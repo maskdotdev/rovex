@@ -172,25 +172,7 @@ const DEFAULT_INITIAL_VISIBLE_FILES = 3;
 const FAST_INITIAL_VISIBLE_FILES = 1;
 const DIFF_PROFILE_STORAGE_KEY = "rovex.profile.diff";
 const EMPTY_LINE_ANNOTATIONS: DiffLineAnnotation<DiffViewerAnnotationMetadata>[] = [];
-
-const diffStickyHeaderUnsafeCSS = `
-[data-diffs-header] {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  cursor: pointer;
-  user-select: none;
-  border-bottom: 1px solid color-mix(in lab, var(--diffs-bg) 92%, var(--diffs-fg));
-  background: color-mix(in lab, var(--diffs-bg) 94%, black);
-  transition: background-color 140ms ease;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-}
-
-[data-diffs-header]:hover {
-  background: color-mix(in lab, var(--diffs-bg) 90%, black);
-}
-
+const diffCollapseUnsafeCSS = `
 :host([data-rovex-collapsed="1"]) pre,
 :host([data-rovex-collapsed="1"]) [data-error-wrapper] {
   display: none;
@@ -269,47 +251,43 @@ function DiffFileCard(props: DiffFileCardProps) {
   let visibilityAnchorRef: HTMLDivElement | undefined;
   let containerRef: HTMLDivElement | undefined;
   let instance: FileDiff<DiffViewerAnnotationMetadata> | undefined;
+  let collapseToggleButton: HTMLButtonElement | undefined;
   let profiledInitialRender = false;
   const [shouldRender, setShouldRender] = createSignal(props.initiallyVisible);
   const [collapsed, setCollapsed] = createSignal(false);
   const [renderError, setRenderError] = createSignal<string | null>(null);
 
-  let headerObserver: MutationObserver | undefined;
+  const syncCollapseToggleButton = () => {
+    if (collapseToggleButton == null) return;
+    const isCollapsed = collapsed();
+    collapseToggleButton.dataset.collapsed = isCollapsed ? "1" : "0";
+    collapseToggleButton.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+    collapseToggleButton.setAttribute(
+      "aria-label",
+      isCollapsed ? "Expand file diff" : "Collapse file diff"
+    );
+    collapseToggleButton.title = isCollapsed ? "Expand file diff" : "Collapse file diff";
+  };
 
-  const bindHeaderToggle = () => {
-    const container = containerRef;
-    if (!container) return;
-    const fileContainer = container.querySelector("diffs-container");
-    if (!(fileContainer instanceof HTMLElement)) return;
-    const shadowRoot = fileContainer.shadowRoot;
-    if (!shadowRoot) return;
-    const header = shadowRoot.querySelector("[data-diffs-header]");
-    if (!(header instanceof HTMLElement)) return;
-    if (header.dataset.rovexCollapseBound === "1") return;
-
-    header.dataset.rovexCollapseBound = "1";
-    header.setAttribute("role", "button");
-    header.setAttribute("aria-expanded", collapsed() ? "false" : "true");
-    header.tabIndex = 0;
-    header.addEventListener("click", () => setCollapsed((current) => !current));
-    header.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      setCollapsed((current) => !current);
-    });
-
-    // Watch for the library replacing the header element after async
-    // syntax highlighting completes. When a new header is swapped in,
-    // re-bind the toggle so collapse keeps working.
-    if (!headerObserver) {
-      headerObserver = new MutationObserver(() => {
-        const currentHeader = shadowRoot.querySelector("[data-diffs-header]");
-        if (currentHeader instanceof HTMLElement && currentHeader.dataset.rovexCollapseBound !== "1") {
-          bindHeaderToggle();
-        }
+  const getCollapseToggleButton = () => {
+    if (collapseToggleButton == null) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "rovex-diff-collapse-toggle";
+      const icon = document.createElement("span");
+      icon.className = "rovex-diff-collapse-toggle-icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = "⌄";
+      button.appendChild(icon);
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setCollapsed((current) => !current);
       });
-      headerObserver.observe(shadowRoot, { childList: true, subtree: false });
+      collapseToggleButton = button;
     }
+    syncCollapseToggleButton();
+    return collapseToggleButton;
   };
 
   createEffect(() => {
@@ -347,6 +325,7 @@ function DiffFileCard(props: DiffFileCardProps) {
         lineDiffType: useFastFileMode ? "none" : "word",
         maxLineDiffLength: useHugeFileFastPath ? 60 : useFastFileMode ? 120 : 280,
         tokenizeMaxLineLength: useHugeFileFastPath ? 120 : useFastFileMode ? 280 : 900,
+        renderHeaderMetadata: () => getCollapseToggleButton(),
       };
       if (!instance) {
         container.replaceChildren();
@@ -364,7 +343,6 @@ function DiffFileCard(props: DiffFileCardProps) {
         containerWrapper: container,
         lineAnnotations: useHugeFileFastPath ? EMPTY_LINE_ANNOTATIONS : props.lineAnnotations,
       });
-      bindHeaderToggle();
       const renderMs = performance.now() - renderStart;
       if (!profiledInitialRender) {
         props.onRendered?.(props.file.name, renderMs);
@@ -377,14 +355,11 @@ function DiffFileCard(props: DiffFileCardProps) {
   });
 
   createEffect(() => {
+    syncCollapseToggleButton();
     const container = containerRef;
     if (!container) return;
     const fileContainer = container.querySelector("diffs-container");
     if (!(fileContainer instanceof HTMLElement)) return;
-    const header = fileContainer.shadowRoot?.querySelector("[data-diffs-header]");
-    if (header instanceof HTMLElement) {
-      header.setAttribute("aria-expanded", collapsed() ? "false" : "true");
-    }
     if (collapsed()) {
       fileContainer.setAttribute("data-rovex-collapsed", "1");
       return;
@@ -393,7 +368,6 @@ function DiffFileCard(props: DiffFileCardProps) {
   });
 
   onCleanup(() => {
-    headerObserver?.disconnect();
     instance?.cleanUp();
     containerRef?.replaceChildren();
   });
@@ -446,7 +420,7 @@ export function DiffViewer(props: DiffViewerProps) {
     disableBackground: disableBackground(),
     theme: props.theme,
     themeType: props.themeType ?? "dark",
-    unsafeCSS: diffStickyHeaderUnsafeCSS,
+    unsafeCSS: diffCollapseUnsafeCSS,
     renderAnnotation: renderDiffAnnotation,
   }));
 
