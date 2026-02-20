@@ -1,4 +1,4 @@
-import { createMemo, createSignal, type Accessor } from "solid-js";
+import { createMemo, createSignal } from "solid-js";
 import {
   getDiffThemePreset,
   getInitialDiffThemeId,
@@ -7,14 +7,9 @@ import {
   providerOption,
 } from "@/app/helpers";
 import type { AppView, SettingsTab } from "@/app/types";
-import type { ProviderConnection, ProviderKind } from "@/lib/backend";
+import type { ProviderKind } from "@/lib/backend";
 
-type UseCoreStateArgs = {
-  githubConnection: Accessor<ProviderConnection | null | undefined>;
-  gitlabConnection: Accessor<ProviderConnection | null | undefined>;
-};
-
-export function useCoreState(args: UseCoreStateArgs) {
+export function useCoreState() {
   const [activeView, setActiveView] = createSignal<AppView>("workspace");
   const [activeSettingsTab, setActiveSettingsTab] = createSignal<SettingsTab>("connections");
   const [selectedDiffThemeId, setSelectedDiffThemeId] = createSignal(getInitialDiffThemeId());
@@ -27,9 +22,6 @@ export function useCoreState(args: UseCoreStateArgs) {
 
   const selectedDiffTheme = createMemo(() => getDiffThemePreset(selectedDiffThemeId()));
   const selectedProviderOption = createMemo(() => providerOption(selectedProvider()));
-  const selectedProviderConnection = createMemo(() =>
-    selectedProvider() === "github" ? args.githubConnection() : args.gitlabConnection()
-  );
 
   return {
     activeView,
@@ -48,6 +40,5 @@ export function useCoreState(args: UseCoreStateArgs) {
     setSelectedProvider,
     selectedDiffTheme,
     selectedProviderOption,
-    selectedProviderConnection,
   };
 }

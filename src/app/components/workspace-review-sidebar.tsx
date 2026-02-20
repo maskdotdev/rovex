@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, type Accessor, type Setter } from "solid-js";
+import { For, Show, createMemo, type Accessor, type Setter } from "solid-js";
 import {
   Check,
   ChevronRight,
@@ -18,6 +18,7 @@ import {
 import { TextField, TextFieldInput } from "@/components/text-field";
 import { getReviewScopeLabel, normalizeDiffPath, type ReviewScope } from "@/app/review-scope";
 import type { ReviewRun, ReviewWorkbenchTab } from "@/app/review-types";
+import { useWorkspaceReviewSidebarViewModel } from "@/app/components/workspace-review-sidebar-view-model";
 import type {
   AiReviewChunk,
   AiReviewFinding,
@@ -76,21 +77,6 @@ type WorkspaceReviewSidebarProps = {
   model: WorkspaceReviewSidebarModel;
 };
 
-function severityRank(severity: string) {
-  switch ((severity || "").toLowerCase()) {
-    case "critical":
-      return 0;
-    case "high":
-      return 1;
-    case "medium":
-      return 2;
-    case "low":
-      return 3;
-    default:
-      return 4;
-  }
-}
-
 function formatRunTime(timestamp: number) {
   return new Date(timestamp).toLocaleTimeString([], {
     hour: "2-digit",
@@ -98,81 +84,42 @@ function formatRunTime(timestamp: number) {
   });
 }
 
+const reviewWorkbenchTabs = [
+  { id: "description", label: "Description" },
+  { id: "issues", label: "Issues" },
+  { id: "chat", label: "Chat" },
+] as const satisfies ReadonlyArray<{ id: ReviewWorkbenchTab; label: string }>;
+
 export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
   const model = props.model;
   const isCollapsed = createMemo(() => model.reviewSidebarCollapsed?.() ?? false);
   const isFollowUpBusy = createMemo(() => model.aiFollowUpBusy?.() ?? model.aiReviewBusy());
-
-  const selectedRun = createMemo<ReviewRun | null>(() => {
-    const runs = model.reviewRuns();
-    if (runs.length === 0) return null;
-    const selectedId = model.selectedRunId();
-    if (selectedId) {
-      const found = runs.find((run) => run.id === selectedId);
-      if (found) return found;
-    }
-    return runs[0] ?? null;
+  const derived = useWorkspaceReviewSidebarViewModel({
+    reviewRuns: model.reviewRuns,
+    selectedRunId: model.selectedRunId,
+    setSelectedRunId: model.setSelectedRunId,
+    aiChunkReviews: model.aiChunkReviews,
+    aiFindings: model.aiFindings,
+    aiProgressEvents: model.aiProgressEvents,
+    aiReviewBusy: model.aiReviewBusy,
   });
+  const selectedRun = derived.selectedRun;
+  const visibleChunkReviews = derived.visibleChunkReviews;
+  const visibleFindings = derived.visibleFindings;
+  const visibleProgressEvents = derived.visibleProgressEvents;
+  const sortedVisibleFindings = derived.sortedVisibleFindings;
+  const latestProgress = derived.latestProgress;
+  const progressRatio = derived.progressRatio;
+  const issuesEmptyMessage = derived.issuesEmptyMessage;
 
-  const visibleChunkReviews = createMemo(() => selectedRun()?.chunks ?? model.aiChunkReviews());
-  const visibleFindings = createMemo(() => selectedRun()?.findings ?? model.aiFindings());
-  const visibleProgressEvents = createMemo(
-    () => selectedRun()?.progressEvents ?? model.aiProgressEvents()
-  );
-
-  const sortedVisibleFindings = createMemo(() =>
-    [...visibleFindings()].sort((left, right) => {
-      const bySeverity = severityRank(left.severity) - severityRank(right.severity);
-      if (bySeverity !== 0) return bySeverity;
-      const byPath = left.filePath.localeCompare(right.filePath);
-      if (byPath !== 0) return byPath;
-      return left.lineNumber - right.lineNumber;
-    })
-  );
-
-  const latestProgress = createMemo(() => {
-    const events = visibleProgressEvents();
-    return events.length > 0 ? events[events.length - 1] : null;
-  });
-
-  const progressRatio = createMemo(() => {
-    const progress = latestProgress();
-    if (!progress || progress.totalChunks <= 0) return 0;
-    return Math.round((progress.completedChunks / progress.totalChunks) * 100);
-  });
-
-  const issuesEmptyMessage = createMemo(() => {
-    if (visibleChunkReviews().length === 0) {
-      const run = selectedRun();
-      if (run?.status === "queued") {
-        return "Review is queued and will start shortly.";
-      }
-      return "Run review to scan this diff for issues.";
-    }
-    const run = selectedRun();
-    if (run?.status === "running" || model.aiReviewBusy()) {
-      return "Scanning files for issues. New findings will stream here in real time.";
-    }
-    return "No issues found for this run.";
-  });
-
-  createEffect(() => {
-    const runs = model.reviewRuns();
-    if (runs.length === 0) {
-      if (model.selectedRunId() !== null) {
-        model.setSelectedRunId(null);
-      }
-      return;
-    }
-
-    const selectedId = model.selectedRunId();
-    if (!selectedId || !runs.some((run) => run.id === selectedId)) {
-      model.setSelectedRunId(runs[0].id);
-    }
-  });
+  let tabRefs: Array<HTMLButtonElement | undefined> = [];
+  const branchPopoverContentId = "workspace-branch-picker-popover";
+  const branchSearchInputId = "workspace-branch-search-input";
+  const branchCreateInputId = "workspace-branch-create-input";
 
   return (
     <Sidebar
+      id="review-workbench-sidebar"
       side="right"
       collapsible="none"
       class={`w-[23rem] overflow-hidden border-0 bg-transparent px-2.5 py-2 transition-[width,opacity,padding] duration-200 ease-linear [&_[data-sidebar=sidebar]]:rounded-2xl [&_[data-sidebar=sidebar]]:border [&_[data-sidebar=sidebar]]:border-white/[0.06] [&_[data-sidebar=sidebar]]:bg-white/[0.02] ${
@@ -182,19 +129,46 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
       <SidebarContent class="p-2">
         <SidebarGroup class="h-full min-h-0 p-0">
           <div class="review-right-tabs" role="tablist" aria-label="Review workbench tabs">
-            <For
-              each={[
-                { id: "description", label: "Description" },
-                { id: "issues", label: "Issues" },
-                { id: "chat", label: "Chat" },
-              ] as const}
-            >
-              {(tab) => (
+            <For each={reviewWorkbenchTabs}>
+              {(tab, index) => (
                 <button
+                  ref={(element) => {
+                    tabRefs[index()] = element;
+                  }}
                   type="button"
                   role="tab"
+                  id={`review-workbench-tab-${tab.id}`}
+                  aria-controls={`review-workbench-panel-${tab.id}`}
+                  aria-selected={model.reviewWorkbenchTab() === tab.id}
+                  tabIndex={model.reviewWorkbenchTab() === tab.id ? 0 : -1}
                   class={`review-tab-trigger ${model.reviewWorkbenchTab() === tab.id ? "is-active" : ""}`}
                   onClick={() => model.setReviewWorkbenchTab(tab.id)}
+                  onKeyDown={(event) => {
+                    const currentIndex = index();
+                    if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+                      event.preventDefault();
+                      const delta = event.key === "ArrowRight" ? 1 : -1;
+                      const nextIndex =
+                        (currentIndex + delta + reviewWorkbenchTabs.length) %
+                        reviewWorkbenchTabs.length;
+                      const nextTab = reviewWorkbenchTabs[nextIndex];
+                      model.setReviewWorkbenchTab(nextTab.id);
+                      tabRefs[nextIndex]?.focus();
+                      return;
+                    }
+                    if (event.key === "Home" || event.key === "End") {
+                      event.preventDefault();
+                      const nextIndex = event.key === "Home" ? 0 : reviewWorkbenchTabs.length - 1;
+                      const nextTab = reviewWorkbenchTabs[nextIndex];
+                      model.setReviewWorkbenchTab(nextTab.id);
+                      tabRefs[nextIndex]?.focus();
+                      return;
+                    }
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      model.setReviewWorkbenchTab(tab.id);
+                    }
+                  }}
                 >
                   {tab.label}
                 </button>
@@ -204,6 +178,12 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
 
           <div class="review-right-content">
             <Show when={model.reviewWorkbenchTab() === "description"}>
+              <section
+                id="review-workbench-panel-description"
+                role="tabpanel"
+                aria-labelledby="review-workbench-tab-description"
+                tabIndex={0}
+              >
               <Show
                 when={selectedRun()}
                 fallback={<p class="review-empty-state">Run AI review to build a chunked description of the active scope.</p>}
@@ -349,9 +329,16 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                   </>
                 )}
               </Show>
+              </section>
             </Show>
 
             <Show when={model.reviewWorkbenchTab() === "issues"}>
+              <section
+                id="review-workbench-panel-issues"
+                role="tabpanel"
+                aria-labelledby="review-workbench-tab-issues"
+                tabIndex={0}
+              >
               <div class="mb-2 flex items-center justify-between text-[12px] text-neutral-500">
                 <span>
                   {visibleChunkReviews().length} chunks • {visibleFindings().length} findings
@@ -424,9 +411,16 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                   </For>
                 </div>
               </Show>
+              </section>
             </Show>
 
             <Show when={model.reviewWorkbenchTab() === "chat"}>
+              <section
+                id="review-workbench-panel-chat"
+                role="tabpanel"
+                aria-labelledby="review-workbench-tab-chat"
+                tabIndex={0}
+              >
               <div class="mb-3 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-[12px] text-neutral-400">
                 Active scope: <span class="text-neutral-300">{getReviewScopeLabel(model.activeReviewScope())}</span>
               </div>
@@ -490,6 +484,8 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                         class="branch-picker-trigger"
                         disabled={model.selectedWorkspace().length === 0}
                         aria-label="Switch current branch"
+                        aria-expanded={model.branchPopoverOpen()}
+                        aria-controls={branchPopoverContentId}
                       >
                         <GitBranch class="size-4 text-neutral-400" />
                         <span class="max-w-[8.75rem] truncate">
@@ -501,12 +497,17 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                       </Popover.Trigger>
                       <Popover.Portal>
                         <Popover.Content
+                          id={branchPopoverContentId}
                           class="branch-picker-popover"
                           onOpenAutoFocus={(event) => event.preventDefault()}
                         >
                           <div class="branch-picker-search">
+                            <label for={branchSearchInputId} class="sr-only">
+                              Search branches
+                            </label>
                             <Search class="size-4 text-neutral-500" />
                             <input
+                              id={branchSearchInputId}
                               ref={(element) => {
                                 model.setBranchSearchInputRef(element);
                               }}
@@ -514,6 +515,7 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                               onInput={(event) => model.setBranchSearchQuery(event.currentTarget.value)}
                               class="branch-picker-search-input"
                               placeholder="Search branches"
+                              aria-label="Search branches"
                             />
                           </div>
 
@@ -566,7 +568,11 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                                   class="branch-picker-create-form"
                                   onSubmit={(event) => void model.handleCreateAndCheckoutBranch(event)}
                                 >
+                                  <label for={branchCreateInputId} class="sr-only">
+                                    New branch name
+                                  </label>
                                   <input
+                                    id={branchCreateInputId}
                                     ref={(element) => {
                                       model.setBranchCreateInputRef(element);
                                     }}
@@ -574,6 +580,7 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                                     onInput={(event) => model.setNewBranchName(event.currentTarget.value)}
                                     class="branch-picker-create-input"
                                     placeholder="feature/new-branch"
+                                    aria-label="New branch name"
                                   />
                                   <div class="flex items-center gap-2">
                                     <button
@@ -632,6 +639,7 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                   </Button>
                 </div>
               </form>
+              </section>
             </Show>
           </div>
         </SidebarGroup>

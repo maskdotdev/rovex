@@ -31,8 +31,8 @@ export function WorkspaceHeader(props: WorkspaceHeaderProps) {
             </h1>
             <Show when={model.selectedReview()}>
               {(review) => (
-                <div class="mt-0.5 flex items-center gap-1.5 text-[12px] text-neutral-500">
-                  <span>{model.repoDisplayName(review().repoName)}</span>
+                <div class="mt-0.5 flex items-center gap-1.5 text-[12px] text-neutral-400">
+                  <span class="text-neutral-300">{model.repoDisplayName(review().repoName)}</span>
                   <ChevronRight class="size-3 text-neutral-600" />
                   <span class="text-neutral-400">{review().age} ago</span>
                 </div>
@@ -45,25 +45,27 @@ export function WorkspaceHeader(props: WorkspaceHeaderProps) {
             type="button"
             class="h-8 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 text-[12px] font-medium text-neutral-400 transition-colors hover:border-white/[0.12] hover:text-neutral-200"
             onClick={model.toggleReviewSidebar}
+            aria-expanded={!model.reviewSidebarCollapsed()}
+            aria-controls="review-workbench-sidebar"
           >
             {model.reviewSidebarCollapsed() ? "Show panel" : "Hide panel"}
           </button>
-          <div class="flex items-center gap-px rounded-lg border border-white/[0.06] bg-white/[0.02] text-[12px]">
+          <div class="flex items-center gap-px rounded-lg border border-white/[0.06] bg-white/[0.04] text-[12px]">
             <div class="flex items-center gap-1.5 border-r border-white/[0.06] px-3 py-1.5">
-              <span class="text-neutral-500">Base</span>
-              <span class="font-medium text-neutral-300">
+              <span class="text-neutral-300">Base</span>
+              <span class="font-medium text-neutral-100">
                 {model.compareResult()?.baseRef ?? model.selectedBaseRef()}
               </span>
             </div>
             <div class="flex items-center gap-1.5 border-r border-white/[0.06] px-3 py-1.5">
-              <span class="text-neutral-500">Merge</span>
-              <span class="font-mono font-medium text-neutral-300">
+              <span class="text-neutral-300">Merge</span>
+              <span class="font-mono font-medium text-neutral-100">
                 {model.compareResult()?.mergeBase ? model.compareResult()?.mergeBase.slice(0, 8) : "—"}
               </span>
             </div>
             <div class="flex items-center gap-1.5 px-3 py-1.5">
-              <span class="text-neutral-500">Head</span>
-              <span class="font-mono font-medium text-neutral-300">
+              <span class="text-neutral-300">Head</span>
+              <span class="font-mono font-medium text-neutral-100">
                 {model.compareResult()?.head ? model.compareResult()?.head.slice(0, 8) : "—"}
               </span>
             </div>

@@ -21,6 +21,10 @@ import * as Popover from "@kobalte/core/popover";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/button";
 import {
+  buildFallbackReviewBranchSuggestions,
+  buildReviewBranchSuggestionsFromWorkspaceBranches,
+} from "@/app/components/review-branch-suggestions";
+import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
@@ -37,7 +41,11 @@ import {
   SidebarSeparator,
 } from "@/components/sidebar";
 import type { RepoGroup, RepoReview, RepoReviewDefaults } from "@/app/types";
-import { listWorkspaceBranches, type AppServerAccountStatus } from "@/lib/backend";
+import {
+  listWorkspaceBranches,
+  type AppServerAccountStatus,
+  type ListWorkspaceBranchesResult,
+} from "@/lib/backend";
 
 export type WorkspaceRepoSidebarModel = {
   providerBusy: Accessor<boolean>;
@@ -71,6 +79,8 @@ export type WorkspaceRepoSidebarModel = {
 type WorkspaceRepoSidebarProps = {
   model: WorkspaceRepoSidebarModel;
 };
+
+const REVIEW_BRANCH_SUGGESTIONS_CACHE_TTL_MS = 30_000;
 
 export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
   const model = props.model;
@@ -175,22 +185,12 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
   const [accountMenuOpen, setAccountMenuOpen] = createSignal(false);
   const [rateLimitsExpanded, setRateLimitsExpanded] = createSignal(true);
   let reviewBaseRefLoadRequestId = 0;
-
-  const defaultBaseRefTargets = ["origin/main", "origin/master", "main", "master", "HEAD~1"];
-
-  const dedupeRefTargets = (values: Array<string | null | undefined>) => {
-    const seen = new Set<string>();
-    const targets: string[] = [];
-    for (const rawValue of values) {
-      const value = rawValue?.trim();
-      if (!value) continue;
-      const key = value.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      targets.push(value);
-    }
-    return targets;
-  };
+  const reviewBranchInputId = "new-review-branch-input";
+  const reviewBaseRefInputId = "new-review-base-ref-input";
+  const reviewBranchSuggestionCache = new Map<
+    string,
+    { fetchedAt: number; result: ListWorkspaceBranchesResult }
+  >();
 
   const filteredReviewBaseRefSuggestions = createMemo(() => {
     const query = reviewBaseRefInput().trim().toLowerCase();
@@ -236,6 +236,28 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
     return model.repoDisplayName(repo.repoName);
   });
 
+  const applyReviewBranchSuggestions = (
+    suggestions: ReturnType<typeof buildFallbackReviewBranchSuggestions>,
+    adoptSuggestedBaseRef: boolean,
+    fallbackReviewBranch: string,
+    adoptCurrentBranch: boolean
+  ) => {
+    setReviewCurrentBranch(suggestions.currentBranch);
+    setReviewBranchSuggestions(suggestions.branchTargets);
+    setReviewBaseRefSuggestions(suggestions.baseRefTargets);
+    setReviewBaseRefSuggested(suggestions.suggestedBaseRef);
+    if (adoptCurrentBranch) {
+      const nextBranch =
+        suggestions.currentBranch?.trim() || fallbackReviewBranch || suggestions.branchTargets[0] || "";
+      if (nextBranch && reviewBranchInput().trim().length === 0) {
+        setReviewBranchInput(nextBranch);
+      }
+    }
+    if (adoptSuggestedBaseRef) {
+      setReviewBaseRefInput(suggestions.suggestedBaseRef);
+    }
+  };
+
   const loadReviewBaseRefSuggestions = async (
     repo: RepoGroup,
     fallbackBaseRef: string,
@@ -253,67 +275,54 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
       null;
 
     if (!workspace) {
-      setReviewCurrentBranch(null);
-      const branchTargets = dedupeRefTargets([fallbackReviewBranch]);
-      setReviewBranchSuggestions(branchTargets);
-      const fallbackTargets = dedupeRefTargets([fallbackBaseRef, ...defaultBaseRefTargets]);
-      setReviewBaseRefSuggestions(fallbackTargets);
-      setReviewBaseRefSuggested(fallbackTargets[0] ?? "origin/main");
-      if (adoptCurrentBranch && branchTargets[0]) {
-        setReviewBranchInput(branchTargets[0]);
-      }
-      if (adoptSuggestedBaseRef && fallbackTargets[0]) {
-        setReviewBaseRefInput(fallbackTargets[0]);
-      }
+      applyReviewBranchSuggestions(
+        buildFallbackReviewBranchSuggestions(fallbackBaseRef, fallbackReviewBranch),
+        adoptSuggestedBaseRef,
+        fallbackReviewBranch,
+        adoptCurrentBranch
+      );
       setReviewBaseRefLoading(false);
       return;
     }
 
     try {
-      const result = await listWorkspaceBranches({
-        workspace,
-        fetchRemote: true,
-      });
-      if (requestId !== reviewBaseRefLoadRequestId) return;
+      const cached = reviewBranchSuggestionCache.get(workspace);
+      const now = Date.now();
+      const useCachedResult =
+        cached && now - cached.fetchedAt <= REVIEW_BRANCH_SUGGESTIONS_CACHE_TTL_MS;
 
-      const currentBranch = result.currentBranch?.trim() || null;
-      setReviewCurrentBranch(currentBranch);
-      const remoteTargets = result.remoteBranches.map((branch) => branch.name);
-      const localTargets = result.branches.map((branch) => branch.name);
-      const branchTargets = dedupeRefTargets([currentBranch, fallbackReviewBranch, ...localTargets]);
-      const targets = dedupeRefTargets([
-        result.suggestedBaseRef,
-        result.upstreamBranch,
-        fallbackBaseRef,
-        ...defaultBaseRefTargets,
-        ...remoteTargets,
-        ...localTargets,
-      ]);
-      const suggestedBaseRef = result.suggestedBaseRef?.trim() || targets[0] || "origin/main";
-      setReviewBranchSuggestions(branchTargets);
-      setReviewBaseRefSuggestions(targets);
-      setReviewBaseRefSuggested(suggestedBaseRef);
-      if (adoptCurrentBranch && currentBranch && reviewBranchInput().trim().length === 0) {
-        setReviewBranchInput(currentBranch);
+      const result = useCachedResult
+        ? cached.result
+        : await listWorkspaceBranches({
+            workspace,
+            fetchRemote: true,
+          });
+      if (requestId !== reviewBaseRefLoadRequestId) return;
+      if (!useCachedResult) {
+        reviewBranchSuggestionCache.set(workspace, {
+          fetchedAt: now,
+          result,
+        });
       }
-      if (adoptSuggestedBaseRef) {
-        setReviewBaseRefInput(suggestedBaseRef);
-      }
+      applyReviewBranchSuggestions(
+        buildReviewBranchSuggestionsFromWorkspaceBranches(
+          result,
+          fallbackBaseRef,
+          fallbackReviewBranch
+        ),
+        adoptSuggestedBaseRef,
+        fallbackReviewBranch,
+        adoptCurrentBranch
+      );
     } catch (error) {
       if (requestId !== reviewBaseRefLoadRequestId) return;
-      setReviewCurrentBranch(null);
-      const branchTargets = dedupeRefTargets([fallbackReviewBranch]);
-      setReviewBranchSuggestions(branchTargets);
-      const fallbackTargets = dedupeRefTargets([fallbackBaseRef, ...defaultBaseRefTargets]);
-      setReviewBaseRefSuggestions(fallbackTargets);
-      setReviewBaseRefSuggested(fallbackTargets[0] ?? "origin/main");
+      applyReviewBranchSuggestions(
+        buildFallbackReviewBranchSuggestions(fallbackBaseRef, fallbackReviewBranch),
+        adoptSuggestedBaseRef,
+        fallbackReviewBranch,
+        adoptCurrentBranch
+      );
       setReviewBaseRefLoadError(error instanceof Error ? error.message : String(error));
-      if (adoptCurrentBranch && branchTargets[0]) {
-        setReviewBranchInput(branchTargets[0]);
-      }
-      if (adoptSuggestedBaseRef && fallbackTargets[0]) {
-        setReviewBaseRefInput(fallbackTargets[0]);
-      }
     } finally {
       if (requestId === reviewBaseRefLoadRequestId) {
         setReviewBaseRefLoading(false);
@@ -337,11 +346,15 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
 
     setReviewDraftRepo(repo);
     setReviewBranchInput(fallbackReviewBranch);
-    setReviewBranchSuggestions(dedupeRefTargets([fallbackReviewBranch]));
+    const fallbackSuggestions = buildFallbackReviewBranchSuggestions(
+      fallbackBaseRef,
+      fallbackReviewBranch
+    );
+    setReviewBranchSuggestions(fallbackSuggestions.branchTargets);
     setReviewBranchComboboxOpen(false);
     setReviewBaseRefInput(fallbackBaseRef);
-    setReviewBaseRefSuggestions(dedupeRefTargets([fallbackBaseRef, ...defaultBaseRefTargets]));
-    setReviewBaseRefSuggested(fallbackBaseRef);
+    setReviewBaseRefSuggestions(fallbackSuggestions.baseRefTargets);
+    setReviewBaseRefSuggested(fallbackSuggestions.suggestedBaseRef);
     setReviewBaseRefComboboxOpen(false);
     setReviewBaseRefLoadError(null);
     setReviewDraftError(null);
@@ -780,11 +793,15 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                 >
                   <div class="space-y-5">
                     <div class="space-y-1.5">
-                      <label class="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-500">
+                      <label
+                        for={reviewBranchInputId}
+                        class="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-500"
+                      >
                         Reviewing branch
                       </label>
                       <div class="relative">
                         <input
+                          id={reviewBranchInputId}
                           type="text"
                           value={reviewBranchInput()}
                           onInput={(event) => {
@@ -891,11 +908,15 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                       </p>
                     </div>
                     <div class="space-y-1.5">
-                      <label class="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-500">
+                      <label
+                        for={reviewBaseRefInputId}
+                        class="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-500"
+                      >
                         Against what exactly?
                       </label>
                       <div class="relative">
                         <input
+                          id={reviewBaseRefInputId}
                           type="text"
                           value={reviewBaseRefInput()}
                           onInput={(event) => {

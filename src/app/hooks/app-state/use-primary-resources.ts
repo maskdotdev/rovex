@@ -1,4 +1,4 @@
-import { createResource } from "solid-js";
+import { createEffect, createResource, createSignal, type Accessor } from "solid-js";
 import {
   getAiReviewConfig,
   getAppServerAccountStatus,
@@ -9,16 +9,41 @@ import {
   type AppServerAccountStatus,
   type OpencodeSidecarStatus,
   type ProviderConnection,
+  type ProviderKind,
 } from "@/lib/backend";
 
-export function usePrimaryResources() {
+type UsePrimaryResourcesArgs = {
+  selectedProvider: Accessor<ProviderKind>;
+};
+
+export function usePrimaryResources(args: UsePrimaryResourcesArgs) {
+  const [githubConnectionRequested, setGithubConnectionRequested] = createSignal(
+    args.selectedProvider() === "github"
+  );
+  const [gitlabConnectionRequested, setGitlabConnectionRequested] = createSignal(
+    args.selectedProvider() === "gitlab"
+  );
+
+  createEffect(() => {
+    const provider = args.selectedProvider();
+    if (provider === "github") {
+      setGithubConnectionRequested(true);
+      return;
+    }
+    setGitlabConnectionRequested(true);
+  });
+
   const [threads, { refetch: refetchThreads }] = createResource(() => listThreads(200));
-  const [githubConnection, { refetch: refetchGithubConnection }] = createResource<
-    ProviderConnection | null
-  >(() => getProviderConnection("github"));
-  const [gitlabConnection, { refetch: refetchGitlabConnection }] = createResource<
-    ProviderConnection | null
-  >(() => getProviderConnection("gitlab"));
+  const [githubConnection, { refetch: rawRefetchGithubConnection }] = createResource(
+    githubConnectionRequested,
+    async (requested: boolean): Promise<ProviderConnection | null> =>
+      requested ? getProviderConnection("github") : null
+  );
+  const [gitlabConnection, { refetch: rawRefetchGitlabConnection }] = createResource(
+    gitlabConnectionRequested,
+    async (requested: boolean): Promise<ProviderConnection | null> =>
+      requested ? getProviderConnection("gitlab") : null
+  );
   const [aiReviewConfig, { refetch: refetchAiReviewConfig }] = createResource<AiReviewConfig>(
     () => getAiReviewConfig()
   );
@@ -26,6 +51,16 @@ export function usePrimaryResources() {
     createResource<AppServerAccountStatus>(() => getAppServerAccountStatus());
   const [opencodeSidecarStatus, { refetch: refetchOpencodeSidecarStatus }] =
     createResource<OpencodeSidecarStatus>(() => getOpencodeSidecarStatus());
+
+  const refetchGithubConnection = () => {
+    setGithubConnectionRequested(true);
+    return rawRefetchGithubConnection();
+  };
+
+  const refetchGitlabConnection = () => {
+    setGitlabConnectionRequested(true);
+    return rawRefetchGitlabConnection();
+  };
 
   return {
     threads,

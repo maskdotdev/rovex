@@ -92,12 +92,11 @@ function buildSettingsViewModel(s: AppState, p: ProviderActions): SettingsViewMo
   };
 }
 
-function buildWorkspaceViewModel(
+function buildWorkspaceRepoSidebarModel(
   s: AppState,
   p: ProviderActions,
-  r: BuildAppViewModelsArgs["reviewActions"]
-): WorkspaceViewModel {
-  const repoSidebar: WorkspaceViewModel["repoSidebar"] = {
+): WorkspaceViewModel["repoSidebar"] {
+  return {
     providerBusy: s.providerBusy,
     onAddLocalRepo: p.handleAddLocalRepoFromSidebar,
     threadsLoading: () => s.threads.loading,
@@ -122,8 +121,10 @@ function buildWorkspaceViewModel(
     appServerAccountLoadError: s.appServerAccountLoadError,
     maskAccountEmail: s.maskAccountEmail,
   };
+}
 
-  const header: WorkspaceViewModel["header"] = {
+function buildWorkspaceHeaderModel(s: AppState, p: ProviderActions): WorkspaceViewModel["header"] {
+  return {
     selectedReview: s.selectedReview,
     repoDisplayName: p.repoDisplayName,
     compareResult: s.compareResult,
@@ -131,8 +132,13 @@ function buildWorkspaceViewModel(
     reviewSidebarCollapsed: s.reviewSidebarCollapsed,
     toggleReviewSidebar: () => s.setReviewSidebarCollapsed((collapsed) => !collapsed),
   };
+}
 
-  const mainPane: WorkspaceViewModel["mainPane"] = {
+function buildWorkspaceMainPaneModel(
+  s: AppState,
+  r: BuildAppViewModelsArgs["reviewActions"]
+): WorkspaceViewModel["mainPane"] {
+  return {
     branchActionError: s.branchActionError,
     compareError: s.compareError,
     aiReviewError: s.aiReviewError,
@@ -151,8 +157,13 @@ function buildWorkspaceViewModel(
     diffAnnotations: s.diffAnnotations,
     handleStartAiReviewOnFullDiff: r.handleStartAiReviewOnFullDiff,
   };
+}
 
-  const reviewSidebar: WorkspaceViewModel["reviewSidebar"] = {
+function buildWorkspaceReviewSidebarModel(
+  s: AppState,
+  r: BuildAppViewModelsArgs["reviewActions"]
+): WorkspaceViewModel["reviewSidebar"] {
+  return {
     reviewSidebarCollapsed: s.reviewSidebarCollapsed,
     activeReviewScope: s.activeReviewScope,
     setActiveReviewScope: s.setActiveReviewScope,
@@ -195,12 +206,18 @@ function buildWorkspaceViewModel(
     canCreateBranch: s.canCreateBranch,
     handleStartCreateBranch: r.handleStartCreateBranch,
   };
+}
 
+function buildWorkspaceViewModel(
+  s: AppState,
+  p: ProviderActions,
+  r: BuildAppViewModelsArgs["reviewActions"]
+): WorkspaceViewModel {
   return {
-    repoSidebar,
-    header,
-    mainPane,
-    reviewSidebar,
+    repoSidebar: buildWorkspaceRepoSidebarModel(s, p),
+    header: buildWorkspaceHeaderModel(s, p),
+    mainPane: buildWorkspaceMainPaneModel(s, r),
+    reviewSidebar: buildWorkspaceReviewSidebarModel(s, r),
   };
 }
 

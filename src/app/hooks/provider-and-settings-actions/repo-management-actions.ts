@@ -145,9 +145,7 @@ export function createRepoManagementActions(args: RepoManagementActionsArgs) {
     clearProviderNotice();
     providerState.setProviderBusy(true);
     try {
-      for (const review of repo.reviews) {
-        await deleteThread(review.id);
-      }
+      await Promise.all(repo.reviews.map((review) => deleteThread(review.id)));
       await repoState.refetchThreads();
       repoState.setRepoDisplayNames((current) => {
         const next = { ...current };

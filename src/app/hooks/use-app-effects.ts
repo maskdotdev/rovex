@@ -45,6 +45,7 @@ type UseAppEffectsArgs = {
   setAiProgressEvents: Setter<AiReviewProgressEvent[]>;
   branchPopoverOpen: Accessor<boolean>;
   selectedWorkspace: Accessor<string>;
+  workspaceBranchesLastFetchedAt: Accessor<number>;
   refetchWorkspaceBranches: () => unknown;
   getBranchSearchInputRef: () => HTMLInputElement | undefined;
   branchCreateMode: Accessor<boolean>;
@@ -71,6 +72,8 @@ type UseAppEffectsArgs = {
   reviewDefaultsByRepo: Accessor<Record<string, RepoReviewDefaults>>;
   handleCompareSelectedReview: () => void | Promise<void>;
 };
+
+const WORKSPACE_BRANCHES_STALE_MS = 30_000;
 
 export function useAppEffects(args: UseAppEffectsArgs) {
   createEffect(() => {
@@ -214,7 +217,12 @@ export function useAppEffects(args: UseAppEffectsArgs) {
     args.setNewBranchName("");
     args.setBranchActionError(null);
     if (args.selectedWorkspace().length > 0) {
-      void args.refetchWorkspaceBranches();
+      const elapsedMs = Date.now() - args.workspaceBranchesLastFetchedAt();
+      const shouldRefresh =
+        args.workspaceBranchesLastFetchedAt() <= 0 || elapsedMs > WORKSPACE_BRANCHES_STALE_MS;
+      if (shouldRefresh) {
+        void args.refetchWorkspaceBranches();
+      }
     }
     queueMicrotask(() => {
       args.getBranchSearchInputRef()?.focus();

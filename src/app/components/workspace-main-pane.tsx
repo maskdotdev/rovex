@@ -1,7 +1,7 @@
-import { Show, createEffect, type Accessor, type Setter } from "solid-js";
+import { Show, Suspense, createEffect, lazy, type Accessor, type Setter } from "solid-js";
 import { LoaderCircle } from "lucide-solid";
 import { Button } from "@/components/button";
-import { DiffViewer, type DiffViewerAnnotation } from "@/components/diff-viewer";
+import type { DiffViewerAnnotation } from "@/components/diff-viewer";
 import {
   createFullReviewScope,
   scopeExistsInPatch,
@@ -33,6 +33,11 @@ export type WorkspaceMainPaneModel = {
 type WorkspaceMainPaneProps = {
   model: WorkspaceMainPaneModel;
 };
+
+const LazyDiffViewer = lazy(async () => {
+  const module = await import("@/components/diff-viewer");
+  return { default: module.DiffViewer };
+});
 
 export function WorkspaceMainPane(props: WorkspaceMainPaneProps) {
   const model = props.model;
@@ -143,13 +148,21 @@ export function WorkspaceMainPane(props: WorkspaceMainPaneProps) {
                 </div>
               }
             >
-              <DiffViewer
-                patch={result().diff}
-                theme={model.selectedDiffTheme().theme}
-                themeId={model.selectedDiffTheme().id}
-                themeType="dark"
-                annotations={model.diffAnnotations()}
-              />
+              <Suspense
+                fallback={
+                  <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4 text-[14px] text-neutral-400">
+                    Loading diff viewer...
+                  </div>
+                }
+              >
+                <LazyDiffViewer
+                  patch={result().diff}
+                  theme={model.selectedDiffTheme().theme}
+                  themeId={model.selectedDiffTheme().id}
+                  themeType="dark"
+                  annotations={model.diffAnnotations()}
+                />
+              </Suspense>
             </Show>
           </>
         )}

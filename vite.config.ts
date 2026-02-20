@@ -13,6 +13,24 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [solid()],
+  build: {
+    // Shiki grammar chunks can be very large but are lazy-loaded on demand.
+    // Raise the warning threshold and split heavy dependencies to reduce noise.
+    chunkSizeWarningLimit: 850,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/@pierre/diffs")) {
+            return "diffs-core";
+          }
+          if (id.includes("node_modules/lucide-solid")) {
+            return "icons";
+          }
+          return undefined;
+        },
+      },
+    },
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

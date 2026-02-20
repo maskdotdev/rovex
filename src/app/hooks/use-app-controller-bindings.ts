@@ -169,6 +169,7 @@ export function buildAppEffectsArgs(
     setAiProgressEvents: s.setAiProgressEvents,
     branchPopoverOpen: s.branchPopoverOpen,
     selectedWorkspace: s.selectedWorkspace,
+    workspaceBranchesLastFetchedAt: s.workspaceBranchesLastFetchedAt,
     refetchWorkspaceBranches: s.refetchWorkspaceBranches,
     getBranchSearchInputRef: s.getBranchSearchInputRef,
     branchCreateMode: s.branchCreateMode,

@@ -1,7 +1,6 @@
-import { For, Show, createMemo, type Accessor, type Setter } from "solid-js";
+import { For, Show, Suspense, createMemo, lazy, type Accessor, type Setter } from "solid-js";
 import { FolderOpen, PlugZap } from "lucide-solid";
 import { Button } from "@/components/button";
-import { DiffViewer } from "@/components/diff-viewer";
 import { TextField, TextFieldInput } from "@/components/text-field";
 import {
   diffThemePresets,
@@ -90,6 +89,11 @@ export type SettingsViewModel = {
 type SettingsViewProps = {
   model: SettingsViewModel;
 };
+
+const LazyDiffViewer = lazy(async () => {
+  const module = await import("@/components/diff-viewer");
+  return { default: module.DiffViewer };
+});
 
 export function SettingsView(props: SettingsViewProps) {
   const {
@@ -600,13 +604,21 @@ export function SettingsView(props: SettingsViewProps) {
                           </p>
                           <div class="mt-2 overflow-hidden rounded-xl border border-white/[0.06] bg-[#0e1013] p-3">
                             <div class="max-h-[16rem] overflow-y-auto pr-1">
-                              <DiffViewer
-                                patch={diffThemePreviewPatch}
-                                theme={selectedDiffTheme().theme}
-                                themeId={selectedDiffTheme().id}
-                                themeType="dark"
-                                showToolbar={false}
-                              />
+                              <Suspense
+                                fallback={
+                                  <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4 text-[13px] text-neutral-400">
+                                    Loading preview...
+                                  </div>
+                                }
+                              >
+                                <LazyDiffViewer
+                                  patch={diffThemePreviewPatch}
+                                  theme={selectedDiffTheme().theme}
+                                  themeId={selectedDiffTheme().id}
+                                  themeType="dark"
+                                  showToolbar={false}
+                                />
+                              </Suspense>
                             </div>
                           </div>
                         </div>

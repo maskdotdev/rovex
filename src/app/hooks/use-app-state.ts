@@ -10,16 +10,20 @@ import { useReviewWorkbenchState } from "@/app/hooks/app-state/use-review-workbe
 import { useWorkspaceResources } from "@/app/hooks/app-state/use-workspace-resources";
 
 export function useAppState() {
-  const resources = usePrimaryResources();
-  const coreState = useCoreState({
-    githubConnection: resources.githubConnection,
-    gitlabConnection: resources.gitlabConnection,
+  const coreState = useCoreState();
+  const resources = usePrimaryResources({
+    selectedProvider: coreState.selectedProvider,
   });
   const repoState = useRepoState({ threads: resources.threads });
   const providerState = useProviderState();
   const compareBranchState = useCompareBranchState();
   const aiState = useAiState();
   const reviewWorkbenchState = useReviewWorkbenchState();
+  const selectedProviderConnection = createMemo(() =>
+    coreState.selectedProvider() === "github"
+      ? resources.githubConnection()
+      : resources.gitlabConnection()
+  );
 
   const selectedWorkspace = createMemo(() => repoState.selectedReview()?.workspace?.trim() ?? "");
   const workspaceResources = useWorkspaceResources({
@@ -74,6 +78,7 @@ export function useAppState() {
     ...workspaceResources,
     currentWorkspaceBranch,
     filteredWorkspaceBranches,
+    selectedProviderConnection,
     loadError,
     providerConnectionError,
     workspaceBranchLoadError,

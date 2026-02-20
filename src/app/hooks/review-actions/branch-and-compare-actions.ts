@@ -21,6 +21,14 @@ export function createBranchAndCompareActions(args: BranchAndCompareActionsArgs)
     compare.setShowDiffViewer(false);
   };
 
+  const finalizeBranchSwitch = async () => {
+    await branch.refetchWorkspaceBranches();
+    branch.setBranchPopoverOpen(false);
+    branch.setBranchCreateMode(false);
+    branch.setNewBranchName("");
+    resetComparisonView();
+  };
+
   const handleCheckoutBranch = async (branchName: string) => {
     const workspace = selection.selectedWorkspace().trim();
     const normalizedBranchName = branchName.trim();
@@ -37,11 +45,7 @@ export function createBranchAndCompareActions(args: BranchAndCompareActionsArgs)
         workspace,
         branchName: normalizedBranchName,
       });
-      await branch.refetchWorkspaceBranches();
-      branch.setBranchPopoverOpen(false);
-      branch.setBranchCreateMode(false);
-      branch.setNewBranchName("");
-      resetComparisonView();
+      await finalizeBranchSwitch();
     } catch (error) {
       branch.setBranchActionError(toErrorMessage(error));
     } finally {
@@ -74,11 +78,7 @@ export function createBranchAndCompareActions(args: BranchAndCompareActionsArgs)
         workspace,
         branchName,
       });
-      await branch.refetchWorkspaceBranches();
-      branch.setBranchPopoverOpen(false);
-      branch.setBranchCreateMode(false);
-      branch.setNewBranchName("");
-      resetComparisonView();
+      await finalizeBranchSwitch();
     } catch (error) {
       branch.setBranchActionError(toErrorMessage(error));
     } finally {

@@ -75,6 +75,21 @@ body::before {
 .delay-4 { animation-delay: 0.16s; }
 .delay-5 { animation-delay: 0.2s; }
 
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up,
+  .timeline-dot {
+    animation: none !important;
+  }
+
+  .delay-1,
+  .delay-2,
+  .delay-3,
+  .delay-4,
+  .delay-5 {
+    animation-delay: 0s !important;
+  }
+}
+
 /* Subtle glow for accent elements */
 .glow-amber {
   box-shadow:
