@@ -1,6 +1,8 @@
 import { For, Show, createMemo, type Accessor, type Setter } from "solid-js";
 import {
+  AlertTriangle,
   Check,
+  CheckCircle2,
   ChevronRight,
   GitBranch,
   LoaderCircle,
@@ -16,8 +18,13 @@ import {
   SidebarGroup,
 } from "@/components/sidebar";
 import { TextField, TextFieldInput } from "@/components/text-field";
-import { getReviewScopeLabel, normalizeDiffPath, type ReviewScope } from "@/app/review-scope";
-import type { ReviewRun, ReviewWorkbenchTab } from "@/app/review-types";
+import { normalizeDiffPath, type ReviewScope } from "@/app/review-scope";
+import { formatReviewMessage } from "@/app/review-text";
+import type {
+  ReviewChatSharedDiffContext,
+  ReviewRun,
+  ReviewWorkbenchTab,
+} from "@/app/review-types";
 import { useWorkspaceReviewSidebarViewModel } from "@/app/components/workspace-review-sidebar-view-model";
 import type {
   AiReviewChunk,
@@ -44,6 +51,8 @@ export type WorkspaceReviewSidebarModel = {
   threadMessages: Accessor<ThreadMessage[] | undefined>;
   aiPrompt: Accessor<string>;
   setAiPrompt: Setter<string>;
+  aiSharedDiffContext: Accessor<ReviewChatSharedDiffContext | null>;
+  setAiSharedDiffContext: Setter<ReviewChatSharedDiffContext | null>;
   handleAskAiFollowUp: (event: Event) => void | Promise<void>;
   handleCancelAiReviewRun: (runId: string) => void | Promise<void>;
   aiReviewBusy: Accessor<boolean>;
@@ -90,6 +99,9 @@ const reviewWorkbenchTabs = [
   { id: "chat", label: "Chat" },
 ] as const satisfies ReadonlyArray<{ id: ReviewWorkbenchTab; label: string }>;
 
+const tabShowsRunActivity = (tabId: ReviewWorkbenchTab) =>
+  tabId === "description" || tabId === "issues";
+
 export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
   const model = props.model;
   const isCollapsed = createMemo(() => model.reviewSidebarCollapsed?.() ?? false);
@@ -104,13 +116,23 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
     aiReviewBusy: model.aiReviewBusy,
   });
   const selectedRun = derived.selectedRun;
-  const visibleChunkReviews = derived.visibleChunkReviews;
   const visibleFindings = derived.visibleFindings;
   const visibleProgressEvents = derived.visibleProgressEvents;
-  const sortedVisibleFindings = derived.sortedVisibleFindings;
+  const issueFileCards = derived.issueFileCards;
   const latestProgress = derived.latestProgress;
   const progressRatio = derived.progressRatio;
   const issuesEmptyMessage = derived.issuesEmptyMessage;
+  const activeCancelableRun = createMemo<ReviewRun | null>(() => {
+    const selected = selectedRun();
+    if (selected && (selected.status === "queued" || selected.status === "running")) {
+      return selected;
+    }
+    return (
+      model
+        .reviewRuns()
+        .find((run) => run.status === "queued" || run.status === "running") ?? null
+    );
+  });
 
   let tabRefs: Array<HTMLButtonElement | undefined> = [];
   const branchPopoverContentId = "workspace-branch-picker-popover";
@@ -128,55 +150,73 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
     >
       <SidebarContent class="p-2">
         <SidebarGroup class="h-full min-h-0 p-0">
-          <div class="review-right-tabs" role="tablist" aria-label="Review workbench tabs">
-            <For each={reviewWorkbenchTabs}>
-              {(tab, index) => (
+          <div class="mb-2 flex items-center gap-2">
+            <div class="review-right-tabs flex-1" role="tablist" aria-label="Review workbench tabs">
+              <For each={reviewWorkbenchTabs}>
+                {(tab, index) => (
+                  <button
+                    ref={(element) => {
+                      tabRefs[index()] = element;
+                    }}
+                    type="button"
+                    role="tab"
+                    id={`review-workbench-tab-${tab.id}`}
+                    aria-controls={`review-workbench-panel-${tab.id}`}
+                    aria-selected={model.reviewWorkbenchTab() === tab.id}
+                    tabIndex={model.reviewWorkbenchTab() === tab.id ? 0 : -1}
+                    class={`review-tab-trigger ${model.reviewWorkbenchTab() === tab.id ? "is-active" : ""}`}
+                    onClick={() => model.setReviewWorkbenchTab(tab.id)}
+                    onKeyDown={(event) => {
+                      const currentIndex = index();
+                      if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+                        event.preventDefault();
+                        const delta = event.key === "ArrowRight" ? 1 : -1;
+                        const nextIndex =
+                          (currentIndex + delta + reviewWorkbenchTabs.length) %
+                          reviewWorkbenchTabs.length;
+                        const nextTab = reviewWorkbenchTabs[nextIndex];
+                        model.setReviewWorkbenchTab(nextTab.id);
+                        tabRefs[nextIndex]?.focus();
+                        return;
+                      }
+                      if (event.key === "Home" || event.key === "End") {
+                        event.preventDefault();
+                        const nextIndex = event.key === "Home" ? 0 : reviewWorkbenchTabs.length - 1;
+                        const nextTab = reviewWorkbenchTabs[nextIndex];
+                        model.setReviewWorkbenchTab(nextTab.id);
+                        tabRefs[nextIndex]?.focus();
+                        return;
+                      }
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        model.setReviewWorkbenchTab(tab.id);
+                      }
+                    }}
+                  >
+                    <span class="inline-flex items-center gap-1.5">
+                      {tab.label}
+                      <Show when={tabShowsRunActivity(tab.id) && model.aiReviewBusy()}>
+                        <LoaderCircle class="size-3 animate-spin text-amber-300/90" aria-hidden="true" />
+                      </Show>
+                    </span>
+                  </button>
+                )}
+              </For>
+            </div>
+            <Show when={activeCancelableRun()}>
+              {(run) => (
                 <button
-                  ref={(element) => {
-                    tabRefs[index()] = element;
-                  }}
                   type="button"
-                  role="tab"
-                  id={`review-workbench-tab-${tab.id}`}
-                  aria-controls={`review-workbench-panel-${tab.id}`}
-                  aria-selected={model.reviewWorkbenchTab() === tab.id}
-                  tabIndex={model.reviewWorkbenchTab() === tab.id ? 0 : -1}
-                  class={`review-tab-trigger ${model.reviewWorkbenchTab() === tab.id ? "is-active" : ""}`}
-                  onClick={() => model.setReviewWorkbenchTab(tab.id)}
-                  onKeyDown={(event) => {
-                    const currentIndex = index();
-                    if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
-                      event.preventDefault();
-                      const delta = event.key === "ArrowRight" ? 1 : -1;
-                      const nextIndex =
-                        (currentIndex + delta + reviewWorkbenchTabs.length) %
-                        reviewWorkbenchTabs.length;
-                      const nextTab = reviewWorkbenchTabs[nextIndex];
-                      model.setReviewWorkbenchTab(nextTab.id);
-                      tabRefs[nextIndex]?.focus();
-                      return;
-                    }
-                    if (event.key === "Home" || event.key === "End") {
-                      event.preventDefault();
-                      const nextIndex = event.key === "Home" ? 0 : reviewWorkbenchTabs.length - 1;
-                      const nextTab = reviewWorkbenchTabs[nextIndex];
-                      model.setReviewWorkbenchTab(nextTab.id);
-                      tabRefs[nextIndex]?.focus();
-                      return;
-                    }
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      model.setReviewWorkbenchTab(tab.id);
-                    }
-                  }}
+                  class="review-inline-action shrink-0"
+                  onClick={() => void model.handleCancelAiReviewRun(run().id)}
                 >
-                  {tab.label}
+                  Stop
                 </button>
               )}
-            </For>
+            </Show>
           </div>
 
-          <div class="review-right-content">
+          <div class={`review-right-content ${model.reviewWorkbenchTab() === "chat" ? "is-chat" : ""}`}>
             <Show when={model.reviewWorkbenchTab() === "description"}>
               <section
                 id="review-workbench-panel-description"
@@ -225,7 +265,9 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                       <Show when={latestProgress()}>
                         {(progress) => (
                           <div class="mt-2">
-                            <p class="text-[11px] text-neutral-400">{progress().message}</p>
+                            <p class="review-stream-message text-[11px] text-neutral-400">
+                              {formatReviewMessage(progress().message, 420)}
+                            </p>
                             <div class="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/[0.08]">
                               <div
                                 class="h-full rounded-full bg-amber-400/80 transition-all duration-150"
@@ -242,60 +284,27 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
 
                     <Show when={run().status === "failed"}>
                       <div class="rounded-lg border border-rose-500/18 bg-rose-500/8 px-3 py-2 text-[12px] text-rose-300/90">
-                        {run().error ?? "Review run failed."}
+                        <p class="review-stream-message review-stream-message-compact">
+                          {formatReviewMessage(run().error ?? "Review run failed.", 1_600)}
+                        </p>
                       </div>
                     </Show>
 
                     <Show
-                      when={visibleChunkReviews().length > 0}
-                      fallback={<p class="review-empty-state">Waiting for chunk summaries...</p>}
+                      when={(run().review ?? "").trim().length > 0}
+                      fallback={
+                        <p class="review-empty-state">
+                          {run().status === "running" || run().status === "queued"
+                            ? "Waiting for description tokens..."
+                            : "No high-level description available for this run."}
+                        </p>
+                      }
                     >
-                      <div class="space-y-2.5">
-                        <For each={visibleChunkReviews()}>
-                          {(chunk) => (
-                            <article class="review-suggestion-card">
-                              <div class="mb-1.5 flex items-center justify-between gap-2">
-                                <p class="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-neutral-400">
-                                  {chunk.filePath} • chunk {chunk.chunkIndex}
-                                </p>
-                                <span class="text-[11px] text-neutral-500">
-                                  {chunk.findings.length} issue{chunk.findings.length === 1 ? "" : "s"}
-                                </span>
-                              </div>
-                              <p class="text-[12.5px] leading-5 text-neutral-300">{chunk.summary}</p>
-                              <div class="mt-2 flex items-center gap-2">
-                                <Show when={chunk.findings.length > 0}>
-                                  <button
-                                    type="button"
-                                    class="review-inline-action"
-                                    onClick={() => {
-                                      model.setActiveReviewScope({
-                                        kind: "file",
-                                        filePath: normalizeDiffPath(chunk.filePath),
-                                      });
-                                      model.setReviewWorkbenchTab("issues");
-                                    }}
-                                  >
-                                    View issues
-                                  </button>
-                                </Show>
-                                <button
-                                  type="button"
-                                  class="review-inline-action"
-                                  onClick={() => {
-                                    model.setReviewWorkbenchTab("chat");
-                                    model.setAiPrompt(
-                                      `Explain this chunk and highlight risky changes: ${chunk.filePath} chunk ${chunk.chunkIndex}`
-                                    );
-                                  }}
-                                >
-                                  Ask AI
-                                </button>
-                              </div>
-                            </article>
-                          )}
-                        </For>
-                      </div>
+                      <article class="review-suggestion-card">
+                        <p class="review-suggestion-text text-[13px] leading-6 text-neutral-200">
+                          {formatReviewMessage(run().review ?? "", 12_000)}
+                        </p>
+                      </article>
                     </Show>
 
                     <Show when={model.reviewRuns().length > 1}>
@@ -341,7 +350,7 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
               >
               <div class="mb-2 flex items-center justify-between text-[12px] text-neutral-500">
                 <span>
-                  {visibleChunkReviews().length} chunks • {visibleFindings().length} findings
+                  {issueFileCards().length} files • {visibleFindings().length} findings
                 </span>
                 <Show when={selectedRun()}>
                   {(run) => (
@@ -356,56 +365,118 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                 <div class="mb-2 max-h-[7rem] space-y-1.5 overflow-y-auto rounded-lg border border-white/[0.05] bg-white/[0.015] px-3 py-2">
                   <For each={visibleProgressEvents().slice(Math.max(0, visibleProgressEvents().length - 8))}>
                     {(event) => (
-                      <p class="text-[12px] text-neutral-500">{event.message}</p>
+                      <p class="review-stream-message text-[12px] text-neutral-500">
+                        {formatReviewMessage(event.message, 900)}
+                      </p>
                     )}
                   </For>
                 </div>
               </Show>
 
               <Show
-                when={sortedVisibleFindings().length > 0}
+                when={issueFileCards().length > 0}
                 fallback={<p class="review-empty-state">{issuesEmptyMessage()}</p>}
               >
                 <div class="space-y-2 overflow-y-auto pr-1">
-                  <For each={sortedVisibleFindings()}>
-                    {(finding) => (
-                      <article class="review-suggestion-card">
-                        <div class="mb-1.5 flex items-center justify-between gap-2">
-                          <p class="text-[12px] font-semibold uppercase tracking-[0.08em] text-amber-200/90">
-                            {finding.severity}
+                  <For each={issueFileCards()}>
+                    {(card) => (
+                      <article
+                        class={`rounded-lg border px-3 py-2 ${
+                          card.status === "issues"
+                            ? "border-amber-500/25 bg-amber-500/8"
+                            : card.status === "failed"
+                              ? "border-rose-500/25 bg-rose-500/8"
+                              : "border-white/[0.07] bg-white/[0.02]"
+                        }`}
+                      >
+                        <div class="flex items-center justify-between gap-2">
+                          <p class="truncate text-[12px] font-medium text-neutral-200">
+                            {card.filePath}
                           </p>
-                          <span class="text-[11px] text-neutral-500">
-                            {finding.filePath}:{finding.lineNumber}
-                          </span>
-                        </div>
-                        <p class="text-[13px] font-medium text-neutral-200">{finding.title}</p>
-                        <p class="mt-1 text-[12.5px] leading-5 text-neutral-400">{finding.body}</p>
-                        <div class="mt-2 flex items-center gap-2">
-                          <button
-                            type="button"
-                            class="review-inline-action"
-                            onClick={() => {
-                              model.setActiveReviewScope({
-                                kind: "file",
-                                filePath: normalizeDiffPath(finding.filePath),
-                              });
-                            }}
+                          <Show
+                            when={card.status === "running"}
+                            fallback={
+                              <Show
+                                when={card.status === "clean"}
+                                fallback={
+                                  <Show
+                                    when={card.status === "failed"}
+                                    fallback={
+                                      <span class="text-[11px] text-amber-200/90">
+                                        {card.findings.length} issue{card.findings.length === 1 ? "" : "s"}
+                                      </span>
+                                    }
+                                  >
+                                    <AlertTriangle class="size-4 text-rose-300/90" />
+                                  </Show>
+                                }
+                              >
+                                <CheckCircle2 class="size-4 text-emerald-300/90" />
+                              </Show>
+                            }
                           >
-                            Jump to file
-                          </button>
-                          <button
-                            type="button"
-                            class="review-inline-action"
-                            onClick={() => {
-                              model.setReviewWorkbenchTab("chat");
-                              model.setAiPrompt(
-                                `Explain this issue and propose a fix: [${finding.severity}] ${finding.title} at ${finding.filePath}:${finding.lineNumber}`
-                              );
-                            }}
-                          >
-                            Ask AI
-                          </button>
+                            <LoaderCircle class="size-4 animate-spin text-amber-300/90" />
+                          </Show>
                         </div>
+
+                        <Show when={card.status === "issues" || card.status === "failed"}>
+                          <div class="mt-2 space-y-2">
+                            <Show when={card.status === "failed"}>
+                              <p class="review-stream-message text-[12px] text-rose-300/90">
+                                {formatReviewMessage(card.errorMessage ?? "Issue scan failed for this file.", 700)}
+                              </p>
+                            </Show>
+                            <Show when={card.status === "issues" && card.summary.trim().length > 0}>
+                              <p class="review-stream-message text-[12px] text-neutral-300">
+                                {formatReviewMessage(card.summary, 900)}
+                              </p>
+                            </Show>
+                            <For each={card.findings}>
+                              {(finding) => (
+                                <div class="rounded-md border border-white/[0.08] bg-black/20 px-2.5 py-2">
+                                  <div class="mb-1 flex items-center justify-between gap-2">
+                                    <p class="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-amber-200/90">
+                                      {finding.severity}
+                                    </p>
+                                    <span class="text-[11px] text-neutral-400">
+                                      {finding.lineNumber}
+                                    </span>
+                                  </div>
+                                  <p class="text-[12.5px] font-medium text-neutral-200">{finding.title}</p>
+                                  <p class="review-stream-message mt-1 text-[12px] text-neutral-300">
+                                    {formatReviewMessage(finding.body, 1_100)}
+                                  </p>
+                                  <div class="mt-2 flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      class="review-inline-action"
+                                      onClick={() => {
+                                        model.setActiveReviewScope({
+                                          kind: "file",
+                                          filePath: normalizeDiffPath(finding.filePath),
+                                        });
+                                      }}
+                                    >
+                                      Jump to file
+                                    </button>
+                                    <button
+                                      type="button"
+                                      class="review-inline-action"
+                                      onClick={() => {
+                                        model.setReviewWorkbenchTab("chat");
+                                        model.setAiPrompt(
+                                          `Explain this issue and propose a fix: [${finding.severity}] ${finding.title} at ${finding.filePath}:${finding.lineNumber}`
+                                        );
+                                      }}
+                                    >
+                                      Ask AI
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </For>
+                          </div>
+                        </Show>
                       </article>
                     )}
                   </For>
@@ -420,16 +491,14 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                 role="tabpanel"
                 aria-labelledby="review-workbench-tab-chat"
                 tabIndex={0}
+                class="review-chat-panel"
               >
-              <div class="mb-3 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-[12px] text-neutral-400">
-                Active scope: <span class="text-neutral-300">{getReviewScopeLabel(model.activeReviewScope())}</span>
-              </div>
               <Show when={model.aiReviewBusy()}>
                 <p class="mb-3 text-[12px] text-neutral-500">
                   Issue scan is running. Chat stays available while findings stream in.
                 </p>
               </Show>
-              <div class="mb-3 max-h-[15rem] space-y-2 overflow-y-auto rounded-lg border border-white/[0.05] bg-white/[0.015] p-2.5">
+              <div class="review-chat-messages">
                 <For each={(model.threadMessages() ?? []).slice(-14)}>
                   {(message) => (
                     <div
@@ -453,9 +522,31 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                   </p>
                 )}
               </Show>
+              <Show when={model.aiSharedDiffContext()}>
+                {(sharedContext) => (
+                  <div class="mb-2 rounded-lg border border-amber-300/25 bg-amber-400/10 px-3 py-2">
+                    <div class="flex items-center justify-between gap-2">
+                      <p class="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-amber-100/90">
+                        Attached diff: {sharedContext().filePath}
+                      </p>
+                      <button
+                        type="button"
+                        class="review-inline-action shrink-0"
+                        onClick={() => model.setAiSharedDiffContext(null)}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    <p class="mt-1 text-[11px] text-amber-200/80">
+                      This file patch will be included with your next question.
+                      {sharedContext().truncated ? " Shared content is trimmed for size." : ""}
+                    </p>
+                  </div>
+                )}
+              </Show>
 
               <form
-                class="overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.02]"
+                class="review-chat-composer"
                 onSubmit={(event) => void model.handleAskAiFollowUp(event)}
               >
                 <TextField>
@@ -467,10 +558,10 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                         ? "Ask while scanning: explain risks, fixes, or design intent..."
                         : "Ask about this diff, findings, or implementation choices..."
                     }
-                    class="h-12 border-0 bg-transparent px-4 text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:ring-0 focus:ring-offset-0"
+                    class="review-chat-input h-12 border-0 bg-transparent px-4 text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:ring-0 focus:ring-offset-0"
                   />
                 </TextField>
-                <div class="flex items-center justify-between border-t border-white/[0.04] px-4 py-2.5">
+                <div class="flex items-center justify-between px-4 py-2.5">
                   <div class="flex items-center gap-2">
                     <Popover.Root
                       open={model.branchPopoverOpen()}

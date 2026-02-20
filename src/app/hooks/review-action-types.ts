@@ -6,7 +6,11 @@ import type {
   CompareWorkspaceDiffResult,
 } from "@/lib/backend";
 import type { ReviewScope } from "@/app/review-scope";
-import type { ReviewRun, ReviewWorkbenchTab } from "@/app/review-types";
+import type {
+  ReviewChatSharedDiffContext,
+  ReviewRun,
+  ReviewWorkbenchTab,
+} from "@/app/review-types";
 
 export type UseReviewActionsArgs = {
   selection: {
@@ -42,6 +46,8 @@ export type UseReviewActionsArgs = {
     setAiChunkReviews: Setter<AiReviewChunk[]>;
     setAiFindings: Setter<AiReviewFinding[]>;
     setAiProgressEvents: Setter<AiReviewProgressEvent[]>;
+    sharedDiffContext: Accessor<ReviewChatSharedDiffContext | null>;
+    setSharedDiffContext: Setter<ReviewChatSharedDiffContext | null>;
     refetchThreadMessages: () => unknown;
     refetchAiReviewRuns?: () => unknown;
   };

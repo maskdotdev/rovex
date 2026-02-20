@@ -51,6 +51,90 @@ export function sortFindingsBySeverity(findings: AiReviewFinding[]) {
   });
 }
 
+export type IssueFileCard = {
+  id: string;
+  filePath: string;
+  chunkIndex: number;
+  status: "running" | "clean" | "issues" | "failed";
+  summary: string;
+  findings: AiReviewFinding[];
+  errorMessage: string | null;
+};
+
+function buildIssueFileCards(
+  progressEvents: AiReviewProgressEvent[],
+  chunkReviews: AiReviewChunk[]
+): IssueFileCard[] {
+  const byId = new Map<string, IssueFileCard>();
+  const ensure = (args: { id: string; filePath: string; chunkIndex: number }) => {
+    const existing = byId.get(args.id);
+    if (existing) return existing;
+    const created: IssueFileCard = {
+      id: args.id,
+      filePath: args.filePath,
+      chunkIndex: args.chunkIndex,
+      status: "running",
+      summary: "",
+      findings: [],
+      errorMessage: null,
+    };
+    byId.set(args.id, created);
+    return created;
+  };
+
+  for (const event of progressEvents) {
+    if (event.status === "chunk-start") {
+      const id = event.chunkId ?? `${event.filePath ?? "unknown"}#${event.chunkIndex ?? 0}`;
+      const filePath = event.filePath ?? "unknown";
+      const chunkIndex = event.chunkIndex ?? 0;
+      ensure({ id, filePath, chunkIndex });
+      continue;
+    }
+
+    if (event.status === "chunk-complete" && event.chunk) {
+      const chunk = event.chunk;
+      const card = ensure({
+        id: chunk.id,
+        filePath: chunk.filePath,
+        chunkIndex: chunk.chunkIndex,
+      });
+      card.summary = chunk.summary;
+      card.findings = chunk.findings;
+      card.status = chunk.findings.length > 0 ? "issues" : "clean";
+      card.errorMessage = null;
+      continue;
+    }
+
+    if (event.status === "chunk-failed") {
+      const id = event.chunkId ?? `${event.filePath ?? "unknown"}#${event.chunkIndex ?? 0}`;
+      const filePath = event.filePath ?? "unknown";
+      const chunkIndex = event.chunkIndex ?? 0;
+      const card = ensure({ id, filePath, chunkIndex });
+      card.status = "failed";
+      card.errorMessage = event.message || "Issue scan failed for this file.";
+    }
+  }
+
+  for (const chunk of chunkReviews) {
+    const card = ensure({
+      id: chunk.id,
+      filePath: chunk.filePath,
+      chunkIndex: chunk.chunkIndex,
+    });
+    card.summary = chunk.summary;
+    card.findings = chunk.findings;
+    if (card.status !== "failed") {
+      card.status = chunk.findings.length > 0 ? "issues" : "clean";
+    }
+  }
+
+  return [...byId.values()].sort((left, right) => {
+    const byPath = left.filePath.localeCompare(right.filePath);
+    if (byPath !== 0) return byPath;
+    return left.chunkIndex - right.chunkIndex;
+  });
+}
+
 export function buildIssuesEmptyMessage(args: {
   chunkCount: number;
   runStatus: ReviewRun["status"] | null;
@@ -78,6 +162,9 @@ export function useWorkspaceReviewSidebarViewModel(model: WorkspaceReviewSidebar
     () => selectedRun()?.progressEvents ?? model.aiProgressEvents()
   );
   const sortedVisibleFindings = createMemo(() => sortFindingsBySeverity(visibleFindings()));
+  const issueFileCards = createMemo(() =>
+    buildIssueFileCards(visibleProgressEvents(), visibleChunkReviews())
+  );
   const latestProgress = createMemo(() => {
     const events = visibleProgressEvents();
     return events.length > 0 ? events[events.length - 1] : null;
@@ -116,6 +203,7 @@ export function useWorkspaceReviewSidebarViewModel(model: WorkspaceReviewSidebar
     visibleFindings,
     visibleProgressEvents,
     sortedVisibleFindings,
+    issueFileCards,
     latestProgress,
     progressRatio,
     issuesEmptyMessage,

@@ -9,6 +9,7 @@ import {
   FolderOpen,
   Gauge,
   GitBranch,
+  LoaderCircle,
   LogOut,
   MoreHorizontal,
   Pencil,
@@ -49,6 +50,7 @@ import {
 
 export type WorkspaceRepoSidebarModel = {
   providerBusy: Accessor<boolean>;
+  aiReviewBusy: Accessor<boolean>;
   onAddLocalRepo: () => void | Promise<void>;
   threadsLoading: Accessor<boolean>;
   repoGroups: Accessor<RepoGroup[]>;
@@ -124,6 +126,18 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
       return "Personal account";
     }
     return `${rawType[0].toUpperCase()}${rawType.slice(1)} account`;
+  });
+
+  const activeRepoName = createMemo(() => {
+    if (!model.aiReviewBusy()) return null;
+    const selectedThreadId = model.selectedThreadId();
+    if (selectedThreadId == null) return null;
+    for (const repo of model.repoGroups()) {
+      if (repo.reviews.some((review) => review.id === selectedThreadId)) {
+        return repo.repoName;
+      }
+    }
+    return null;
   });
 
   const usageWindows = createMemo(() => {
@@ -506,6 +520,12 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                             }`}
                           />
                           <span class="truncate">{model.repoDisplayName(repo.repoName)}</span>
+                          <Show when={activeRepoName() === repo.repoName}>
+                            <LoaderCircle
+                              class="size-3.5 shrink-0 animate-spin text-amber-300/90"
+                              aria-label="Review in progress"
+                            />
+                          </Show>
                         </div>
                       </SidebarMenuButton>
                         <SidebarMenuAction
@@ -575,9 +595,19 @@ export function WorkspaceRepoSidebar(props: WorkspaceRepoSidebarProps) {
                                   onClick={() => model.onSelectThread(review.id)}
                                 >
                                   <span class="truncate pr-2">{review.title}</span>
-                                  <span class="shrink-0 text-[11px] tabular-nums text-neutral-600 transition-opacity duration-150 group-hover/review-item:opacity-0 group-focus-within/review-item:opacity-0">
-                                    {review.age}
-                                  </span>
+                                  <div class="shrink-0 flex items-center gap-1.5">
+                                    <Show
+                                      when={model.aiReviewBusy() && model.selectedThreadId() === review.id}
+                                    >
+                                      <LoaderCircle
+                                        class="size-3 animate-spin text-amber-300/90"
+                                        aria-label="Review in progress"
+                                      />
+                                    </Show>
+                                    <span class="text-[11px] tabular-nums text-neutral-600 transition-opacity duration-150 group-hover/review-item:opacity-0 group-focus-within/review-item:opacity-0">
+                                      {review.age}
+                                    </span>
+                                  </div>
                                 </SidebarMenuSubButton>
                                 <button
                                   type="button"

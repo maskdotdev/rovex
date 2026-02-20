@@ -11,9 +11,11 @@ import {
   Hash,
   PaintBucket,
   Rows3,
+  Sparkles,
   WrapText,
 } from "lucide-solid";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { render as renderSolid } from "solid-js/web";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/tooltip";
 
 const rovexDarkThemeDefaults = {
@@ -128,6 +130,7 @@ type DiffViewerProps = {
   themeType?: "system" | "light" | "dark";
   showToolbar?: boolean;
   annotations?: DiffViewerAnnotation[];
+  onAskAiAboutFile?: (filePath: string) => void;
 };
 
 type DiffFileCardProps = {
@@ -136,6 +139,7 @@ type DiffFileCardProps = {
   fastMode: boolean;
   options: DiffRenderOptions;
   lineAnnotations: DiffLineAnnotation<DiffViewerAnnotationMetadata>[];
+  onAskAiAboutFile?: (filePath: string) => void;
   onRendered?: (filePath: string, renderMs: number) => void;
 };
 
@@ -172,6 +176,7 @@ const DEFAULT_INITIAL_VISIBLE_FILES = 3;
 const FAST_INITIAL_VISIBLE_FILES = 1;
 const DIFF_PROFILE_STORAGE_KEY = "rovex.profile.diff";
 const DIFF_COLLAPSE_DEBUG_STORAGE_KEY = "rovex.debug.diff-collapse";
+const DIFF_UNIFIED_STYLE_STORAGE_KEY = "rovex.diff.unified-style";
 const EMPTY_LINE_ANNOTATIONS: DiffLineAnnotation<DiffViewerAnnotationMetadata>[] = [];
 const diffCollapseUnsafeCSS = `
 :host([data-rovex-collapsed="1"]) pre,
@@ -200,6 +205,14 @@ function isDiffProfileEnabled() {
 function isDiffCollapseDebugEnabled() {
   try {
     return globalThis.localStorage?.getItem(DIFF_COLLAPSE_DEBUG_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function getStoredUnifiedStylePreference() {
+  try {
+    return globalThis.localStorage?.getItem(DIFF_UNIFIED_STYLE_STORAGE_KEY) === "1";
   } catch {
     return false;
   }
@@ -276,7 +289,11 @@ function DiffFileCard(props: DiffFileCardProps) {
   let visibilityAnchorRef: HTMLDivElement | undefined;
   let containerRef: HTMLDivElement | undefined;
   let instance: FileDiff<DiffViewerAnnotationMetadata> | undefined;
+  let previousRenderOptions: DiffRenderOptions | undefined;
   let collapseToggleButton: HTMLButtonElement | undefined;
+  let askAiButtonHost: HTMLDivElement | undefined;
+  let disposeAskAiButton: (() => void) | undefined;
+  let headerMetadataControls: HTMLDivElement | undefined;
   let headerElement: HTMLElement | undefined;
   let headerObserver: MutationObserver | undefined;
   let profiledInitialRender = false;
@@ -325,9 +342,9 @@ function DiffFileCard(props: DiffFileCardProps) {
     const target = event.target;
     if (
       target instanceof Element &&
-      target.closest(".rovex-diff-collapse-toggle") != null
+      target.closest(".rovex-diff-header-action") != null
     ) {
-      debugLog("header click ignored (toggle button target)");
+      debugLog("header click ignored (action button target)");
       return;
     }
     debugLog("header click toggles");
@@ -336,6 +353,14 @@ function DiffFileCard(props: DiffFileCardProps) {
 
   const handleHeaderKeydown = (event: KeyboardEvent) => {
     if (event.key !== "Enter" && event.key !== " ") return;
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest(".rovex-diff-header-action") != null
+    ) {
+      debugLog("header keydown ignored (action button target)");
+      return;
+    }
     debugLog("header keydown toggles", { key: event.key });
     event.preventDefault();
     setCollapsed((current) => !current);
@@ -391,7 +416,7 @@ function DiffFileCard(props: DiffFileCardProps) {
     if (collapseToggleButton == null) {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = "rovex-diff-collapse-toggle";
+      button.className = "rovex-diff-header-action rovex-diff-collapse-toggle";
       const icon = document.createElement("span");
       icon.className = "rovex-diff-collapse-toggle-icon";
       icon.setAttribute("aria-hidden", "true");
@@ -410,6 +435,70 @@ function DiffFileCard(props: DiffFileCardProps) {
       connected: collapseToggleButton.isConnected,
     });
     return collapseToggleButton;
+  };
+
+  const getNormalizedFilePath = () => {
+    const normalizedName = normalizeDiffPath(props.file.name);
+    if (normalizedName) return normalizedName;
+    return normalizeDiffPath(props.file.prevName);
+  };
+
+  const getAskAiButton = () => {
+    if (!props.onAskAiAboutFile) return undefined;
+    if (askAiButtonHost == null) {
+      const filePath = getNormalizedFilePath();
+      const canShare = filePath.length > 0;
+      const tooltipLabel = canShare
+        ? `Ask AI about ${filePath}`
+        : "Ask AI about this file";
+      const host = document.createElement("div");
+      host.className = "rovex-diff-ai-button-host";
+      disposeAskAiButton = renderSolid(
+        () => (
+          <Tooltip openDelay={120} closeDelay={90}>
+            <TooltipTrigger>
+              <button
+                type="button"
+                class="rovex-diff-header-action rovex-diff-ai-button"
+                aria-label={tooltipLabel}
+                disabled={!canShare}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (!canShare) return;
+                  debugLog("metadata ai button click", { filePath });
+                  props.onAskAiAboutFile?.(filePath);
+                }}
+              >
+                <Sparkles class="rovex-diff-ai-button-icon" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{tooltipLabel}</TooltipContent>
+          </Tooltip>
+        ),
+        host
+      );
+      askAiButtonHost = host;
+      debugLog("created ask ai button");
+    }
+    return askAiButtonHost;
+  };
+
+  const getHeaderMetadataControls = () => {
+    if (headerMetadataControls == null) {
+      const controls = document.createElement("div");
+      controls.className = "rovex-diff-header-controls";
+      headerMetadataControls = controls;
+      debugLog("created header metadata controls");
+    }
+    const controls = headerMetadataControls;
+    controls.replaceChildren();
+
+    const aiButton = getAskAiButton();
+    if (aiButton) controls.appendChild(aiButton);
+    controls.appendChild(getCollapseToggleButton());
+
+    return controls;
   };
 
   createEffect(() => {
@@ -466,7 +555,7 @@ function DiffFileCard(props: DiffFileCardProps) {
         lineDiffType: useFastFileMode ? "none" : "word",
         maxLineDiffLength: useHugeFileFastPath ? 60 : useFastFileMode ? 120 : 280,
         tokenizeMaxLineLength: useHugeFileFastPath ? 120 : useFastFileMode ? 280 : 900,
-        renderHeaderMetadata: () => getCollapseToggleButton(),
+        renderHeaderMetadata: () => getHeaderMetadataControls(),
       };
       if (!instance) {
         container.replaceChildren();
@@ -479,11 +568,14 @@ function DiffFileCard(props: DiffFileCardProps) {
       const fileDiff = useHugeFileFastPath
         ? ({ ...props.file, lang: "text" } as FileDiffMetadata)
         : props.file;
+      const optionsChanged = previousRenderOptions !== props.options;
       instance.render({
         fileDiff,
         containerWrapper: container,
         lineAnnotations: useHugeFileFastPath ? EMPTY_LINE_ANNOTATIONS : props.lineAnnotations,
+        forceRender: optionsChanged,
       });
+      previousRenderOptions = props.options;
       debugLog("render complete");
       bindHeaderInteraction();
       const renderMs = performance.now() - renderStart;
@@ -528,6 +620,9 @@ function DiffFileCard(props: DiffFileCardProps) {
       headerElement.removeEventListener("keydown", handleHeaderKeydown);
       headerElement = undefined;
     }
+    disposeAskAiButton?.();
+    askAiButtonHost = undefined;
+    disposeAskAiButton = undefined;
     instance?.cleanUp();
     containerRef?.replaceChildren();
   });
@@ -565,7 +660,7 @@ export function DiffViewer(props: DiffViewerProps) {
   const profileEnabled = createMemo(() => isDiffProfileEnabled());
   const [lineWrap, setLineWrap] = createSignal(true);
   const [lineNumbers, setLineNumbers] = createSignal(true);
-  const [unifiedStyle, setUnifiedStyle] = createSignal(false);
+  const [unifiedStyle, setUnifiedStyle] = createSignal(getStoredUnifiedStylePreference());
   const [disableBackground, setDisableBackground] = createSignal(false);
   const [profileState, setProfileState] = createSignal<DiffViewerProfileState>({
     parseMs: 0,
@@ -733,6 +828,17 @@ export function DiffViewer(props: DiffViewerProps) {
   });
 
   createEffect(() => {
+    try {
+      globalThis.localStorage?.setItem(
+        DIFF_UNIFIED_STYLE_STORAGE_KEY,
+        unifiedStyle() ? "1" : "0"
+      );
+    } catch {
+      // Persisting this preference is best-effort only.
+    }
+  });
+
+  createEffect(() => {
     props.patch;
     setProfileState((current) => ({
       ...current,
@@ -829,7 +935,7 @@ export function DiffViewer(props: DiffViewerProps) {
                   </Show>
                 </button>
               </TooltipTrigger>
-              <TooltipContent>{unifiedStyle() ? "Split view" : "Unified view"}</TooltipContent>
+              <TooltipContent>{unifiedStyle() ? "Unified view" : "Split view"}</TooltipContent>
             </Tooltip>
 
             <Tooltip>
@@ -871,6 +977,7 @@ export function DiffViewer(props: DiffViewerProps) {
                 fastMode={fastMode()}
                 options={renderOptions()}
                 lineAnnotations={fileAnnotations}
+                onAskAiAboutFile={props.onAskAiAboutFile}
                 onRendered={handleFileRendered}
               />
             );

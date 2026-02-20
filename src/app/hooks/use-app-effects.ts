@@ -18,7 +18,11 @@ import type {
   CompareWorkspaceDiffResult,
 } from "@/lib/backend";
 import { createFullReviewScope, type ReviewScope } from "@/app/review-scope";
-import type { ReviewRun, ReviewWorkbenchTab } from "@/app/review-types";
+import type {
+  ReviewChatSharedDiffContext,
+  ReviewRun,
+  ReviewWorkbenchTab,
+} from "@/app/review-types";
 
 type UseAppEffectsArgs = {
   selectedDiffTheme: Accessor<DiffThemePreset>;
@@ -37,6 +41,7 @@ type UseAppEffectsArgs = {
   setNewBranchName: Setter<string>;
   setBranchActionError: Setter<string | null>;
   setAiPrompt: Setter<string>;
+  setAiSharedDiffContext: Setter<ReviewChatSharedDiffContext | null>;
   setAiFollowUpBusy?: Setter<boolean>;
   setAiReviewError: Setter<string | null>;
   setAiStatus: Setter<string | null>;
@@ -139,6 +144,7 @@ export function useAppEffects(args: UseAppEffectsArgs) {
         startedAt: Date.parse(run.startedAt ?? run.createdAt) || Date.now(),
         endedAt: run.endedAt ? Date.parse(run.endedAt) || Date.now() : null,
         model: run.model,
+        review: run.review,
         diffTruncated: run.diffTruncated,
         error: run.error,
         progressEvents: run.progressEvents,
@@ -198,6 +204,7 @@ export function useAppEffects(args: UseAppEffectsArgs) {
     args.setNewBranchName("");
     args.setBranchActionError(null);
     args.setAiPrompt("");
+    args.setAiSharedDiffContext(null);
     args.setAiFollowUpBusy?.(false);
     args.setAiReviewError(null);
     args.setAiStatus(null);
@@ -270,8 +277,9 @@ export function useAppEffects(args: UseAppEffectsArgs) {
         payloadRunId != null
           ? selectedRunId == null || selectedRunId === payloadRunId
           : true;
+      const shouldTrackProgressEvent = payload.status !== "description-delta";
 
-      if (runIsSelected) {
+      if (runIsSelected && shouldTrackProgressEvent) {
         args.setAiProgressEvents((current) => {
           const next = [...current, payload];
           return next.length > 160 ? next.slice(next.length - 160) : next;
@@ -282,7 +290,9 @@ export function useAppEffects(args: UseAppEffectsArgs) {
           args.setAiFindings([]);
         }
       }
-      args.setAiStatus(payload.message);
+      if (payload.status !== "description-delta") {
+        args.setAiStatus(payload.message);
+      }
       if (payload.status === "failed") {
         args.setAiReviewError(payload.message);
       }
@@ -329,6 +339,7 @@ export function useAppEffects(args: UseAppEffectsArgs) {
             startedAt: Date.now(),
             endedAt: null,
             model: null,
+            review: null,
             diffTruncated: false,
             error: null,
             progressEvents: [],
@@ -341,8 +352,22 @@ export function useAppEffects(args: UseAppEffectsArgs) {
         const run = nextRuns[targetIndex];
         let nextRun = {
           ...run,
-          progressEvents: [...run.progressEvents, payload].slice(-160),
+          progressEvents: shouldTrackProgressEvent
+            ? [...run.progressEvents, payload].slice(-160)
+            : run.progressEvents,
         };
+
+        if (payload.status === "description-start") {
+          nextRun = {
+            ...nextRun,
+            review: "",
+          };
+        } else if (payload.status === "description-delta") {
+          nextRun = {
+            ...nextRun,
+            review: `${nextRun.review ?? ""}${payload.message}`,
+          };
+        }
 
         if (chunk) {
           const nextChunks = [...nextRun.chunks];
@@ -406,6 +431,11 @@ export function useAppEffects(args: UseAppEffectsArgs) {
             ...nextRun,
             status: "completed",
             endedAt: Date.now(),
+          };
+        } else if (payload.status === "description-failed") {
+          nextRun = {
+            ...nextRun,
+            error: nextRun.error ?? payload.message,
           };
         }
 

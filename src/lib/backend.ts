@@ -197,6 +197,10 @@ export type AiReviewProgressEvent = {
   status:
     | "queued"
     | "started"
+    | "description-start"
+    | "description-delta"
+    | "description-complete"
+    | "description-failed"
     | "chunk-start"
     | "chunk-complete"
     | "chunk-failed"

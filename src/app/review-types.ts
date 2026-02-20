@@ -30,9 +30,16 @@ export type ReviewRun = {
   startedAt: number;
   endedAt: number | null;
   model: string | null;
+  review: string | null;
   diffTruncated: boolean;
   error: string | null;
   progressEvents: AiReviewProgressEvent[];
   chunks: AiReviewChunk[];
   findings: AiReviewFinding[];
+};
+
+export type ReviewChatSharedDiffContext = {
+  filePath: string;
+  diff: string;
+  truncated: boolean;
 };

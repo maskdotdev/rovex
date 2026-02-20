@@ -1,5 +1,6 @@
 import { createMemo, createSignal } from "solid-js";
 import type { DiffViewerAnnotation } from "@/components/diff-viewer";
+import type { ReviewChatSharedDiffContext } from "@/app/review-types";
 import type { AiReviewChunk, AiReviewFinding, AiReviewProgressEvent } from "@/lib/backend";
 
 export function useAiState() {
@@ -26,6 +27,8 @@ export function useAiState() {
   const [aiChunkReviews, setAiChunkReviews] = createSignal<AiReviewChunk[]>([]);
   const [aiFindings, setAiFindings] = createSignal<AiReviewFinding[]>([]);
   const [aiProgressEvents, setAiProgressEvents] = createSignal<AiReviewProgressEvent[]>([]);
+  const [aiSharedDiffContext, setAiSharedDiffContext] =
+    createSignal<ReviewChatSharedDiffContext | null>(null);
 
   const diffAnnotations = createMemo<DiffViewerAnnotation[]>(() =>
     aiFindings().map((finding) => {
@@ -91,6 +94,8 @@ export function useAiState() {
     setAiFindings,
     aiProgressEvents,
     setAiProgressEvents,
+    aiSharedDiffContext,
+    setAiSharedDiffContext,
     diffAnnotations,
   };
 }

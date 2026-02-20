@@ -16,6 +16,7 @@ function makeRun(id: string, status: ReviewRun["status"]): ReviewRun {
     startedAt: 0,
     endedAt: null,
     model: null,
+    review: null,
     diffTruncated: false,
     error: null,
     progressEvents: [],

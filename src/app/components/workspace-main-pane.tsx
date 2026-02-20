@@ -7,6 +7,7 @@ import {
   scopeExistsInPatch,
   type ReviewScope,
 } from "@/app/review-scope";
+import { formatReviewMessage } from "@/app/review-text";
 import type { DiffThemePreset } from "@/app/types";
 import type { CompareWorkspaceDiffResult } from "@/lib/backend";
 
@@ -20,6 +21,7 @@ export type WorkspaceMainPaneModel = {
   compareSummary: Accessor<string | null>;
   compareBusy: Accessor<boolean>;
   selectedWorkspace: Accessor<string>;
+  handlePrepareAiFollowUpForFile: (filePath: string) => void;
   handleStartAiReviewOnFullDiff: () => void | Promise<void>;
   compareResult: Accessor<CompareWorkspaceDiffResult | null>;
   showDiffViewer: Accessor<boolean>;
@@ -63,28 +65,36 @@ export function WorkspaceMainPane(props: WorkspaceMainPaneProps) {
       <Show when={model.branchActionError()}>
         {(message) => (
           <div class="mb-3 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
-            {message()}
+            <p class="review-stream-message review-stream-message-compact">
+              {formatReviewMessage(message(), 1_200)}
+            </p>
           </div>
         )}
       </Show>
       <Show when={model.compareError()}>
         {(message) => (
           <div class="mb-3 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
-            {message()}
+            <p class="review-stream-message review-stream-message-compact">
+              {formatReviewMessage(message(), 1_200)}
+            </p>
           </div>
         )}
       </Show>
       <Show when={model.aiReviewError()}>
         {(message) => (
           <div class="mb-3 rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[13px] text-rose-300/90">
-            {message()}
+            <p class="review-stream-message review-stream-message-expanded">
+              {formatReviewMessage(message(), 3_500)}
+            </p>
           </div>
         )}
       </Show>
       <Show when={model.aiStatus()}>
         {(message) => (
           <div class="mb-3 rounded-xl border border-emerald-500/15 bg-emerald-500/5 px-4 py-3 text-[13px] text-emerald-300/90">
-            {message()}
+            <p class="review-stream-message review-stream-message-expanded">
+              {formatReviewMessage(message(), 3_500)}
+            </p>
           </div>
         )}
       </Show>
@@ -154,6 +164,7 @@ export function WorkspaceMainPane(props: WorkspaceMainPaneProps) {
                     themeId={model.selectedDiffTheme().id}
                     themeType="dark"
                     annotations={model.diffAnnotations()}
+                    onAskAiAboutFile={model.handlePrepareAiFollowUpForFile}
                   />
                 </div>
               </Suspense>

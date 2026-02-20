@@ -18,6 +18,7 @@ type BuildAppViewModelsArgs = {
     | "handleCreateAndCheckoutBranch"
     | "handleStartAiReviewOnFullDiff"
     | "handleCancelAiReviewRun"
+    | "handlePrepareAiFollowUpForFile"
     | "handleAskAiFollowUp"
   >;
 };
@@ -98,6 +99,7 @@ function buildWorkspaceRepoSidebarModel(
 ): WorkspaceViewModel["repoSidebar"] {
   return {
     providerBusy: s.providerBusy,
+    aiReviewBusy: s.aiReviewBusy,
     onAddLocalRepo: p.handleAddLocalRepoFromSidebar,
     threadsLoading: () => s.threads.loading,
     repoGroups: s.repoGroups,
@@ -155,6 +157,7 @@ function buildWorkspaceMainPaneModel(
     setActiveReviewScope: s.setActiveReviewScope,
     selectedDiffTheme: s.selectedDiffTheme,
     diffAnnotations: s.diffAnnotations,
+    handlePrepareAiFollowUpForFile: r.handlePrepareAiFollowUpForFile,
     handleStartAiReviewOnFullDiff: r.handleStartAiReviewOnFullDiff,
   };
 }
@@ -179,6 +182,8 @@ function buildWorkspaceReviewSidebarModel(
     threadMessages: s.threadMessages,
     aiPrompt: s.aiPrompt,
     setAiPrompt: s.setAiPrompt,
+    aiSharedDiffContext: s.aiSharedDiffContext,
+    setAiSharedDiffContext: s.setAiSharedDiffContext,
     handleAskAiFollowUp: r.handleAskAiFollowUp,
     handleCancelAiReviewRun: r.handleCancelAiReviewRun,
     aiReviewBusy: s.aiReviewBusy,
