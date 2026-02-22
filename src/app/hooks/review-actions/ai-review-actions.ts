@@ -38,10 +38,11 @@ function buildSharedDiffContextId(args: {
 function parseLineLabelRange(lineLabel: string | null | undefined) {
   const normalizedLineLabel = lineLabel?.trim();
   if (!normalizedLineLabel) return null;
-  const match = /^L(\d+)(?:-L(\d+))?$/.exec(normalizedLineLabel);
-  if (!match) return null;
-  const start = Number.parseInt(match[1] ?? "", 10);
-  const end = Number.parseInt(match[2] ?? match[1] ?? "", 10);
+  const legacyMatch = /^L(\d+)(?:-L(\d+))?$/.exec(normalizedLineLabel);
+  const colonMatch = /^(\d+):(\d+)$/.exec(normalizedLineLabel);
+  if (!legacyMatch && !colonMatch) return null;
+  const start = Number.parseInt(legacyMatch?.[1] ?? colonMatch?.[1] ?? "", 10);
+  const end = Number.parseInt(legacyMatch?.[2] ?? colonMatch?.[2] ?? legacyMatch?.[1] ?? "", 10);
   if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
   return {
     start: Math.min(start, end),
@@ -173,6 +174,8 @@ export function collectMentionedDiffContexts(
       diff: truncated ? rawDiff.slice(0, MAX_MENTIONED_DIFF_CHARS) : rawDiff,
       truncated,
       lineLabel: null,
+      lineStart: null,
+      lineEnd: null,
       note: null,
     });
   }
@@ -394,6 +397,7 @@ export function createAiReviewActions(args: AiReviewActionsArgs) {
     const contextDiff = truncated ? rawDiff.slice(0, MAX_SHARED_DIFF_CHARS) : rawDiff;
     const normalizedContextNote = contextNote?.trim() || null;
     const normalizedLineLabel = lineLabel?.trim() || null;
+    const parsedRange = parseLineLabelRange(normalizedLineLabel);
     const nextContext: ReviewChatSharedDiffContext = {
       id: buildSharedDiffContextId({
         filePath: normalizedFilePath,
@@ -404,6 +408,8 @@ export function createAiReviewActions(args: AiReviewActionsArgs) {
       diff: contextDiff,
       truncated,
       lineLabel: normalizedLineLabel,
+      lineStart: parsedRange?.start ?? null,
+      lineEnd: parsedRange?.end ?? null,
       note: normalizedContextNote,
     };
 
@@ -499,9 +505,9 @@ export function createAiReviewActions(args: AiReviewActionsArgs) {
     const attachedDiffSections = sharedDiffContexts
       .map((context) => {
         const lineLabelSection = context.lineLabel ? `\nline=${context.lineLabel}` : "";
-        const parsedRange = parseLineLabelRange(context.lineLabel);
-        const rangeSection = parsedRange
-          ? `\nrange=${parsedRange.start}-${parsedRange.end}`
+        const rangeSection =
+          context.lineStart != null && context.lineEnd != null
+            ? `\nrange=${context.lineStart}-${context.lineEnd}`
           : "";
         const noteSection = context.note ? `\nnote=${context.note}` : "";
         return `\n\n[Attached section diff]\npath=${context.filePath}${lineLabelSection}${rangeSection}${noteSection}\ntruncated=${context.truncated ? "yes" : "no"}\n${context.diff}`;

@@ -747,6 +747,7 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                         <div class="flex items-center justify-between gap-2 rounded border border-amber-200/20 bg-black/10 px-2.5 py-1.5">
                           <p class="min-w-0 truncate text-[11px] text-amber-100/90">
                             {getPathLeaf(context.filePath)}
+                            {context.lineLabel ? ` ${context.lineLabel}` : ""}
                           </p>
                           <button
                             type="button"

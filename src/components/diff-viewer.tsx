@@ -509,6 +509,14 @@ function getLineTargetLabel(target: DiffViewerLineTarget) {
   return `L${target.lineNumber}`;
 }
 
+function getLineTargetRangeLabel(target: DiffViewerLineTarget) {
+  const endLine = target.endLineNumber;
+  if (endLine != null && endLine !== target.lineNumber) {
+    return `${target.lineNumber}:${endLine}`;
+  }
+  return `${target.lineNumber}:${target.lineNumber}`;
+}
+
 function toLineTargetFromSelectedRange(
   filePath: string,
   range: SelectedLineRange | null
@@ -1552,7 +1560,7 @@ export function DiffViewer(props: DiffViewerProps) {
               ? () => {
                   const body = (draftValuesByLocation()[locationKey] ?? "").trim();
                   const filePath = activeTarget.filePath;
-                  const lineRef = getLineTargetLabel(activeTarget);
+                  const lineRef = getLineTargetRangeLabel(activeTarget);
                   const contextNote = body.length > 0
                     ? `Re: ${filePath} ${lineRef} — ${body}`
                     : `Discuss ${filePath} ${lineRef}`;

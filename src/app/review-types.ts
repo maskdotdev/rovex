@@ -44,6 +44,8 @@ export type ReviewChatSharedDiffContext = {
   diff: string;
   truncated: boolean;
   lineLabel: string | null;
+  lineStart: number | null;
+  lineEnd: number | null;
   note: string | null;
 };
 
