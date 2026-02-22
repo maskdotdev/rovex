@@ -56,8 +56,8 @@ export type UseReviewActionsArgs = {
     setAiChunkReviews: Setter<AiReviewChunk[]>;
     setAiFindings: Setter<AiReviewFinding[]>;
     setAiProgressEvents: Setter<AiReviewProgressEvent[]>;
-    sharedDiffContext: Accessor<ReviewChatSharedDiffContext | null>;
-    setSharedDiffContext: Setter<ReviewChatSharedDiffContext | null>;
+    sharedDiffContexts: Accessor<ReviewChatSharedDiffContext[]>;
+    setSharedDiffContexts: Setter<ReviewChatSharedDiffContext[]>;
     refetchThreadMessages: () => unknown;
     refetchAiReviewRuns?: () => unknown;
   };

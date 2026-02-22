@@ -27,7 +27,7 @@ import {
 } from "@/components/sidebar";
 import { TextField, TextFieldInput } from "@/components/text-field";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/tooltip";
-import { normalizeDiffPath, type ReviewScope } from "@/app/review-scope";
+import { normalizeDiffPath, parsePatchFiles, type ReviewScope } from "@/app/review-scope";
 import { formatReviewMessage } from "@/app/review-text";
 import type {
   ReviewDiffFocusTarget,
@@ -43,6 +43,7 @@ import type {
   AiReviewChunk,
   AiReviewFinding,
   AiReviewProgressEvent,
+  CompareWorkspaceDiffResult,
   ListWorkspaceBranchesResult,
   Message as ThreadMessage,
   WorkspaceBranch,
@@ -64,8 +65,8 @@ export type WorkspaceReviewSidebarModel = {
   threadMessages: Accessor<ThreadMessage[] | undefined>;
   aiPrompt: Accessor<string>;
   setAiPrompt: Setter<string>;
-  aiSharedDiffContext: Accessor<ReviewChatSharedDiffContext | null>;
-  setAiSharedDiffContext: Setter<ReviewChatSharedDiffContext | null>;
+  aiSharedDiffContexts: Accessor<ReviewChatSharedDiffContext[]>;
+  setAiSharedDiffContexts: Setter<ReviewChatSharedDiffContext[]>;
   handleAskAiFollowUp: (event: Event) => void | Promise<void>;
   handleCancelAiReviewRun: (runId: string) => void | Promise<void>;
   aiReviewBusy: Accessor<boolean>;
@@ -74,6 +75,7 @@ export type WorkspaceReviewSidebarModel = {
   setShowDiffViewer: Setter<boolean>;
   setDiffFocusTarget: Setter<ReviewDiffFocusTarget | null>;
   selectedWorkspace: Accessor<string>;
+  compareResult: Accessor<CompareWorkspaceDiffResult | null>;
   hasReviewStarted?: Accessor<boolean>;
   branchPopoverOpen: Accessor<boolean>;
   setBranchPopoverOpen: Setter<boolean>;
@@ -142,6 +144,48 @@ function getPathLeaf(path: string) {
   return segments[segments.length - 1] ?? path;
 }
 
+const MAX_CHAT_MENTION_SUGGESTIONS = 10;
+
+type ActiveChatMention = {
+  start: number;
+  end: number;
+  query: string;
+};
+
+function collectDiffFilePathsFromPatch(patch: string): string[] {
+  const seen = new Set<string>();
+  const orderedPaths: string[] = [];
+  for (const file of parsePatchFiles(patch)) {
+    const normalizedPath = normalizeDiffPath(file.filePath);
+    if (!normalizedPath || seen.has(normalizedPath)) continue;
+    seen.add(normalizedPath);
+    orderedPaths.push(normalizedPath);
+  }
+  return orderedPaths;
+}
+
+function resolveActiveChatMention(prompt: string, cursorPosition: number): ActiveChatMention | null {
+  const safeCursor = Math.max(0, Math.min(cursorPosition, prompt.length));
+  let tokenStart = safeCursor;
+  while (tokenStart > 0 && !/\s/.test(prompt[tokenStart - 1] ?? "")) {
+    tokenStart -= 1;
+  }
+  let tokenEnd = safeCursor;
+  while (tokenEnd < prompt.length && !/\s/.test(prompt[tokenEnd] ?? "")) {
+    tokenEnd += 1;
+  }
+
+  const token = prompt.slice(tokenStart, tokenEnd);
+  if (!token.startsWith("@")) return null;
+  if (token.slice(1).includes("@")) return null;
+
+  return {
+    start: tokenStart,
+    end: tokenEnd,
+    query: token.slice(1),
+  };
+}
+
 export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
   const model = props.model;
   const isCollapsed = createMemo(() => model.reviewSidebarCollapsed?.() ?? false);
@@ -187,9 +231,57 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
   });
 
   let tabRefs: Array<HTMLButtonElement | undefined> = [];
+  let chatPromptInputRef: HTMLInputElement | undefined;
   const branchPopoverContentId = "workspace-branch-picker-popover";
   const branchSearchInputId = "workspace-branch-search-input";
   const branchCreateInputId = "workspace-branch-create-input";
+  const [chatPromptCursorPosition, setChatPromptCursorPosition] = createSignal(0);
+  const diffFilePaths = createMemo(() => {
+    const patch = model.compareResult()?.diff ?? "";
+    if (!patch.trim()) return [];
+    return collectDiffFilePathsFromPatch(patch);
+  });
+  const activeChatMention = createMemo(() =>
+    resolveActiveChatMention(model.aiPrompt(), chatPromptCursorPosition())
+  );
+  const mentionSuggestions = createMemo(() => {
+    const mention = activeChatMention();
+    if (!mention) return [];
+    const normalizedQuery = mention.query.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return diffFilePaths().slice(0, MAX_CHAT_MENTION_SUGGESTIONS);
+    }
+
+    const ranked = diffFilePaths().filter((path) => {
+      const normalizedPath = path.toLowerCase();
+      const leaf = getPathLeaf(path).toLowerCase();
+      return normalizedPath.includes(normalizedQuery) || leaf.includes(normalizedQuery);
+    });
+    return ranked.slice(0, MAX_CHAT_MENTION_SUGGESTIONS);
+  });
+  const syncChatPromptCursorPosition = () => {
+    if (!chatPromptInputRef) return;
+    setChatPromptCursorPosition(chatPromptInputRef.selectionStart ?? chatPromptInputRef.value.length);
+  };
+  const applyMentionSuggestion = (filePath: string) => {
+    const mention = activeChatMention();
+    if (!mention) return;
+    const prompt = model.aiPrompt();
+    const before = prompt.slice(0, mention.start);
+    const after = prompt.slice(mention.end);
+    const replacement = `@${filePath}`;
+    const withTrailingSpace =
+      after.length === 0 || /^\s/.test(after) ? replacement : `${replacement} `;
+    const nextPrompt = `${before}${withTrailingSpace}${after}`;
+    const nextCursorPosition = before.length + withTrailingSpace.length;
+    model.setAiPrompt(nextPrompt);
+    queueMicrotask(() => {
+      if (!chatPromptInputRef) return;
+      chatPromptInputRef.focus();
+      chatPromptInputRef.setSelectionRange(nextCursorPosition, nextCursorPosition);
+      setChatPromptCursorPosition(nextCursorPosition);
+    });
+  };
   const issueCardExpandKey = (card: IssueFileCard) => normalizeDiffPath(card.filePath) || card.id;
   const isIssueCardExpanded = (card: IssueFileCard) => {
     const key = issueCardExpandKey(card);
@@ -635,45 +727,104 @@ export function WorkspaceReviewSidebar(props: WorkspaceReviewSidebarProps) {
                   </p>
                 )}
               </Show>
-              <Show when={model.aiSharedDiffContext()}>
-                {(sharedContext) => (
-                  <div class="mb-2 rounded-lg border border-amber-300/25 bg-amber-400/10 px-3 py-2">
-                    <div class="flex items-center justify-between gap-2">
-                      <p class="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-amber-100/90">
-                        Attached diff: {sharedContext().filePath}
-                      </p>
-                      <button
-                        type="button"
-                        class="review-inline-action shrink-0"
-                        onClick={() => model.setAiSharedDiffContext(null)}
-                      >
-                        Clear
-                      </button>
-                    </div>
-                    <p class="mt-1 text-[11px] text-amber-200/80">
-                      This file patch will be included with your next question.
-                      {sharedContext().truncated ? " Shared content is trimmed for size." : ""}
+              <Show when={model.aiSharedDiffContexts().length > 0}>
+                <div class="mb-2 rounded-lg border border-amber-300/25 bg-amber-400/10 px-3 py-2">
+                  <div class="mb-1.5 flex items-center justify-between gap-2">
+                    <p class="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-amber-100/90">
+                      Attached sections ({model.aiSharedDiffContexts().length})
                     </p>
+                    <button
+                      type="button"
+                      class="review-inline-action shrink-0"
+                      onClick={() => model.setAiSharedDiffContexts([])}
+                    >
+                      Clear all
+                    </button>
                   </div>
-                )}
+                  <div class="space-y-1.5">
+                    <For each={model.aiSharedDiffContexts()}>
+                      {(context) => (
+                        <div class="flex items-center justify-between gap-2 rounded border border-amber-200/20 bg-black/10 px-2.5 py-1.5">
+                          <p class="min-w-0 truncate text-[11px] text-amber-100/90">
+                            {getPathLeaf(context.filePath)}
+                          </p>
+                          <button
+                            type="button"
+                            class="review-inline-action shrink-0"
+                            onClick={() =>
+                              model.setAiSharedDiffContexts((current) =>
+                                current.filter((candidate) => candidate.id !== context.id)
+                              )
+                            }
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </div>
               </Show>
 
               <form
                 class="review-chat-composer"
                 onSubmit={(event) => void model.handleAskAiFollowUp(event)}
               >
-                <TextField>
-                  <TextFieldInput
-                    value={model.aiPrompt()}
-                    onInput={(event) => model.setAiPrompt(event.currentTarget.value)}
-                    placeholder={
-                      model.aiReviewBusy()
-                        ? "Ask while scanning: explain risks, fixes, or design intent..."
-                        : "Ask about this diff, findings, or implementation choices..."
-                    }
-                    class="review-chat-input h-12 border-0 bg-transparent px-4 text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:ring-0 focus:ring-offset-0"
-                  />
-                </TextField>
+                <div class="relative">
+                  <TextField>
+                    <TextFieldInput
+                      ref={(element: HTMLInputElement | undefined) => {
+                        chatPromptInputRef = element;
+                      }}
+                      value={model.aiPrompt()}
+                      onInput={(event) => {
+                        model.setAiPrompt(event.currentTarget.value);
+                        setChatPromptCursorPosition(
+                          event.currentTarget.selectionStart ?? event.currentTarget.value.length
+                        );
+                      }}
+                      onClick={syncChatPromptCursorPosition}
+                      onKeyUp={syncChatPromptCursorPosition}
+                      onKeyDown={(event: KeyboardEvent) => {
+                        if (event.key !== "Tab") return;
+                        const suggestion = mentionSuggestions()[0];
+                        if (!suggestion) return;
+                        event.preventDefault();
+                        applyMentionSuggestion(suggestion);
+                      }}
+                      placeholder={
+                        model.aiReviewBusy()
+                          ? "Ask while scanning: explain risks, fixes, or design intent..."
+                          : "Ask about this diff, findings, or implementation choices..."
+                      }
+                      class="review-chat-input h-12 border-0 bg-transparent px-4 text-[14px] text-neutral-200 placeholder:text-neutral-600 focus:ring-0 focus:ring-offset-0"
+                    />
+                  </TextField>
+                  <Show when={activeChatMention()}>
+                    <div class="absolute inset-x-2 top-[calc(100%+0.35rem)] z-40 overflow-hidden rounded-lg border border-white/[0.09] bg-neutral-950/95 shadow-[0_10px_34px_rgba(0,0,0,0.5)]">
+                      <Show
+                        when={mentionSuggestions().length > 0}
+                        fallback={
+                          <p class="px-3 py-2 text-[12px] text-neutral-500">No matching file in current diff.</p>
+                        }
+                      >
+                        <For each={mentionSuggestions()}>
+                          {(filePath) => (
+                            <button
+                              type="button"
+                              class="flex w-full items-center justify-between gap-3 border-b border-white/[0.04] px-3 py-2 text-left text-[12px] text-neutral-200 transition-colors last:border-b-0 hover:bg-white/[0.06]"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => applyMentionSuggestion(filePath)}
+                            >
+                              <span class="truncate font-medium">{getPathLeaf(filePath)}</span>
+                              <span class="max-w-[60%] truncate text-[11px] text-neutral-500">{filePath}</span>
+                            </button>
+                          )}
+                        </For>
+                      </Show>
+                    </div>
+                  </Show>
+                </div>
                 <div class="flex items-center justify-between px-4 py-2.5">
                   <div class="flex items-center gap-2">
                     <Popover.Root
