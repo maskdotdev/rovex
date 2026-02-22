@@ -50,7 +50,7 @@ type UseAppEffectsArgs = {
   setNewBranchName: Setter<string>;
   setBranchActionError: Setter<string | null>;
   setAiPrompt: Setter<string>;
-  setAiSharedDiffContext: Setter<ReviewChatSharedDiffContext | null>;
+  setAiSharedDiffContexts: Setter<ReviewChatSharedDiffContext[]>;
   setAiFollowUpBusy?: Setter<boolean>;
   setAiReviewError: Setter<string | null>;
   setAiStatus: Setter<string | null>;
@@ -219,7 +219,7 @@ export function useAppEffects(args: UseAppEffectsArgs) {
     args.setNewBranchName("");
     args.setBranchActionError(null);
     args.setAiPrompt("");
-    args.setAiSharedDiffContext(null);
+    args.setAiSharedDiffContexts([]);
     args.setAiFollowUpBusy?.(false);
     args.setAiReviewError(null);
     args.setAiStatus(null);

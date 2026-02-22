@@ -200,7 +200,7 @@ type DiffViewerProps = {
   onCreateInlineComment?: (
     input: DiffViewerCreateInlineCommentInput
   ) => void | Promise<unknown>;
-  onAskAiAboutFile?: (filePath: string) => void;
+  onAskAiAboutFile?: (filePath: string, contextNote?: string, lineLabel?: string) => void;
   onOpenFile?: (filePath: string) => void | Promise<void>;
 };
 
@@ -212,7 +212,7 @@ type DiffFileCardProps = {
   options: DiffRenderOptions;
   lineAnnotations: Accessor<DiffLineAnnotation<DiffViewerAnnotationMetadata>[]>;
   onCollapsedChange?: (filePath: string, collapsed: boolean) => void;
-  onAskAiAboutFile?: (filePath: string) => void;
+  onAskAiAboutFile?: (filePath: string, contextNote?: string, lineLabel?: string) => void;
   onOpenFile?: (filePath: string) => void | Promise<void>;
   onLineNumberClick?: (target: DiffViewerLineTarget) => void;
   onLineClick?: (target: DiffViewerLineTarget) => void;
@@ -507,6 +507,14 @@ function getLineTargetLabel(target: DiffViewerLineTarget) {
     return `L${target.lineNumber}-L${endLine}`;
   }
   return `L${target.lineNumber}`;
+}
+
+function getLineTargetRangeLabel(target: DiffViewerLineTarget) {
+  const endLine = target.endLineNumber;
+  if (endLine != null && endLine !== target.lineNumber) {
+    return `${target.lineNumber}:${endLine}`;
+  }
+  return `${target.lineNumber}:${target.lineNumber}`;
 }
 
 function toLineTargetFromSelectedRange(
@@ -1552,11 +1560,11 @@ export function DiffViewer(props: DiffViewerProps) {
               ? () => {
                   const body = (draftValuesByLocation()[locationKey] ?? "").trim();
                   const filePath = activeTarget.filePath;
-                  const lineRef = getLineTargetLabel(activeTarget);
-                  const prompt = body.length > 0
+                  const lineRef = getLineTargetRangeLabel(activeTarget);
+                  const contextNote = body.length > 0
                     ? `Re: ${filePath} ${lineRef} — ${body}`
                     : `Discuss ${filePath} ${lineRef}`;
-                  props.onAskAiAboutFile?.(prompt);
+                  props.onAskAiAboutFile?.(filePath, contextNote, lineRef);
                 }
               : undefined,
             submitting: submittingDraftLocations().has(locationKey),

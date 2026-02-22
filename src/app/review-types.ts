@@ -39,9 +39,14 @@ export type ReviewRun = {
 };
 
 export type ReviewChatSharedDiffContext = {
+  id: string;
   filePath: string;
   diff: string;
   truncated: boolean;
+  lineLabel: string | null;
+  lineStart: number | null;
+  lineEnd: number | null;
+  note: string | null;
 };
 
 export type ReviewDiffFocusTarget = {

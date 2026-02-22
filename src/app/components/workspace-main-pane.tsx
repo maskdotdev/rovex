@@ -34,7 +34,11 @@ export type WorkspaceMainPaneModel = {
   compareSummary: Accessor<string | null>;
   compareBusy: Accessor<boolean>;
   selectedWorkspace: Accessor<string>;
-  handlePrepareAiFollowUpForFile: (filePath: string) => void;
+  handlePrepareAiFollowUpForFile: (
+    filePath: string,
+    contextNote?: string,
+    lineLabel?: string
+  ) => void;
   handleOpenFileInEditor: (filePath: string) => void | Promise<void>;
   handleStartAiReviewOnFullDiff: () => void | Promise<void>;
   compareResult: Accessor<CompareWorkspaceDiffResult | null>;

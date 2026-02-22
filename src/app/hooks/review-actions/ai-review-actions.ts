@@ -5,10 +5,11 @@ import {
   getReviewScopeContext,
   getReviewScopeLabel,
   normalizeDiffPath,
+  parsePatchFiles,
   type ReviewScope,
 } from "@/app/review-scope";
 import { toErrorMessage } from "@/app/hooks/error-utils";
-import type { ReviewRun } from "@/app/review-types";
+import type { ReviewChatSharedDiffContext, ReviewRun } from "@/app/review-types";
 import type { UseReviewActionsArgs } from "@/app/hooks/review-action-types";
 
 type AiReviewActionsArgs = Pick<
@@ -18,9 +19,177 @@ type AiReviewActionsArgs = Pick<
   handleCompareSelectedReview: (target?: { baseRef?: string; fetchRemote?: boolean }) => Promise<void>;
 };
 
+const MAX_SHARED_DIFF_CHARS = 24_000;
+const MAX_MENTIONED_FILES = 3;
+const MAX_MENTIONED_DIFF_CHARS = 8_000;
+const DIFF_MENTION_PATTERN = /(^|\s)@([^\s]+)/g;
+
+function buildSharedDiffContextId(args: {
+  filePath: string;
+  lineLabel?: string | null;
+  note?: string | null;
+}) {
+  const normalizedPath = normalizeDiffPath(args.filePath);
+  const normalizedLineLabel = args.lineLabel?.trim() ?? "";
+  const normalizedNote = args.note?.trim() ?? "";
+  return `${normalizedPath}::${normalizedLineLabel}::${normalizedNote}`;
+}
+
+function parseLineLabelRange(lineLabel: string | null | undefined) {
+  const normalizedLineLabel = lineLabel?.trim();
+  if (!normalizedLineLabel) return null;
+  const legacyMatch = /^L(\d+)(?:-L(\d+))?$/.exec(normalizedLineLabel);
+  const colonMatch = /^(\d+):(\d+)$/.exec(normalizedLineLabel);
+  if (!legacyMatch && !colonMatch) return null;
+  const start = Number.parseInt(legacyMatch?.[1] ?? colonMatch?.[1] ?? "", 10);
+  const end = Number.parseInt(legacyMatch?.[2] ?? colonMatch?.[2] ?? legacyMatch?.[1] ?? "", 10);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return {
+    start: Math.min(start, end),
+    end: Math.max(start, end),
+  };
+}
+
+export function extractDiffFileMentions(question: string): string[] {
+  const mentions: string[] = [];
+  const seen = new Set<string>();
+  let match: RegExpExecArray | null = null;
+
+  while ((match = DIFF_MENTION_PATTERN.exec(question)) != null) {
+    const rawMention = match[2] ?? "";
+    const cleanedMention = normalizeDiffPath(
+      rawMention.replace(/^['"`([{<]+/, "").replace(/[.,!?;:)\]}>`"']+$/, "")
+    );
+    if (!cleanedMention || seen.has(cleanedMention)) continue;
+    seen.add(cleanedMention);
+    mentions.push(cleanedMention);
+  }
+
+  return mentions;
+}
+
+export type MentionedDiffContextResult = {
+  contexts: ReviewChatSharedDiffContext[];
+  unresolvedMentions: string[];
+  ambiguousMentions: string[];
+  omittedPaths: string[];
+};
+
+function uniqueDiffFilePaths(diff: string): string[] {
+  const normalizedPaths = parsePatchFiles(diff)
+    .map((file) => normalizeDiffPath(file.filePath))
+    .filter((path): path is string => path.length > 0);
+  return [...new Set(normalizedPaths)];
+}
+
+function resolveMentionToFilePath(mention: string, availablePaths: string[]): string | null {
+  const normalizedMention = normalizeDiffPath(mention);
+  if (!normalizedMention) return null;
+
+  const exactMatches = availablePaths.filter((path) => path === normalizedMention);
+  if (exactMatches.length === 1) return exactMatches[0] ?? null;
+  if (exactMatches.length > 1) return null;
+
+  const suffixMatches = availablePaths.filter(
+    (path) => path.endsWith(`/${normalizedMention}`) || path === normalizedMention
+  );
+  if (suffixMatches.length === 1) return suffixMatches[0] ?? null;
+  if (suffixMatches.length > 1) return null;
+
+  if (normalizedMention.includes("/")) return null;
+
+  const basenameMatches = availablePaths.filter((path) => {
+    const parts = path.split("/");
+    return parts[parts.length - 1] === normalizedMention;
+  });
+  if (basenameMatches.length === 1) return basenameMatches[0] ?? null;
+  return null;
+}
+
+export function collectMentionedDiffContexts(
+  diff: string,
+  mentions: string[]
+): MentionedDiffContextResult {
+  const availablePaths = uniqueDiffFilePaths(diff);
+  const resolvedPaths: string[] = [];
+  const unresolvedMentions: string[] = [];
+  const ambiguousMentions: string[] = [];
+
+  for (const mention of mentions) {
+    const normalizedMention = normalizeDiffPath(mention);
+    if (!normalizedMention) continue;
+
+    const exactMatches = availablePaths.filter((path) => path === normalizedMention);
+    if (exactMatches.length > 1) {
+      ambiguousMentions.push(normalizedMention);
+      continue;
+    }
+
+    if (exactMatches.length === 0) {
+      const suffixMatches = availablePaths.filter(
+        (path) => path.endsWith(`/${normalizedMention}`) || path === normalizedMention
+      );
+      if (suffixMatches.length > 1) {
+        ambiguousMentions.push(normalizedMention);
+        continue;
+      }
+      if (suffixMatches.length === 0 && !normalizedMention.includes("/")) {
+        const basenameMatches = availablePaths.filter((path) => {
+          const parts = path.split("/");
+          return parts[parts.length - 1] === normalizedMention;
+        });
+        if (basenameMatches.length > 1) {
+          ambiguousMentions.push(normalizedMention);
+          continue;
+        }
+        if (basenameMatches.length === 0) {
+          unresolvedMentions.push(normalizedMention);
+          continue;
+        }
+      }
+    }
+
+    const resolvedPath = resolveMentionToFilePath(normalizedMention, availablePaths);
+    if (!resolvedPath) {
+      unresolvedMentions.push(normalizedMention);
+      continue;
+    }
+    if (resolvedPaths.includes(resolvedPath)) continue;
+    resolvedPaths.push(resolvedPath);
+  }
+
+  const includedPaths = resolvedPaths.slice(0, MAX_MENTIONED_FILES);
+  const omittedPaths = resolvedPaths.slice(MAX_MENTIONED_FILES);
+  const contexts: ReviewChatSharedDiffContext[] = [];
+
+  for (const filePath of includedPaths) {
+    const scopedDiff = buildScopedDiff(diff, { kind: "file", filePath });
+    if (!scopedDiff) continue;
+    const rawDiff = scopedDiff.diff.trim();
+    if (!rawDiff) continue;
+    const truncated = rawDiff.length > MAX_MENTIONED_DIFF_CHARS;
+    contexts.push({
+      id: buildSharedDiffContextId({ filePath }),
+      filePath,
+      diff: truncated ? rawDiff.slice(0, MAX_MENTIONED_DIFF_CHARS) : rawDiff,
+      truncated,
+      lineLabel: null,
+      lineStart: null,
+      lineEnd: null,
+      note: null,
+    });
+  }
+
+  return {
+    contexts,
+    unresolvedMentions,
+    ambiguousMentions,
+    omittedPaths,
+  };
+}
+
 export function createAiReviewActions(args: AiReviewActionsArgs) {
   const { selection, compare, ai, review, handleCompareSelectedReview } = args;
-  const MAX_SHARED_DIFF_CHARS = 24_000;
 
   const setFollowUpBusy = (value: boolean) => {
     if (ai.setAiFollowUpBusy) {
@@ -194,7 +363,11 @@ export function createAiReviewActions(args: AiReviewActionsArgs) {
     }
   };
 
-  const handlePrepareAiFollowUpForFile = (filePath: string) => {
+  const handlePrepareAiFollowUpForFile = (
+    filePath: string,
+    contextNote?: string,
+    lineLabel?: string
+  ) => {
     ai.setAiReviewError(null);
     ai.setAiStatus(null);
 
@@ -222,24 +395,48 @@ export function createAiReviewActions(args: AiReviewActionsArgs) {
     const rawDiff = scopedDiff.diff.trim();
     const truncated = rawDiff.length > MAX_SHARED_DIFF_CHARS;
     const contextDiff = truncated ? rawDiff.slice(0, MAX_SHARED_DIFF_CHARS) : rawDiff;
-
-    ai.setSharedDiffContext({
+    const normalizedContextNote = contextNote?.trim() || null;
+    const normalizedLineLabel = lineLabel?.trim() || null;
+    const parsedRange = parseLineLabelRange(normalizedLineLabel);
+    const nextContext: ReviewChatSharedDiffContext = {
+      id: buildSharedDiffContextId({
+        filePath: normalizedFilePath,
+        lineLabel: normalizedLineLabel,
+        note: normalizedContextNote,
+      }),
       filePath: normalizedFilePath,
       diff: contextDiff,
       truncated,
+      lineLabel: normalizedLineLabel,
+      lineStart: parsedRange?.start ?? null,
+      lineEnd: parsedRange?.end ?? null,
+      note: normalizedContextNote,
+    };
+
+    ai.setSharedDiffContexts((current) => {
+      const withoutDuplicate = current.filter((candidate) => candidate.id !== nextContext.id);
+      return [...withoutDuplicate, nextContext];
     });
     review.setActiveReviewScope({
       kind: "file",
       filePath: normalizedFilePath,
     });
     review.setReviewWorkbenchTab("chat");
-    ai.setPrompt((current) =>
-      current.trim().length > 0 ? current : `Question about ${normalizedFilePath}: `
-    );
-    ai.setAiStatus(
+    ai.setPrompt((current) => {
+      if (current.trim().length > 0) return current;
+      if (normalizedContextNote && normalizedContextNote.length > 0) {
+        return current;
+      }
+      return `Question about ${normalizedFilePath}: `;
+    });
+    const statusPrefix =
       truncated
         ? `Shared ${normalizedFilePath} diff with chat (trimmed for size).`
-        : `Shared ${normalizedFilePath} diff with chat.`
+        : `Shared ${normalizedFilePath} diff with chat.`;
+    ai.setAiStatus(
+      normalizedLineLabel
+        ? `${statusPrefix} Section ${normalizedLineLabel} added.`
+        : statusPrefix
     );
   };
 
@@ -266,14 +463,60 @@ export function createAiReviewActions(args: AiReviewActionsArgs) {
       return;
     }
 
-    const sharedDiffContext = ai.sharedDiffContext();
-    const sharedDiffSection = sharedDiffContext
-      ? `\n\n[Shared file diff]\npath=${sharedDiffContext.filePath}\ntruncated=${sharedDiffContext.truncated ? "yes" : "no"}\n${sharedDiffContext.diff}`
-      : "";
-    const scopedQuestion = `${question}${sharedDiffSection}\n\n[Review context]\n${getReviewScopeContext(review.activeReviewScope())}`;
+    const mentionedFiles = extractDiffFileMentions(question);
+    const sharedDiffContexts = ai.sharedDiffContexts();
+    let mentionedContexts: ReviewChatSharedDiffContext[] = [];
+    let mentionWarningText = "";
+
+    if (mentionedFiles.length > 0) {
+      const comparison = compare.compareResult();
+      if (!comparison) {
+        ai.setAiReviewError("Load a diff before using @file mentions in chat.");
+        return;
+      }
+      const mentionResult = collectMentionedDiffContexts(comparison.diff, mentionedFiles);
+      const attachedPaths = new Set(
+        sharedDiffContexts.map((context) => normalizeDiffPath(context.filePath))
+      );
+      mentionedContexts = mentionResult.contexts.filter(
+        (context) => !attachedPaths.has(normalizeDiffPath(context.filePath))
+      );
+      const warnings: string[] = [];
+      if (mentionResult.unresolvedMentions.length > 0) {
+        warnings.push(`missing: @${mentionResult.unresolvedMentions.join(", @")}`);
+      }
+      if (mentionResult.ambiguousMentions.length > 0) {
+        warnings.push(`ambiguous: @${mentionResult.ambiguousMentions.join(", @")}`);
+      }
+      if (mentionResult.omittedPaths.length > 0) {
+        warnings.push(
+          `attached first ${MAX_MENTIONED_FILES} files only (extra: ${mentionResult.omittedPaths.join(", ")})`
+        );
+      }
+      mentionWarningText = warnings.length > 0 ? ` Mention notes: ${warnings.join(" | ")}` : "";
+    }
+
+    const mentionedDiffSections = mentionedContexts
+      .map(
+        (context) =>
+          `\n\n[Mentioned file diff]\npath=${context.filePath}\ntruncated=${context.truncated ? "yes" : "no"}\n${context.diff}`
+      )
+      .join("");
+    const attachedDiffSections = sharedDiffContexts
+      .map((context) => {
+        const lineLabelSection = context.lineLabel ? `\nline=${context.lineLabel}` : "";
+        const rangeSection =
+          context.lineStart != null && context.lineEnd != null
+            ? `\nrange=${context.lineStart}-${context.lineEnd}`
+          : "";
+        const noteSection = context.note ? `\nnote=${context.note}` : "";
+        return `\n\n[Attached section diff]\npath=${context.filePath}${lineLabelSection}${rangeSection}${noteSection}\ntruncated=${context.truncated ? "yes" : "no"}\n${context.diff}`;
+      })
+      .join("");
+    const scopedQuestion = `${question}${mentionedDiffSections}${attachedDiffSections}\n\n[Review context]\n${getReviewScopeContext(review.activeReviewScope())}`;
 
     setFollowUpBusy(true);
-    ai.setAiStatus("Sending follow-up question...");
+    ai.setAiStatus(`Sending follow-up question...${mentionWarningText}`);
     try {
       const response = await generateAiFollowUp({
         threadId,

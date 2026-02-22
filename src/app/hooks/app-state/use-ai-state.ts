@@ -27,8 +27,8 @@ export function useAiState() {
   const [aiChunkReviews, setAiChunkReviews] = createSignal<AiReviewChunk[]>([]);
   const [aiFindings, setAiFindings] = createSignal<AiReviewFinding[]>([]);
   const [aiProgressEvents, setAiProgressEvents] = createSignal<AiReviewProgressEvent[]>([]);
-  const [aiSharedDiffContext, setAiSharedDiffContext] =
-    createSignal<ReviewChatSharedDiffContext | null>(null);
+  const [aiSharedDiffContexts, setAiSharedDiffContexts] =
+    createSignal<ReviewChatSharedDiffContext[]>([]);
 
   const diffAnnotations = createMemo<DiffViewerAnnotation[]>(() =>
     aiFindings().map((finding) => {
@@ -94,8 +94,8 @@ export function useAiState() {
     setAiFindings,
     aiProgressEvents,
     setAiProgressEvents,
-    aiSharedDiffContext,
-    setAiSharedDiffContext,
+    aiSharedDiffContexts,
+    setAiSharedDiffContexts,
     diffAnnotations,
   };
 }
